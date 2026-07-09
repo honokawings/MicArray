@@ -121,6 +121,8 @@ UI 支持有线、无线和自定义 IP/端口。
 - 按可配置帧数窗口计算每通道平均幅值。
 - 以最高平均幅值为基准做归一化，用于阵列校准热力图。
 - 记录最大平均幅值通道、最小平均幅值通道和输出通道。
+- `AudioProcessor` 运行在独立音频处理线程，音频 payload 解码、平均幅值统计、监听通道 PCM 转换和可选播放不占用 UI 线程。
+- UI 只接收处理后的 `DecodedAudioFrame`，并通过定时刷新节流更新波形和阵列热力图，避免高频音频帧导致界面事件队列拥塞。
 
 ### 控制层
 
@@ -142,16 +144,26 @@ UI 支持有线、无线和自定义 IP/端口。
 
 - `src/device/deviceclient.h`
 - `src/device/deviceclient.cpp`
+- `src/device/networkworker.h`
+- `src/device/networkworker.cpp`
+- `src/protocol/protocolworker.h`
+- `src/protocol/protocolworker.cpp`
 
 功能：
 
-- 使用 `QTcpSocket` 连接设备。
+- `DeviceClient` 作为 UI 线程门面，不再直接持有 `QTcpSocket`。
+- `NetworkWorker` 在专用 `QThread` 中创建并持有 `QTcpSocket`、心跳定时器和重连定时器，负责连接、断开、读写和心跳。
+- `NetworkWorker` 将 `QTcpSocket` 读缓冲限制为 `8 MB`，在接收吞吐异常或协议线程处理不及时的情况下，通过 Qt/系统 TCP 流控限制应用侧无界内存增长。
+- `ProtocolWorker` 在专用 `QThread` 中持有 `ProtocolCodec`，负责 TCP 字节流解析和帧分发。
+- 网络线程到协议线程之间采用 ACK 背压：网络线程累计已投递但协议线程未确认的字节数，超过 `4 MB` 时暂停读取 socket，降到 `2 MB` 以下后恢复读取，避免 queued `QByteArray` 无界堆积。
 - 支持手动连接、断开和自动重连。
 - 连接成功后每 1 秒发送心跳帧。
-- 收到 TCP 数据后交给协议层解析。
+- 收到 TCP 数据后，网络线程只执行 `readAll()` 并通过 queued signal 投递给协议线程，避免 UI、音频或视频处理阻塞 TCP 接收。
 - 音频帧、视频帧通过 Qt signal 分发到媒体层。
 - 所有结构完整的解析帧都会通过通用调试信号分发到帧调试页；未知类型帧只进入调试显示，不进入音频/视频解码。
 - 维护状态机、收包时间、字节计数、帧计数和解析错误计数。
+- 维护协议解析链路指标：累计接收字节、累计成功解析字节、累计主动丢弃字节和当前协议缓冲区残留字节，用于定位 TCP 吞吐、帧错位和协议字段异常。
+- 手动断开和对象析构会同步投递到网络线程执行断开请求，避免退出线程时遗留未处理的 socket 断开操作。
 
 状态机：
 
@@ -175,6 +187,8 @@ Connecting -> Error
 - 使用 `QImage::loadFromData(payload, "JPG")`。
 - 统计成功解码帧数、失败帧数和估算 FPS。
 - 解码失败不会断开设备连接，只写入日志并保留运行状态。
+- `VideoDecoder` 运行在独立视频处理线程，JPEG 解码与 FPS 统计不占用 UI 线程。
+- UI 只缓存最新一帧图像，并以约 33 ms 的周期刷新预览，视频帧堆积时优先显示最新状态。
 
 ### UI / HMI
 
@@ -191,6 +205,8 @@ Connecting -> Error
 - 实时监控页的视频预览下方显示当前播放通道的滚动音频波形，用于快速确认选中通道是否有信号、是否削顶或静音。
 - `Frame Debug`：显示最近解析帧的元信息、前 16 字节和尾 16 字节；支持自定义历史保留帧数，并用分段动效展示帧头、类型、长度、时间戳、payload 和帧尾；原始字节预览和历史记录使用等宽字体，便于对齐查看。
 - 帧调试页包含“解析异常诊断”，当帧尾、长度或帧结构异常时显示帧类型、payload 长度、计算帧尾偏移、缓冲区大小、实际帧尾、期望帧尾、头 16 字节和帧尾附近上下文。
+- 实时诊断区域显示协议链路累计 `received/parsed/discarded/buffered` 指标；正常稳定链路下 parsed 应持续接近 received，discarded 不应持续增长，buffered 应只在半包期间短暂波动。
+- 实时诊断区域显示接收背压状态和待协议线程确认的字节数；背压短时触发表示应用正在自我保护，长期保持启用则说明协议解析或后续处理吞吐不足，需要降低设备帧率或继续优化处理链路。
 - `Array Calibration`：显示 6x8 阵列热力图，通道从左到右、从上到下编号 0-47。
 
 阵列校准显示规则：
@@ -208,6 +224,8 @@ Connecting -> Error
 - 连接配置和媒体配置会写入 `QSettings`。
 - 输出通道变化后立即影响后续监听输出。
 - 平均窗口变化后立即影响后续校准热力图。
+- 视频预览、音频波形和阵列热力图采用 UI 线程定时渲染，当前周期内多次到达的数据会合并为最新状态，降低高吞吐接收时的界面卡顿风险。
+- 网络接收、协议解析、音频处理、视频解码和 UI 绘图分别由不同线程/职责承担，UI 不直接执行 TCP 读取、流式拆包或媒体解码。
 
 ## 发布脚本
 
@@ -305,6 +323,46 @@ python tools\mock_device_server.py --pattern checker --audio-fps 10 --jitter-ms 
 python tools\mock_device_server.py --video-fps 1
 ```
 
+压力/吞吐模式示例：
+
+```powershell
+python tools\mock_device_server.py --stress-mode normal --duration 60 --audio-fps 240 --video-fps 1
+python tools\mock_device_server.py --stress-mode sustained --duration 60
+python tools\mock_device_server.py --stress-mode sustained --target-mbps 100 --duration 60 --stats-interval 1
+python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burst-interval 1 --duration 60 --no-video
+```
+
+- `normal` 模式保持既有 `--audio-fps` / `--video-fps` 的 FPS 调度节奏，只是在指定时长内补充统计输出，不主动改写原有发送节拍。
+- `sustained` 模式在 `--target-mbps 0`（默认）时表示不限速持续发送；上例第二条命令用于连续 60 秒的无限速发送压测。
+- `sustained` 模式在设置 `--target-mbps 100` 后，会按十进制 `100 Mb/s` 目标做速率整形；上例第三条命令用于连续 60 秒的 100 Mb/s 压测。
+- `burst` 模式按 `--burst-size-mb` 和 `--burst-interval` 发送音频突发；上例第四条命令表示每秒发送 1 次、单次目标 `64 MiB` 的突发流量并持续 60 秒。
+
+压力参数说明：
+
+| 参数 | 说明 |
+|---|---|
+| `--stress-mode` | 默认值：`normal`。压力模式：`normal` 维持原始 FPS 节奏，`sustained` 追求持续吞吐，`burst` 发送周期性突发。 |
+| `--duration` | 默认值：`0`。测试持续时间，单位秒；`0` 表示不限时，通常建议压测显式给出持续时长。 |
+| `--target-mbps` | 默认值：`0`。仅 `sustained` 模式使用的目标吞吐，单位十进制 `Mb/s`；`0` 表示不限速。 |
+| `--stats-interval` | 默认值：`1.0`。周期统计输出间隔，单位秒，用于打印阶段性吞吐、帧率和阻塞信息。 |
+| `--burst-size-mb` | 默认值：`32.0`。`burst` 模式单次突发目标大小，单位 `MiB`；实现按完整音频帧向上取整，避免发送截断帧。 |
+| `--burst-interval` | 默认值：`1.0`。`burst` 模式两次突发之间的计划间隔，单位秒。 |
+
+单位约定：
+
+- 文档中的 `Mb/s` 按十进制计算，即 `1 Mb/s = 1,000,000 bit/s`。
+- 文档中的 `MiB` 按二进制计算，即 `1 MiB = 1024 * 1024 bytes`。
+- 周期统计中的 `tx` 表示当前统计窗口的瞬时发送吞吐；会随 `--stats-interval` 改变而变化。
+- 会话摘要中的 `average`（日志字段显示为 `avg`）表示整个会话的平均发送吞吐。
+- 会话摘要中的 `peak` 表示所有统计窗口中出现过的最大 `tx`。
+- 周期统计中的 `blocked` 表示累计发送阻塞时间；会话摘要中的 `blocked=A/B` 表示阻塞发送次数 / 总发送次数。
+- `max_send` 表示单次 `sendall()` 观测到的最长耗时。
+- `bursts` 表示已完成的突发次数。
+- `burst_bytes` 只统计已完成突发的字节数；如果会话在突发中途结束，最后一段不足目标大小的部分不会计入该字段。
+- `overruns` 表示突发模式下计划下一次发送时刻已经被当前工作拖过的次数，可用于判断是否跟不上设定节奏。
+
+压力模式发送的数据仍然是完整、合法、可被上位机协议层解析的音频/视频协议帧，不会为了追求吞吐而发送截断或伪造帧。压测结果可用于发现上位机链路、协议解析和 UI 处理瓶颈，但不能替代真实设备、真实网络拓扑和现场链路条件下的最终验收。
+
 模拟音频格式：
 
 - 帧类型：`0xee11`。
@@ -344,6 +402,12 @@ python tools\mock_device_server.py --video-fps 1
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-09 | 压测能力增强 | tools、测试、文档 | `mock_device_server.py` 新增 `normal/sustained/burst` 压测用法说明与 `tx/average/peak/blocked/max_send/bursts/overruns` 指标解释；内置自检补充 burst/no-video 与限速校验；新增基于 `socket.socketpair()` 的自动化集成测试。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`python -m py_compile tools/mock_device_server.py tests/tools/test_mock_device_server.py`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md` |
+| 2026-07-09 | 稳定性增强 | 设备通信、协议线程、UI、测试、文档 | 新增网络到协议线程的 ACK 背压机制：`NetworkWorker` 统计已投递但未确认的待解析字节，超过 `4 MB` 暂停读取，降到 `2 MB` 以下恢复；`ProtocolWorker` 每个 chunk 解析完成后回 ACK；UI 诊断显示背压状态和待解析队列字节数。 | `cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |
+| 2026-07-08 | 稳定性增强 | 设备通信、测试、文档 | `NetworkWorker` 为 `QTcpSocket` 配置 `8 MB` 读缓冲上限并上报配置日志，避免高吞吐异常时应用侧接收缓冲无界增长；`DeviceClient` 断开请求改为同步投递到网络线程执行，提高析构和手动断开的确定性。 | `cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |
+| 2026-07-08 | 诊断增强 | 协议、设备通信、UI、测试、文档 | `ProtocolCodec` 增加单次解析指标，`ProtocolWorker` 汇总累计 appended/parsed/discarded/buffered 数据，`DeviceClient` 暴露协议链路计数，实时诊断区域显示接收、已解析、丢弃和协议缓冲残留字节，便于现场判断 TCP 吞吐和协议错位问题。 | `cmake --build ... --target test_protocol`、`ctest --test-dir ... -R protocol --output-on-failure`、`cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |
+| 2026-07-08 | 媒体/UI 线程重构 | 音频、视频、UI、文档 | 将 `AudioProcessor` 与 `VideoDecoder` 分别迁移到独立工作线程；主界面改为缓存最新音频/视频处理结果，并通过 33 ms 定时器节流刷新视频预览、音频波形和阵列校准热力图，降低媒体解码和高频绘图阻塞 UI/接收链路的风险。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure` |
+| 2026-07-08 | 架构重构 | 设备通信、协议、测试、文档 | 新增 `NetworkWorker` 与 `ProtocolWorker`，将 `QTcpSocket` 接收/心跳/重连迁移到网络线程，将 `ProtocolCodec` 流式解析迁移到协议线程；`DeviceClient` 改为 UI 门面并通过 queued signal 分发帧和诊断，降低 UI/媒体处理阻塞 TCP 接收的风险。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure` |
 | 2026-07-06 | 协议修正 | 协议、UI、测试工具、文档 | 视频帧接收尾部改为单字节 `0A` 判定；音频帧、心跳帧和控制帧仍按 `0A 0D` 判定；帧调试页和模拟服务端同步按帧类型显示/生成不同帧尾。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure`、`python tools\mock_device_server.py --self-test` |
 | 2026-07-06 | 缺陷修复 | 音频、UI | 修复当前播放通道波形显示近似静止的问题：PCM16 转换改为适配 24-bit 量级样本，波形控件按当前显示窗口峰值自适应缩放。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure` |
 | 2026-07-06 | 测试工具更新 | tools、文档 | 模拟服务端音频 payload 改为有意义的有符号正弦复合音频信号，支持播放通道波形和音频电平测试；默认音频帧率调整为 240 FPS，对齐 200 采样点/帧下的 48 kHz 节奏。 | `python tools\mock_device_server.py --self-test`、`python -m py_compile tools\mock_device_server.py` |

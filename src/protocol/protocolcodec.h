@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QList>
+#include <QMetaType>
 #include <QString>
 
 namespace MicArray {
@@ -48,6 +49,12 @@ struct ParseError {
 struct ParseResult {
     QList<HostFrame> frames;
     QList<ParseError> errors;
+    qsizetype bytesAppended = 0;
+    qsizetype bufferBefore = 0;
+    qsizetype bufferAfter = 0;
+    qsizetype bytesParsed = 0;
+    qsizetype bytesDiscarded = 0;
+    QList<qsizetype> frameSizes;
 };
 
 class ControlValues;
@@ -73,3 +80,6 @@ private:
 };
 
 } // namespace MicArray
+
+Q_DECLARE_METATYPE(MicArray::HostFrame)
+Q_DECLARE_METATYPE(MicArray::ParseError)

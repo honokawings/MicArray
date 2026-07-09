@@ -1,5 +1,12 @@
 #include "device/deviceclient.h"
 
+#include "device/networkworker.h"
+#include "protocol/protocolworker.h"
+
+#include <QMetaObject>
+
+#include <algorithm>
+
 namespace MicArray {
 
 QString deviceStateName(DeviceState state)
@@ -22,127 +29,138 @@ QString deviceStateName(DeviceState state)
 DeviceClient::DeviceClient(QObject *parent)
     : QObject(parent)
 {
-    m_heartbeatTimer.setInterval(1000);
-    m_reconnectTimer.setInterval(2000);
-    m_reconnectTimer.setSingleShot(true);
+    qRegisterMetaType<DeviceState>("MicArray::DeviceState");
+    qRegisterMetaType<HostFrame>("MicArray::HostFrame");
+    qRegisterMetaType<ParseError>("MicArray::ParseError");
 
-    connect(&m_socket, &QTcpSocket::connected, this, &DeviceClient::onConnected);
-    connect(&m_socket, &QTcpSocket::disconnected, this, &DeviceClient::onDisconnected);
-    connect(&m_socket, &QTcpSocket::readyRead, this, &DeviceClient::onReadyRead);
-    connect(&m_socket, &QTcpSocket::errorOccurred, this, &DeviceClient::onSocketError);
-    connect(&m_heartbeatTimer, &QTimer::timeout, this, &DeviceClient::sendHeartbeat);
-    connect(&m_reconnectTimer, &QTimer::timeout, this, &DeviceClient::reconnect);
+    m_networkWorker = new NetworkWorker;
+    m_protocolWorker = new ProtocolWorker;
+    m_networkWorker->moveToThread(&m_networkThread);
+    m_protocolWorker->moveToThread(&m_protocolThread);
+
+    connect(&m_networkThread, &QThread::finished, m_networkWorker, &QObject::deleteLater);
+    connect(&m_protocolThread, &QThread::finished, m_protocolWorker, &QObject::deleteLater);
+
+    connect(m_networkWorker, &NetworkWorker::stateChanged, this, &DeviceClient::setState, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::bytesReceivedChanged, this, &DeviceClient::onBytesReceivedChanged, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::bytesRead, m_protocolWorker, &ProtocolWorker::ingestBytes, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::logMessage, this, &DeviceClient::logMessage, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::warningMessage, this, &DeviceClient::warningMessage, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::errorMessage, this, &DeviceClient::errorMessage, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::transportConfigured, this, [this](qint64 readBufferLimitBytes) {
+        emit logMessage(QStringLiteral("network"),
+                        QStringLiteral("TCP read buffer limit configured: %1 B").arg(readBufferLimitBytes));
+    }, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::receiveBackpressureChanged, this, &DeviceClient::onReceiveBackpressureChanged, Qt::QueuedConnection);
+
+    connect(m_protocolWorker, &ProtocolWorker::frameParsed, this, &DeviceClient::frameReceived, Qt::QueuedConnection);
+    connect(m_protocolWorker, &ProtocolWorker::audioFrameParsed, this, &DeviceClient::audioFrameReceived, Qt::QueuedConnection);
+    connect(m_protocolWorker, &ProtocolWorker::videoFrameParsed, this, &DeviceClient::videoFrameReceived, Qt::QueuedConnection);
+    connect(m_protocolWorker, &ProtocolWorker::parseError, this, &DeviceClient::parseErrorReceived, Qt::QueuedConnection);
+    connect(m_protocolWorker, &ProtocolWorker::warningMessage, this, &DeviceClient::warningMessage, Qt::QueuedConnection);
+    connect(m_protocolWorker, &ProtocolWorker::statisticsChanged, this, &DeviceClient::onProtocolStatisticsChanged, Qt::QueuedConnection);
+    connect(m_protocolWorker, &ProtocolWorker::pipelineMetricsChanged, this, &DeviceClient::onProtocolPipelineMetricsChanged, Qt::QueuedConnection);
+    connect(m_protocolWorker, &ProtocolWorker::bytesProcessed, m_networkWorker, &NetworkWorker::onProtocolBytesProcessed, Qt::QueuedConnection);
+
+    m_networkThread.setObjectName(QStringLiteral("MicArrayNetworkThread"));
+    m_protocolThread.setObjectName(QStringLiteral("MicArrayProtocolThread"));
+    m_protocolThread.start();
+    m_networkThread.start();
+}
+
+DeviceClient::~DeviceClient()
+{
+    disconnectFromDevice();
+
+    m_networkThread.quit();
+    m_protocolThread.quit();
+    m_networkThread.wait(2000);
+    m_protocolThread.wait(2000);
 }
 
 void DeviceClient::connectToDevice(const QString &host, quint16 port)
 {
-    m_manualDisconnect = false;
     m_host = host;
     m_port = port;
-    m_codec.clear();
-    m_socket.abort();
+    m_bytesReceived = 0;
+    m_framesReceived = 0;
+    m_parseErrorCount = 0;
+    m_protocolBytesParsed = 0;
+    m_protocolBytesDiscarded = 0;
+    m_protocolBufferedBytes = 0;
+    m_receiveBackpressureActive = false;
+    m_pendingProtocolBytes = 0;
+    if (m_protocolWorker != nullptr) {
+        QMetaObject::invokeMethod(m_protocolWorker, "clear", Qt::QueuedConnection);
+    }
     setState(DeviceState::Connecting);
-    emit logMessage(QStringLiteral("device"), QStringLiteral("Connecting to %1:%2").arg(m_host).arg(m_port));
-    m_socket.connectToHost(m_host, m_port);
+    QMetaObject::invokeMethod(m_networkWorker,
+                              "connectToHost",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, m_host),
+                              Q_ARG(quint16, m_port),
+                              Q_ARG(bool, m_autoReconnect));
 }
 
 void DeviceClient::disconnectFromDevice()
 {
-    m_manualDisconnect = true;
-    m_reconnectTimer.stop();
-    m_heartbeatTimer.stop();
-    m_socket.disconnectFromHost();
-    if (m_socket.state() == QAbstractSocket::UnconnectedState) {
-        setState(DeviceState::Disconnected);
+    if (m_networkWorker != nullptr) {
+        const Qt::ConnectionType connectionType =
+            m_networkThread.isRunning() && QThread::currentThread() != m_networkWorker->thread()
+            ? Qt::BlockingQueuedConnection
+            : Qt::DirectConnection;
+        QMetaObject::invokeMethod(m_networkWorker, "disconnectFromHost", connectionType);
     }
 }
 
 bool DeviceClient::sendControl(const ControlValues &values)
 {
-    if (m_state != DeviceState::Connected || m_socket.state() != QAbstractSocket::ConnectedState) {
+    if (m_state != DeviceState::Connected) {
         emit warningMessage(QStringLiteral("device"), QStringLiteral("Cannot send control frame while device is disconnected"));
         return false;
     }
 
     const QByteArray frame = ProtocolCodec::encodeControl(values);
-    const qint64 written = m_socket.write(frame);
-    m_socket.flush();
-    if (written != frame.size()) {
-        emit errorMessage(QStringLiteral("device"), QStringLiteral("Control frame write failed"));
-        return false;
-    }
-
-    emit logMessage(QStringLiteral("device"), QStringLiteral("Control frame sent"));
+    QMetaObject::invokeMethod(m_networkWorker,
+                              "sendFrame",
+                              Qt::QueuedConnection,
+                              Q_ARG(QByteArray, frame),
+                              Q_ARG(QString, QStringLiteral("Control frame")));
     return true;
 }
 
-void DeviceClient::onConnected()
+void DeviceClient::setAutoReconnect(bool enabled)
 {
-    setState(DeviceState::Connected);
-    emit logMessage(QStringLiteral("device"), QStringLiteral("Connected to %1:%2").arg(m_host).arg(m_port));
-    sendHeartbeat();
-    m_heartbeatTimer.start();
+    m_autoReconnect = enabled;
 }
 
-void DeviceClient::onDisconnected()
+void DeviceClient::onBytesReceivedChanged(quint64 totalBytes, QDateTime lastReceiveTime)
 {
-    m_heartbeatTimer.stop();
-    emit warningMessage(QStringLiteral("device"), QStringLiteral("Disconnected from device"));
-    if (m_manualDisconnect || !m_autoReconnect) {
-        setState(DeviceState::Disconnected);
-    } else {
-        scheduleReconnect();
-    }
-}
-
-void DeviceClient::onReadyRead()
-{
-    const QByteArray data = m_socket.readAll();
-    m_bytesReceived += data.size();
-    m_lastReceiveTime = QDateTime::currentDateTime();
-
-    const ParseResult result = m_codec.parseIncoming(data);
-    for (const ParseError &error : result.errors) {
-        ++m_parseErrorCount;
-        emit parseErrorReceived(error);
-        emit warningMessage(QStringLiteral("protocol"), error.message);
-    }
-
-    for (const HostFrame &frame : result.frames) {
-        ++m_framesReceived;
-        emit frameReceived(frame);
-        if (frame.rawType == static_cast<quint16>(FrameType::Audio)) {
-            emit audioFrameReceived(frame);
-        } else if (frame.rawType == static_cast<quint16>(FrameType::Video)) {
-            emit videoFrameReceived(frame);
-        }
-    }
-
+    m_bytesReceived = totalBytes;
+    m_lastReceiveTime = lastReceiveTime;
     emit statisticsChanged();
 }
 
-void DeviceClient::onSocketError(QAbstractSocket::SocketError)
+void DeviceClient::onProtocolStatisticsChanged(quint64 frames, quint64 errors)
 {
-    emit errorMessage(QStringLiteral("device"), m_socket.errorString());
-    if (!m_manualDisconnect && m_autoReconnect) {
-        scheduleReconnect();
-    } else {
-        setState(DeviceState::Error);
-    }
+    m_framesReceived = frames;
+    m_parseErrorCount = errors;
+    emit statisticsChanged();
 }
 
-void DeviceClient::sendHeartbeat()
+void DeviceClient::onProtocolPipelineMetricsChanged(quint64, quint64 bytesParsed, quint64 bytesDiscarded, qint64 bufferedBytes)
 {
-    if (m_socket.state() != QAbstractSocket::ConnectedState) {
-        return;
-    }
-    m_socket.write(ProtocolCodec::encodeHeartbeat());
-    m_socket.flush();
+    m_protocolBytesParsed = bytesParsed;
+    m_protocolBytesDiscarded = bytesDiscarded;
+    m_protocolBufferedBytes = static_cast<qsizetype>(std::max<qint64>(0, bufferedBytes));
+    emit statisticsChanged();
 }
 
-void DeviceClient::reconnect()
+void DeviceClient::onReceiveBackpressureChanged(bool active, qint64 pendingProtocolBytes)
 {
-    connectToDevice(m_host, m_port);
+    m_receiveBackpressureActive = active;
+    m_pendingProtocolBytes = pendingProtocolBytes;
+    emit statisticsChanged();
 }
 
 void DeviceClient::setState(DeviceState state)
@@ -153,15 +171,6 @@ void DeviceClient::setState(DeviceState state)
     m_state = state;
     emit stateChanged(m_state);
     emit statisticsChanged();
-}
-
-void DeviceClient::scheduleReconnect()
-{
-    setState(DeviceState::Reconnecting);
-    if (!m_reconnectTimer.isActive()) {
-        emit warningMessage(QStringLiteral("device"), QStringLiteral("Reconnecting in 2 seconds"));
-        m_reconnectTimer.start();
-    }
 }
 
 } // namespace MicArray

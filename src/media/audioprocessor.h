@@ -18,6 +18,7 @@ class AudioProcessor : public QObject
 public:
     explicit AudioProcessor(QObject *parent = nullptr);
 
+public slots:
     void configure(const AudioSettings &settings);
     void processPcmFrame(const QByteArray &payload, quint32 timestampSeconds, quint32 timestampMicros);
     void processArrayFrame(const QByteArray &payload, quint32 timestampSeconds, quint32 timestampMicros);

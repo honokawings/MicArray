@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QList>
+#include <QMetaType>
 #include <QString>
 
 namespace MicArray {
@@ -57,3 +58,5 @@ private:
 };
 
 } // namespace MicArray
+
+Q_DECLARE_METATYPE(MicArray::DecodedAudioFrame)

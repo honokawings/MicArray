@@ -4,6 +4,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
+#include <QImage>
 #include <QLabel>
 #include <QMainWindow>
 #include <QPlainTextEdit>
@@ -12,6 +13,7 @@
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTextEdit>
+#include <QThread>
 #include <QTimer>
 #include <QVector>
 
@@ -32,6 +34,7 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow() override;
 
 private slots:
     void applyPreset(int index);
@@ -45,6 +48,8 @@ private slots:
     void showVideoFrame(const QImage &image, double fps, quint32 timestampSeconds, quint32 timestampMicros);
     void updateAudioLevel(double peakLevel, qint64 bytesReceived, quint32 timestampSeconds, quint32 timestampMicros);
     void showArrayFrame(const DecodedAudioFrame &frame);
+    void renderPendingVideoFrame();
+    void renderPendingAudioFrame();
     void updateAudioSettingsFromUi();
 
 private:
@@ -69,10 +74,26 @@ private:
     AppSettings m_settings;
     Logger m_logger;
     DeviceClient m_client;
-    VideoDecoder m_videoDecoder;
-    AudioProcessor m_audioProcessor;
+    QThread m_audioThread;
+    QThread m_videoThread;
+    VideoDecoder *m_videoDecoder = nullptr;
+    AudioProcessor *m_audioProcessor = nullptr;
     QElapsedTimer m_connectionTimer;
     ControlValues m_controlValues;
+    int m_videoDecodedFrames = 0;
+    qint64 m_audioBytesReceived = 0;
+    int m_audioDroppedFrames = 0;
+    int m_audioOutputChannel = 0;
+    int m_audioAverageWindowFrames = 100;
+    QTimer m_videoRenderTimer;
+    QTimer m_audioRenderTimer;
+    QImage m_pendingVideoImage;
+    double m_pendingVideoFps = 0.0;
+    quint32 m_pendingVideoTimestampSeconds = 0;
+    quint32 m_pendingVideoTimestampMicros = 0;
+    bool m_hasPendingVideoFrame = false;
+    DecodedAudioFrame m_pendingAudioFrame;
+    bool m_hasPendingAudioFrame = false;
 
     QComboBox *m_presetCombo = nullptr;
     QLineEdit *m_hostEdit = nullptr;

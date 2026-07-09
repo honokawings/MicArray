@@ -14,10 +14,12 @@ set(MICARRAY_SOURCES
     src/app/logger.cpp
     src/control/controlvalues.cpp
     src/device/deviceclient.cpp
+    src/device/networkworker.cpp
     src/media/audioframedecoder.cpp
     src/media/audioprocessor.cpp
     src/media/videodecoder.cpp
     src/protocol/protocolcodec.cpp
+    src/protocol/protocolworker.cpp
     src/ui/audiowaveformwidget.cpp
     src/ui/mainwindow.cpp
 )
@@ -27,10 +29,12 @@ set(MICARRAY_HEADERS
     src/app/logger.h
     src/control/controlvalues.h
     src/device/deviceclient.h
+    src/device/networkworker.h
     src/media/audioframedecoder.h
     src/media/audioprocessor.h
     src/media/videodecoder.h
     src/protocol/protocolcodec.h
+    src/protocol/protocolworker.h
     src/ui/audiowaveformwidget.h
     src/ui/mainwindow.h
 )

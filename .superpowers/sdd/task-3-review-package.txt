@@ -1,0 +1,934 @@
+﻿BASE: working tree after Task 2
+HEAD: current working tree after Task 3 fixes
+NOTE: Task 1/2 are approved prerequisites.
+STAT:
+ tools/mock_device_server.py | 349 ++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 320 insertions(+), 29 deletions(-)
+TRACKED DIFF:
+diff --git a/tools/mock_device_server.py b/tools/mock_device_server.py
+index 9cf9804..5660ba7 100644
+--- a/tools/mock_device_server.py
++++ b/tools/mock_device_server.py
+@@ -26,20 +26,23 @@ TYPE_CONTROL = 0xCC11
+ AUDIO_CHANNELS = 48
+ BYTES_PER_CHANNEL = 4
+ SAMPLES_PER_AUDIO_FRAME = 200
+ DEFAULT_SAMPLE_RATE = 48_000
+ BYTES_PER_SAMPLE_POINT = AUDIO_CHANNELS * BYTES_PER_CHANNEL
+ AUDIO_PAYLOAD_LEN = SAMPLES_PER_AUDIO_FRAME * BYTES_PER_SAMPLE_POINT
+ MEDIA_HEADER_LEN = 16
+ MEDIA_TAIL_LEN = 2
+ VIDEO_TAIL_LEN = 1
+ 
++BLOCKED_SEND_THRESHOLD_SECONDS = 0.010
++BITS_PER_MEGABIT = 1_000_000
++
+ HEARTBEAT_FRAME_LEN = 10
+ CONTROL_FRAME_LEN = 26
+ 
+ # A tiny 2x2 JPEG generated from a PPM test pattern with cjpeg. The
+ # upper-computer only needs a decodable payload for smoke testing the video path;
+ # the audio and calibration paths are the focus.
+ JPEG_PAYLOAD = base64.b64decode(
+     b"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5"
+     b"PTgyPC4zNDL/2wBDAQgJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAC"
+     b"AAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1Fh"
+@@ -52,20 +55,184 @@ JPEG_PAYLOAD = base64.b64decode(
+ )
+ 
+ 
+ @dataclass
+ class ClientStats:
+     heartbeats: int = 0
+     controls: int = 0
+     received_bytes: int = 0
+     sent_audio_frames: int = 0
+     sent_video_frames: int = 0
++    sent_bytes: int = 0
++    send_calls: int = 0
++    blocked_send_calls: int = 0
++    total_blocked_seconds: float = 0.0
++    max_send_seconds: float = 0.0
++    burst_count: int = 0
++    burst_bytes: int = 0
++    burst_overruns: int = 0
++    peak_interval_mbps: float = 0.0
++    session_started_at: float = 0.0
++    interval_started_at: float = 0.0
++    interval_sent_bytes: int = 0
++    interval_audio_frames: int = 0
++    interval_video_frames: int = 0
++
++    def record_send(self, frame_type: int, byte_count: int, elapsed: float) -> None:
++        self.sent_bytes += byte_count
++        self.send_calls += 1
++        self.interval_sent_bytes += byte_count
++        self.max_send_seconds = max(self.max_send_seconds, elapsed)
++
++        if frame_type == TYPE_AUDIO:
++            self.sent_audio_frames += 1
++            self.interval_audio_frames += 1
++        elif frame_type == TYPE_VIDEO:
++            self.sent_video_frames += 1
++            self.interval_video_frames += 1
++
++        if elapsed >= BLOCKED_SEND_THRESHOLD_SECONDS:
++            self.blocked_send_calls += 1
++            self.total_blocked_seconds += elapsed
++
++
++def send_media_frame(
++    conn: socket.socket,
++    frame_type: int,
++    payload: bytes,
++    stats: ClientStats,
++    clock=time.monotonic,
++) -> int:
++    frame = pack_media_frame(frame_type, payload)
++    started_at = clock()
++    conn.sendall(frame)
++    elapsed = clock() - started_at
++    stats.record_send(frame_type, len(frame), elapsed)
++    return len(frame)
++
++
++def send_next_audio(
++    conn,
++    args,
++    stats: ClientStats,
++    sequence: int,
++    clock=time.monotonic,
++) -> int:
++    payload = make_audio_payload(sequence, args.pattern, args.hot_channel, args.sample_rate)
++    return send_media_frame(conn, TYPE_AUDIO, payload, stats, clock=clock)
++
++
++def send_burst(
++    conn,
++    args,
++    stats: ClientStats,
++    sequence: int,
++    target_bytes: int,
++    clock=time.monotonic,
++    should_stop=None,
++    deadline: float | None = None,
++) -> tuple[int, int]:
++    sent_bytes = 0
++    next_sequence = sequence
++
++    while sent_bytes < target_bytes:
++        if should_stop is not None and should_stop():
++            return next_sequence, sent_bytes
++        if deadline is not None and clock() >= deadline:
++            return next_sequence, sent_bytes
++        sent_bytes += send_next_audio(conn, args, stats, next_sequence, clock=clock)
++        next_sequence += 1
++
++    stats.burst_count += 1
++    stats.burst_bytes += sent_bytes
++    return next_sequence, sent_bytes
++
++
++def rate_limit_delay(
++    start_time: float,
++    sent_bytes: int,
++    target_mbps: float,
++    now: float,
++) -> float:
++    if target_mbps <= 0:
++        return 0.0
++    expected_elapsed = sent_bytes * 8 / (target_mbps * BITS_PER_MEGABIT)
++    return max(0.0, expected_elapsed - max(0.0, now - start_time))
++
++
++def compute_audio_send_delay(
++    args: argparse.Namespace,
++    stats: ClientStats,
++    audio_interval: float,
++    now: float,
++    jitter_source=random.uniform,
++) -> float:
++    if args.stress_mode == "sustained":
++        return rate_limit_delay(stats.session_started_at, stats.sent_bytes, args.target_mbps, now)
++
++    if audio_interval <= 0:
++        return 0.0
++
++    jitter_seconds = jitter_source(-args.jitter_ms, args.jitter_ms) / 1000.0 if args.jitter_ms > 0 else 0.0
++    return max(0.0, audio_interval + jitter_seconds)
++
++
++def format_periodic_stats(stats: ClientStats, now: float) -> str:
++    interval_seconds = max(0.0, now - stats.interval_started_at)
++    interval_mbps = stats.interval_sent_bytes * 8 / interval_seconds / BITS_PER_MEGABIT if interval_seconds > 0 else 0.0
++    audio_fps = stats.interval_audio_frames / interval_seconds if interval_seconds > 0 else 0.0
++    video_fps = stats.interval_video_frames / interval_seconds if interval_seconds > 0 else 0.0
++    stats.peak_interval_mbps = max(stats.peak_interval_mbps, interval_mbps)
++    sent_mib = stats.sent_bytes / 1024 / 1024
++    blocked_ms = stats.total_blocked_seconds * 1000.0
++
++    stats.interval_started_at = now
++    stats.interval_sent_bytes = 0
++    stats.interval_audio_frames = 0
++    stats.interval_video_frames = 0
++
++    return (
++        "[stats] interval={:.2f}s tx={:.2f} Mb/s audio={:.2f} fps video={:.2f} fps "
++        "sent={:.2f} MiB blocked={:.1f} ms"
++    ).format(
++        interval_seconds,
++        interval_mbps,
++        audio_fps,
++        video_fps,
++        sent_mib,
++        blocked_ms,
++    )
++
++
++def format_session_summary(stats: ClientStats, now: float) -> str:
++    duration = max(0.0, now - stats.session_started_at)
++    average_mbps = stats.sent_bytes * 8 / duration / BITS_PER_MEGABIT if duration > 0 else 0.0
++    sent_mib = stats.sent_bytes / 1024 / 1024
++
++    return (
++        "[summary] duration={:.2f}s sent={:.2f} MiB avg={:.2f} Mb/s peak={:.2f} Mb/s "
++        "audio_frames={} video_frames={} blocked={}/{} max_send={:.1f} ms "
++        "bursts={} burst_bytes={:.2f} MiB overruns={}"
++    ).format(
++        duration,
++        sent_mib,
++        average_mbps,
++        stats.peak_interval_mbps,
++        stats.sent_audio_frames,
++        stats.sent_video_frames,
++        stats.blocked_send_calls,
++        stats.send_calls,
++        stats.max_send_seconds * 1000.0,
++        stats.burst_count,
++        stats.burst_bytes / 1024 / 1024,
++        stats.burst_overruns,
++    )
+ 
+ 
+ def monotonic_timestamp() -> tuple[int, int]:
+     now = time.time()
+     seconds = int(now)
+     micros = int((now - seconds) * 1_000_000)
+     return seconds, micros
+ 
+ 
+ def pack_media_frame(frame_type: int, payload: bytes) -> bytes:
+@@ -134,20 +301,27 @@ def make_audio_payload(sequence: int, pattern: str, hot_channel: int, sample_rat
+             payload.extend(struct.pack("<i", sample))
+     return bytes(payload)
+ 
+ 
+ def format_hex(data: bytes, max_len: int = 64) -> str:
+     clipped = data[:max_len]
+     suffix = " ..." if len(data) > max_len else ""
+     return clipped.hex(" ") + suffix
+ 
+ 
++def finite_float(text: str) -> float:
++    value = float(text)
++    if not math.isfinite(value):
++        raise argparse.ArgumentTypeError("value must be finite")
++    return value
++
++
+ def parse_control_frame(frame: bytes) -> tuple[int, ...] | None:
+     if len(frame) != CONTROL_FRAME_LEN:
+         return None
+     header = struct.unpack("<H", frame[:2])[0]
+     frame_type = struct.unpack("<H", frame[2:4])[0]
+     payload_len = struct.unpack("<I", frame[4:8])[0]
+     tail = struct.unpack("<H", frame[-2:])[0]
+     if header != HEADER or frame_type != TYPE_CONTROL or payload_len != 0x16 or tail != TAIL:
+         return None
+     return struct.unpack("<8h", frame[8:24])
+@@ -229,92 +403,180 @@ def parse_uplink_buffer(buffer: bytearray, stats: ClientStats, verbose: bool) ->
+         del buffer[:1]
+ 
+ 
+ def sleep_with_jitter(base_seconds: float, jitter_ms: float) -> None:
+     if base_seconds <= 0:
+         return
+     jitter_seconds = random.uniform(-jitter_ms, jitter_ms) / 1000.0 if jitter_ms > 0 else 0.0
+     time.sleep(max(0.0, base_seconds + jitter_seconds))
+ 
+ 
++def maybe_emit_periodic_stats(stats: ClientStats, stats_interval: float, now: float) -> None:
++    if now - stats.interval_started_at < stats_interval:
++        return
++    print(format_periodic_stats(stats, now), flush=True)
++
++
++def flush_final_interval_stats(stats: ClientStats, now: float, emit=print) -> bool:
++    if stats.interval_sent_bytes == 0 and stats.interval_audio_frames == 0 and stats.interval_video_frames == 0:
++        return False
++    emit(format_periodic_stats(stats, now))
++    return True
++
++
++def maybe_print_verbose_progress(stats: ClientStats, args: argparse.Namespace) -> None:
++    if not args.verbose:
++        return
++    if stats.sent_audio_frames % max(1, int(args.audio_fps)) != 0:
++        return
++    print(
++        "[tx] audio_frames={} video_frames={} rx_bytes={}".format(
++            stats.sent_audio_frames,
++            stats.sent_video_frames,
++            stats.received_bytes,
++        ),
++        flush=True,
++    )
++
++
+ def handle_client(conn: socket.socket, addr: tuple[str, int], args: argparse.Namespace) -> None:
+     print(f"[server] client connected from {addr[0]}:{addr[1]}", flush=True)
+     stop_event = threading.Event()
+     stats = ClientStats()
++    session_started_at = time.monotonic()
++    stats.session_started_at = session_started_at
++    stats.interval_started_at = session_started_at
+     rx_thread = threading.Thread(
+         target=receiver_loop,
+         args=(conn, stop_event, stats, args.verbose),
+         daemon=True,
+     )
+     rx_thread.start()
+ 
+     audio_interval = 1.0 / args.audio_fps if args.audio_fps > 0 else 0.0
+     video_interval = 1.0 / args.video_fps if args.video_fps > 0 else 0.0
+-    last_video_send = 0.0
++    next_video_deadline = session_started_at
++    session_deadline = session_started_at + args.duration if args.duration > 0 else None
++    burst_target_bytes = int(math.ceil(args.burst_size_mb * 1024 * 1024))
++    next_burst_deadline = session_started_at
+     sequence = 0
+ 
+     try:
+         while not stop_event.is_set():
+-            audio_payload = make_audio_payload(sequence, args.pattern, args.hot_channel, args.sample_rate)
+-            conn.sendall(pack_media_frame(TYPE_AUDIO, audio_payload))
+-            stats.sent_audio_frames += 1
+-
+             now = time.monotonic()
+-            if not args.no_video and args.video_fps > 0 and now - last_video_send >= video_interval:
+-                conn.sendall(pack_media_frame(TYPE_VIDEO, JPEG_PAYLOAD))
+-                stats.sent_video_frames += 1
+-                last_video_send = now
+-
+-            if args.verbose and stats.sent_audio_frames % max(1, int(args.audio_fps)) == 0:
+-                print(
+-                    "[tx] audio_frames={} video_frames={} rx_bytes={}".format(
+-                        stats.sent_audio_frames,
+-                        stats.sent_video_frames,
+-                        stats.received_bytes,
+-                    ),
+-                    flush=True,
++            if session_deadline is not None and now >= session_deadline:
++                break
++
++            maybe_emit_periodic_stats(stats, args.stats_interval, now)
++
++            if args.stress_mode == "burst":
++                if not args.no_video and args.video_fps > 0 and now >= next_video_deadline and now < next_burst_deadline:
++                    send_media_frame(conn, TYPE_VIDEO, JPEG_PAYLOAD, stats)
++                    next_video_deadline = time.monotonic() + video_interval
++                    maybe_emit_periodic_stats(stats, args.stats_interval, time.monotonic())
++                    continue
++
++                if now < next_burst_deadline:
++                    wait_deadline = next_burst_deadline
++                    wait_deadline = min(wait_deadline, stats.interval_started_at + args.stats_interval)
++                    if not args.no_video and args.video_fps > 0:
++                        wait_deadline = min(wait_deadline, next_video_deadline)
++                    if session_deadline is not None:
++                        wait_deadline = min(wait_deadline, session_deadline)
++                    timeout = max(0.0, wait_deadline - now)
++                    if timeout > 0 and stop_event.wait(timeout):
++                        break
++                    continue
++
++                sequence, _actual_burst_bytes = send_burst(
++                    conn,
++                    args,
++                    stats,
++                    sequence,
++                    burst_target_bytes,
++                    should_stop=stop_event.is_set,
++                    deadline=session_deadline,
+                 )
+-
++                if _actual_burst_bytes == 0:
++                    if stop_event.is_set():
++                        break
++                    now = time.monotonic()
++                    if session_deadline is not None and now >= session_deadline:
++                        break
++                    continue
++                maybe_print_verbose_progress(stats, args)
++                now = time.monotonic()
++                maybe_emit_periodic_stats(stats, args.stats_interval, now)
++                scheduled_next_burst_deadline = next_burst_deadline + args.burst_interval
++                if now > scheduled_next_burst_deadline:
++                    stats.burst_overruns += 1
++                next_burst_deadline = scheduled_next_burst_deadline
++                continue
++
++            send_next_audio(conn, args, stats, sequence)
+             sequence += 1
+-            sleep_with_jitter(audio_interval, args.jitter_ms)
++            now = time.monotonic()
++
++            if not args.no_video and args.video_fps > 0 and now >= next_video_deadline:
++                send_media_frame(conn, TYPE_VIDEO, JPEG_PAYLOAD, stats)
++                next_video_deadline = time.monotonic() + video_interval
++
++            maybe_print_verbose_progress(stats, args)
++            maybe_emit_periodic_stats(stats, args.stats_interval, time.monotonic())
++
++            delay = compute_audio_send_delay(args, stats, audio_interval, time.monotonic())
++            if delay > 0 and stop_event.wait(delay):
++                break
+     except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+         print(f"[tx] client connection closed: {exc}", flush=True)
+     finally:
++        summary_now = time.monotonic()
++        flush_final_interval_stats(stats, summary_now, emit=lambda line: print(line, flush=True))
+         stop_event.set()
+         try:
+             conn.close()
+         except OSError:
+             pass
+         rx_thread.join(timeout=1.0)
++        print(format_session_summary(stats, summary_now), flush=True)
+         print(
+             "[server] client session ended: audio_frames={} video_frames={} heartbeats={} controls={}".format(
+                 stats.sent_audio_frames,
+                 stats.sent_video_frames,
+                 stats.heartbeats,
+                 stats.controls,
+             ),
+             flush=True,
+         )
+ 
+ 
+ def run_server(args: argparse.Namespace) -> int:
+     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+         server.bind((args.host, args.port))
+         server.listen(1)
++        stress_settings = [f"stress={args.stress_mode}", f"duration={args.duration}", f"stats_interval={args.stats_interval}"]
++        if args.stress_mode == "sustained":
++            stress_settings.append(f"target_mbps={args.target_mbps}")
++        elif args.stress_mode == "burst":
++            stress_settings.append(f"burst_size_mb={args.burst_size_mb}")
++            stress_settings.append(f"burst_interval={args.burst_interval}")
++        else:
++            stress_settings.append(f"jitter_ms={args.jitter_ms}")
+         print(
+-            "[server] listening on {}:{} audio_fps={} video_fps={} pattern={}".format(
++            "[server] listening on {}:{} audio_fps={} video_fps={} pattern={} {}".format(
+                 args.host,
+                 args.port,
+                 args.audio_fps,
+                 0 if args.no_video else args.video_fps,
+                 args.pattern,
++                " ".join(stress_settings),
+             ),
+             flush=True,
+         )
+ 
+         while True:
+             try:
+                 conn, addr = server.accept()
+             except KeyboardInterrupt:
+                 print("\n[server] stopped", flush=True)
+                 return 0
+@@ -364,29 +626,63 @@ def self_test() -> int:
+         + struct.pack("<8h", -1, 0, 1, 100, -100, 32767, -32768, 42)
+         + struct.pack("<H", TAIL)
+     )
+     values = parse_control_frame(control)
+     assert values == (-1, 0, 1, 100, -100, 32767, -32768, 42), values
+ 
+     print("self-test passed")
+     return 0
+ 
+ 
++def validate_args(args: argparse.Namespace) -> None:
++    if args.audio_fps <= 0:
++        raise ValueError("--audio-fps must be > 0")
++    if args.sample_rate <= 0:
++        raise ValueError("--sample-rate must be > 0")
++    if args.video_fps < 0:
++        raise ValueError("--video-fps must be >= 0")
++    if args.jitter_ms < 0:
++        raise ValueError("--jitter-ms must be >= 0")
++    if args.duration < 0:
++        raise ValueError("--duration must be >= 0")
++    if args.target_mbps < 0:
++        raise ValueError("--target-mbps must be >= 0")
++    if args.stats_interval <= 0:
++        raise ValueError("--stats-interval must be > 0")
++    if args.burst_size_mb <= 0:
++        raise ValueError("--burst-size-mb must be > 0")
++    if args.burst_interval <= 0:
++        raise ValueError("--burst-interval must be > 0")
++    if args.target_mbps != 0 and args.stress_mode != "sustained":
++        raise ValueError("--target-mbps requires --stress-mode sustained")
++
++
+ def build_parser() -> argparse.ArgumentParser:
+     parser = argparse.ArgumentParser(
+         description="Standalone mock TCP device server for MicArray testing.",
+     )
+     parser.add_argument("--host", default="0.0.0.0", help="listen address, default: 0.0.0.0")
+     parser.add_argument("--port", type=int, default=9968, help="listen port, default: 9968")
+     parser.add_argument("--audio-fps", type=float, default=240.0, help="audio frame send rate, default: 240 for 200 samples/frame at 48 kHz")
+     parser.add_argument("--sample-rate", type=int, default=DEFAULT_SAMPLE_RATE, help="simulated audio sample rate, default: 48000")
+     parser.add_argument("--video-fps", type=float, default=1.0, help="JPEG frame send rate, default: 1")
++    parser.add_argument(
++        "--stress-mode",
++        choices=("normal", "sustained", "burst"),
++        default="normal",
++        help="pressure test mode",
++    )
++    parser.add_argument("--duration", type=finite_float, default=0.0, help="test duration in seconds")
++    parser.add_argument("--target-mbps", type=finite_float, default=0.0, help="target throughput in Mbps")
++    parser.add_argument("--stats-interval", type=finite_float, default=1.0, help="stats interval in seconds")
++    parser.add_argument("--burst-size-mb", type=finite_float, default=32.0, help="burst size in MB")
++    parser.add_argument("--burst-interval", type=finite_float, default=1.0, help="burst interval in seconds")
+     parser.add_argument("--no-video", action="store_true", help="disable video frame sending")
+     parser.add_argument(
+         "--pattern",
+         choices=("gradient", "pulse", "single-hot", "checker"),
+         default="gradient",
+         help="48-channel amplitude pattern",
+     )
+     parser.add_argument("--hot-channel", type=int, default=0, help="hot channel for pulse/single-hot patterns")
+     parser.add_argument("--jitter-ms", type=float, default=0.0, help="random send interval jitter in milliseconds")
+     parser.add_argument("--verbose", action="store_true", help="print periodic tx/rx diagnostics")
+@@ -395,28 +691,23 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+     parser = build_parser()
+     args = parser.parse_args(argv)
+ 
+     if args.self_test:
+         return self_test()
+ 
+     args.hot_channel = max(0, min(AUDIO_CHANNELS - 1, args.hot_channel))
+-    if args.audio_fps <= 0:
+-        parser.error("--audio-fps must be > 0")
+-    if args.sample_rate <= 0:
+-        parser.error("--sample-rate must be > 0")
+-    if args.video_fps < 0:
+-        parser.error("--video-fps must be >= 0")
+-    if args.jitter_ms < 0:
+-        parser.error("--jitter-ms must be >= 0")
+ 
+     try:
++        validate_args(args)
+         return run_server(args)
++    except ValueError as exc:
++        parser.error(str(exc))
+     except KeyboardInterrupt:
+         print("\n[server] stopped", flush=True)
+         return 0
+ 
+ 
+ if __name__ == "__main__":
+     sys.exit(main())
+CURRENT TEST FILE:
+import argparse
+import contextlib
+import importlib.util
+import io
+import pathlib
+import struct
+import sys
+import unittest
+
+
+MODULE_PATH = pathlib.Path(__file__).resolve().parents[2] / "tools" / "mock_device_server.py"
+
+
+def load_module():
+    spec = importlib.util.spec_from_file_location("tools.mock_device_server", MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+class ArgumentValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_module()
+
+    def test_default_pressure_arguments_validate_successfully(self):
+        parser = self.mod.build_parser()
+        args = parser.parse_args([])
+        self.assertEqual(args.stress_mode, "normal")
+        self.assertEqual(args.duration, 0.0)
+        self.assertEqual(args.target_mbps, 0.0)
+        self.assertEqual(args.stats_interval, 1.0)
+        self.assertEqual(args.burst_size_mb, 32.0)
+        self.assertEqual(args.burst_interval, 1.0)
+        self.mod.validate_args(args)
+
+    def test_sustained_mode_accepts_target_mbps(self):
+        args = self.mod.build_parser().parse_args(["--stress-mode", "sustained", "--target-mbps", "100"])
+        self.mod.validate_args(args)
+
+    def test_burst_mode_rejects_target_mbps_via_main(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit):
+                self.mod.main(["--stress-mode", "burst", "--target-mbps", "100"])
+        self.assertIn("--target-mbps requires --stress-mode sustained", stderr.getvalue())
+
+    def test_negative_duration_is_rejected(self):
+        args = self.mod.build_parser().parse_args(["--duration", "-0.1"])
+        with self.assertRaises(ValueError):
+            self.mod.validate_args(args)
+
+    def test_nan_target_is_rejected(self):
+        with self.assertRaises(argparse.ArgumentTypeError):
+            self.mod.finite_float("nan")
+
+    def test_zero_stats_interval_is_rejected(self):
+        args = self.mod.build_parser().parse_args(["--stats-interval", "0"])
+        with self.assertRaises(ValueError):
+            self.mod.validate_args(args)
+
+    def test_zero_burst_size_is_rejected(self):
+        args = self.mod.build_parser().parse_args(["--burst-size-mb", "0"])
+        with self.assertRaises(ValueError):
+            self.mod.validate_args(args)
+
+    def test_infinite_burst_interval_is_rejected(self):
+        with self.assertRaises(argparse.ArgumentTypeError):
+            self.mod.finite_float("inf")
+
+
+class FakeSocket:
+    def __init__(self, *, fail: Exception | None = None):
+        self.writes: list[bytes] = []
+        self.fail = fail
+
+    def sendall(self, data: bytes) -> None:
+        if self.fail is not None:
+            raise self.fail
+        self.writes.append(data)
+
+
+class FailOnNthSendSocket(FakeSocket):
+    def __init__(self, fail_on_call: int):
+        super().__init__()
+        self.fail_on_call = fail_on_call
+        self.calls = 0
+
+    def sendall(self, data: bytes) -> None:
+        self.calls += 1
+        if self.calls == self.fail_on_call:
+            raise OSError("burst send failed")
+        self.writes.append(data)
+
+
+class SendingMetricsTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_module()
+
+    def _clock(self, *values: float):
+        iterator = iter(values)
+        return lambda: next(iterator)
+
+    def test_video_send_records_blocked_metrics_for_slow_send(self):
+        stats = self.mod.ClientStats()
+        conn = FakeSocket()
+        payload = b"video"
+
+        frame_bytes = self.mod.send_media_frame(
+            conn,
+            self.mod.TYPE_VIDEO,
+            payload,
+            stats,
+            clock=self._clock(100.0, 100.025),
+        )
+
+        self.assertEqual(frame_bytes, len(conn.writes[0]))
+        self.assertEqual(stats.sent_bytes, frame_bytes)
+        self.assertEqual(stats.sent_video_frames, 1)
+        self.assertEqual(stats.sent_audio_frames, 0)
+        self.assertEqual(stats.send_calls, 1)
+        self.assertEqual(stats.blocked_send_calls, 1)
+        self.assertAlmostEqual(stats.total_blocked_seconds, 0.025)
+        self.assertAlmostEqual(stats.max_send_seconds, 0.025)
+        self.assertEqual(stats.interval_video_frames, 1)
+        self.assertEqual(stats.interval_audio_frames, 0)
+        self.assertEqual(stats.interval_sent_bytes, frame_bytes)
+
+    def test_fast_send_updates_maximum_without_blocked_count(self):
+        stats = self.mod.ClientStats()
+        conn = FakeSocket()
+
+        self.mod.send_media_frame(
+            conn,
+            self.mod.TYPE_AUDIO,
+            b"audio",
+            stats,
+            clock=self._clock(200.0, 200.009),
+        )
+
+        self.assertEqual(stats.send_calls, 1)
+        self.assertEqual(stats.blocked_send_calls, 0)
+        self.assertEqual(stats.total_blocked_seconds, 0.0)
+        self.assertAlmostEqual(stats.max_send_seconds, 0.009)
+
+    def test_failed_sendall_does_not_update_successful_counters(self):
+        stats = self.mod.ClientStats()
+        conn = FakeSocket(fail=OSError("send failed"))
+
+        with self.assertRaises(OSError):
+            self.mod.send_media_frame(
+                conn,
+                self.mod.TYPE_AUDIO,
+                b"audio",
+                stats,
+                clock=self._clock(300.0, 300.020),
+            )
+
+        self.assertEqual(conn.writes, [])
+        self.assertEqual(stats.sent_bytes, 0)
+        self.assertEqual(stats.send_calls, 0)
+        self.assertEqual(stats.blocked_send_calls, 0)
+        self.assertEqual(stats.total_blocked_seconds, 0.0)
+        self.assertEqual(stats.max_send_seconds, 0.0)
+        self.assertEqual(stats.sent_audio_frames, 0)
+        self.assertEqual(stats.sent_video_frames, 0)
+
+    def test_rate_limit_delay_for_target_schedule(self):
+        delay = self.mod.rate_limit_delay(10.0, 12_500_000, 100.0, 10.75)
+        self.assertAlmostEqual(delay, 0.25)
+
+    def test_rate_limit_delay_returns_zero_for_unlimited_target(self):
+        self.assertEqual(self.mod.rate_limit_delay(10.0, 1_000_000, 0.0, 10.5), 0.0)
+
+    def test_rate_limit_delay_returns_zero_when_already_behind(self):
+        delay = self.mod.rate_limit_delay(10.0, 1_000_000, 100.0, 10.5)
+        self.assertEqual(delay, 0.0)
+
+
+class SchedulerTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_module()
+        self.args = self.mod.build_parser().parse_args([])
+
+    def _stepping_clock(self, start: float = 100.0, step: float = 0.001):
+        current = start - step
+
+        def inner():
+            nonlocal current
+            current += step
+            return current
+
+        return inner
+
+    def test_burst_reaches_target_using_only_complete_audio_frames(self):
+        stats = self.mod.ClientStats()
+        conn = FakeSocket()
+
+        next_sequence, actual_sent_bytes = self.mod.send_burst(
+            conn,
+            self.args,
+            stats,
+            sequence=10,
+            target_bytes=100000,
+            clock=self._stepping_clock(),
+        )
+
+        self.assertEqual(len(conn.writes), 3)
+        self.assertEqual(actual_sent_bytes, 3 * (self.mod.MEDIA_HEADER_LEN + self.mod.AUDIO_PAYLOAD_LEN + self.mod.MEDIA_TAIL_LEN))
+        self.assertEqual(next_sequence, 13)
+
+    def test_burst_frames_are_protocol_valid_audio_frames(self):
+        stats = self.mod.ClientStats()
+        conn = FakeSocket()
+
+        self.mod.send_burst(
+            conn,
+            self.args,
+            stats,
+            sequence=0,
+            target_bytes=100000,
+            clock=self._stepping_clock(),
+        )
+
+        for frame in conn.writes:
+            self.assertEqual(frame[:4], bytes.fromhex("7e 7e 11 ee"))
+            self.assertEqual(struct.unpack("<I", frame[4:8])[0], self.mod.AUDIO_PAYLOAD_LEN)
+            self.assertEqual(frame[-2:], bytes.fromhex("0a 0d"))
+
+    def test_burst_metrics_update_only_after_completion(self):
+        stats = self.mod.ClientStats()
+        conn = FailOnNthSendSocket(fail_on_call=2)
+
+        with self.assertRaises(OSError):
+            self.mod.send_burst(
+                conn,
+                self.args,
+                stats,
+                sequence=0,
+                target_bytes=100000,
+                clock=self._stepping_clock(),
+            )
+
+        self.assertEqual(stats.burst_count, 0)
+        self.assertEqual(stats.burst_bytes, 0)
+        self.assertEqual(stats.sent_audio_frames, 1)
+
+    def test_burst_stop_after_complete_frame_does_not_count_incomplete_burst(self):
+        stats = self.mod.ClientStats()
+        conn = FakeSocket()
+        frame_bytes = self.mod.MEDIA_HEADER_LEN + self.mod.AUDIO_PAYLOAD_LEN + self.mod.MEDIA_TAIL_LEN
+
+        next_sequence, actual_sent_bytes = self.mod.send_burst(
+            conn,
+            self.args,
+            stats,
+            sequence=7,
+            target_bytes=100000,
+            clock=self._stepping_clock(),
+            should_stop=lambda: len(conn.writes) >= 1,
+        )
+
+        self.assertEqual(len(conn.writes), 1)
+        self.assertEqual(next_sequence, 8)
+        self.assertEqual(actual_sent_bytes, frame_bytes)
+        self.assertEqual(stats.burst_count, 0)
+        self.assertEqual(stats.burst_bytes, 0)
+        self.assertEqual(stats.sent_audio_frames, 1)
+        self.assertEqual(conn.writes[0][:4], bytes.fromhex("7e 7e 11 ee"))
+        self.assertEqual(struct.unpack("<I", conn.writes[0][4:8])[0], self.mod.AUDIO_PAYLOAD_LEN)
+        self.assertEqual(conn.writes[0][-2:], bytes.fromhex("0a 0d"))
+
+    def test_periodic_report_computes_rate_and_resets_only_interval_counters(self):
+        stats = self.mod.ClientStats(
+            sent_bytes=1_500_000,
+            sent_audio_frames=300,
+            sent_video_frames=12,
+            total_blocked_seconds=0.050,
+            session_started_at=1.0,
+            interval_started_at=10.0,
+            interval_sent_bytes=1_000_000,
+            interval_audio_frames=240,
+            interval_video_frames=5,
+        )
+
+        report = self.mod.format_periodic_stats(stats, now=11.0)
+
+        self.assertIn("tx=8.00 Mb/s", report)
+        self.assertIn("audio=240.00 fps", report)
+        self.assertIn("video=5.00 fps", report)
+        self.assertIn("sent=1.43 MiB", report)
+        self.assertIn("blocked=50.0 ms", report)
+        self.assertAlmostEqual(stats.peak_interval_mbps, 8.0)
+        self.assertEqual(stats.interval_started_at, 11.0)
+        self.assertEqual(stats.interval_sent_bytes, 0)
+        self.assertEqual(stats.interval_audio_frames, 0)
+        self.assertEqual(stats.interval_video_frames, 0)
+        self.assertEqual(stats.sent_bytes, 1_500_000)
+        self.assertEqual(stats.sent_audio_frames, 300)
+        self.assertEqual(stats.sent_video_frames, 12)
+        self.assertAlmostEqual(stats.total_blocked_seconds, 0.050)
+
+    def test_session_summary_reports_expected_rates_and_burst_metrics(self):
+        stats = self.mod.ClientStats(
+            sent_audio_frames=300,
+            sent_video_frames=12,
+            sent_bytes=12_500_000,
+            send_calls=100,
+            blocked_send_calls=2,
+            total_blocked_seconds=0.050,
+            max_send_seconds=0.125,
+            burst_count=3,
+            burst_overruns=1,
+            peak_interval_mbps=120.0,
+            session_started_at=20.0,
+        )
+
+        summary = self.mod.format_session_summary(stats, now=21.0)
+
+        self.assertIn("duration=1.00s", summary)
+        self.assertIn("sent=11.92 MiB", summary)
+        self.assertIn("avg=100.00 Mb/s", summary)
+        self.assertIn("peak=120.00 Mb/s", summary)
+        self.assertIn("audio_frames=300", summary)
+        self.assertIn("video_frames=12", summary)
+        self.assertIn("blocked=2/100", summary)
+        self.assertIn("max_send=125.0 ms", summary)
+        self.assertIn("bursts=3", summary)
+        self.assertIn("overruns=1", summary)
+
+    def test_final_interval_flush_emits_stats_and_updates_peak_before_summary(self):
+        stats = self.mod.ClientStats(
+            sent_bytes=1_000_000,
+            session_started_at=10.0,
+            interval_started_at=10.0,
+            interval_sent_bytes=1_000_000,
+            interval_audio_frames=240,
+        )
+        lines: list[str] = []
+
+        emitted = self.mod.flush_final_interval_stats(stats, now=11.0, emit=lines.append)
+
+        self.assertTrue(emitted)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("tx=8.00 Mb/s", lines[0])
+        self.assertAlmostEqual(stats.peak_interval_mbps, 8.0)
+        summary = self.mod.format_session_summary(stats, now=11.0)
+        self.assertIn("peak=8.00 Mb/s", summary)
+
+    def test_final_interval_flush_skips_empty_interval(self):
+        stats = self.mod.ClientStats(session_started_at=10.0, interval_started_at=10.0)
+        lines: list[str] = []
+
+        emitted = self.mod.flush_final_interval_stats(stats, now=11.0, emit=lines.append)
+
+        self.assertFalse(emitted)
+        self.assertEqual(lines, [])
+
+    def test_delay_helper_keeps_normal_pacing_and_skips_audio_interval_in_sustained_mode(self):
+        normal_args = self.mod.build_parser().parse_args(["--audio-fps", "200"])
+        sustained_args = self.mod.build_parser().parse_args(
+            ["--stress-mode", "sustained", "--audio-fps", "200", "--target-mbps", "100"]
+        )
+        stats = self.mod.ClientStats(session_started_at=10.0, sent_bytes=12_500_000)
+        audio_interval = 1.0 / normal_args.audio_fps
+
+        normal_delay = self.mod.compute_audio_send_delay(
+            normal_args,
+            stats,
+            audio_interval,
+            now=10.75,
+        )
+        sustained_delay = self.mod.compute_audio_send_delay(
+            sustained_args,
+            stats,
+            audio_interval,
+            now=10.75,
+        )
+
+        self.assertAlmostEqual(normal_delay, 0.005)
+        self.assertAlmostEqual(sustained_delay, 0.25)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

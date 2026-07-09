@@ -12,6 +12,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QMetaObject>
 #include <QPropertyAnimation>
 #include <QSplitter>
 #include <QStatusBar>
@@ -60,12 +61,40 @@ QString frameTypeName(quint16 rawType)
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+    qRegisterMetaType<AudioSettings>("AudioSettings");
+    qRegisterMetaType<DecodedAudioFrame>("MicArray::DecodedAudioFrame");
+
+    m_audioProcessor = new AudioProcessor;
+    m_videoDecoder = new VideoDecoder;
+    m_audioProcessor->moveToThread(&m_audioThread);
+    m_videoDecoder->moveToThread(&m_videoThread);
+    connect(&m_audioThread, &QThread::finished, m_audioProcessor, &QObject::deleteLater);
+    connect(&m_videoThread, &QThread::finished, m_videoDecoder, &QObject::deleteLater);
+    m_audioThread.setObjectName(QStringLiteral("MicArrayAudioThread"));
+    m_videoThread.setObjectName(QStringLiteral("MicArrayVideoThread"));
+    m_audioThread.start();
+    m_videoThread.start();
+
     buildUi();
     loadSettings();
     connectSignals();
+    m_videoRenderTimer.setInterval(33);
+    m_audioRenderTimer.setInterval(33);
+    connect(&m_videoRenderTimer, &QTimer::timeout, this, &MainWindow::renderPendingVideoFrame);
+    connect(&m_audioRenderTimer, &QTimer::timeout, this, &MainWindow::renderPendingAudioFrame);
+    m_videoRenderTimer.start();
+    m_audioRenderTimer.start();
     updateConnectionState(DeviceState::Disconnected);
     updateStatistics();
     m_logger.info(QStringLiteral("app"), QStringLiteral("MicArray 上位机已启动"));
+}
+
+MainWindow::~MainWindow()
+{
+    m_audioThread.quit();
+    m_videoThread.quit();
+    m_audioThread.wait(2000);
+    m_videoThread.wait(2000);
 }
 
 void MainWindow::buildUi()
@@ -362,26 +391,33 @@ void MainWindow::connectSignals()
     connect(&m_client, &DeviceClient::parseErrorReceived, this, &MainWindow::updateDebugError);
     connect(&m_client, &DeviceClient::frameReceived, this, &MainWindow::updateDebugFrame);
     connect(&m_client, &DeviceClient::audioFrameReceived, this, [this](const HostFrame &frame) {
-        m_audioProcessor.processArrayFrame(frame.payload, frame.timestampSeconds, frame.timestampMicros);
+        QMetaObject::invokeMethod(m_audioProcessor,
+                                  "processArrayFrame",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QByteArray, frame.payload),
+                                  Q_ARG(quint32, frame.timestampSeconds),
+                                  Q_ARG(quint32, frame.timestampMicros));
     });
     connect(&m_client, &DeviceClient::videoFrameReceived, this, [this](const HostFrame &frame) {
-        m_videoDecoder.decodeJpeg(frame.payload, frame.timestampSeconds, frame.timestampMicros);
+        QMetaObject::invokeMethod(m_videoDecoder,
+                                  "decodeJpeg",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QByteArray, frame.payload),
+                                  Q_ARG(quint32, frame.timestampSeconds),
+                                  Q_ARG(quint32, frame.timestampMicros));
     });
 
-    connect(&m_videoDecoder, &VideoDecoder::frameReady, this, &MainWindow::showVideoFrame);
-    connect(&m_videoDecoder, &VideoDecoder::decodeError, &m_logger, [this](const QString &message) {
+    connect(m_videoDecoder, &VideoDecoder::frameReady, this, &MainWindow::showVideoFrame, Qt::QueuedConnection);
+    connect(m_videoDecoder, &VideoDecoder::decodeError, &m_logger, [this](const QString &message) {
         m_logger.warning(QStringLiteral("video"), message);
-    });
-    connect(&m_audioProcessor, &AudioProcessor::levelChanged, this, &MainWindow::updateAudioLevel);
-    connect(&m_audioProcessor, &AudioProcessor::arrayFrameDecoded, this, [this](const DecodedAudioFrame &frame) {
-        if (m_waveformWidget != nullptr && frame.valid) {
-            m_waveformWidget->appendPcm16(frame.outputPcm16);
-        }
+    }, Qt::QueuedConnection);
+    connect(m_audioProcessor, &AudioProcessor::levelChanged, this, &MainWindow::updateAudioLevel, Qt::QueuedConnection);
+    connect(m_audioProcessor, &AudioProcessor::arrayFrameDecoded, this, [this](const DecodedAudioFrame &frame) {
         showArrayFrame(frame);
-    });
-    connect(&m_audioProcessor, &AudioProcessor::audioWarning, &m_logger, [this](const QString &message) {
+    }, Qt::QueuedConnection);
+    connect(m_audioProcessor, &AudioProcessor::audioWarning, &m_logger, [this](const QString &message) {
         m_logger.warning(QStringLiteral("audio"), message);
-    });
+    }, Qt::QueuedConnection);
     connect(&m_logger, &Logger::messageLogged, this, &MainWindow::appendLog);
 }
 
@@ -398,7 +434,12 @@ void MainWindow::loadSettings()
     m_outputChannelSpin->setValue(audio.outputChannel);
     m_averageWindowSpin->setValue(audio.averageWindowFrames);
     m_audioPlaybackCheck->setChecked(audio.playbackEnabled);
-    m_audioProcessor.configure(audio);
+    m_audioOutputChannel = audio.outputChannel;
+    m_audioAverageWindowFrames = audio.averageWindowFrames;
+    QMetaObject::invokeMethod(m_audioProcessor,
+                              "configure",
+                              Qt::QueuedConnection,
+                              Q_ARG(AudioSettings, audio));
 
     const VideoSettings video = m_settings.video();
     const int index = m_videoFormatCombo->findData(video.format);
@@ -485,14 +526,20 @@ void MainWindow::updateStatistics()
     const QString lastRx = m_client.lastReceiveTime().isValid()
         ? m_client.lastReceiveTime().toString(QStringLiteral("HH:mm:ss.zzz"))
         : QStringLiteral("-");
-    m_protocolStatsLabel->setText(QStringLiteral("最后接收: %1\n解析错误: %2\n视频帧: %3\n音频字节: %4\n音频丢帧: %5\n播放通道: %6\n平均窗口: %7 帧")
+    m_protocolStatsLabel->setText(QStringLiteral("最后接收: %1\n解析错误: %2\n接收字节: %3\n已解析字节: %4\n丢弃字节: %5\n协议缓冲: %6 B\n接收背压: %7\n待解析队列: %8 B\n视频帧: %9\n音频字节: %10\n音频丢帧: %11\n播放通道: %12\n平均窗口: %13 帧")
                                       .arg(lastRx)
                                       .arg(m_client.parseErrorCount())
-                                      .arg(m_videoDecoder.decodedFrames())
-                                      .arg(m_audioProcessor.bytesReceived())
-                                      .arg(m_audioProcessor.droppedFrames())
-                                      .arg(m_audioProcessor.outputChannel())
-                                      .arg(m_audioProcessor.averageWindowFrames()));
+                                      .arg(m_client.bytesReceived())
+                                      .arg(m_client.protocolBytesParsed())
+                                      .arg(m_client.protocolBytesDiscarded())
+                                      .arg(m_client.protocolBufferedBytes())
+                                      .arg(m_client.receiveBackpressureActive() ? QStringLiteral("启用") : QStringLiteral("正常"))
+                                      .arg(m_client.pendingProtocolBytes())
+                                      .arg(m_videoDecodedFrames)
+                                      .arg(m_audioBytesReceived)
+                                      .arg(m_audioDroppedFrames)
+                                      .arg(m_audioOutputChannel)
+                                      .arg(m_audioAverageWindowFrames));
 }
 
 void MainWindow::appendLog(LogLevel, const QString &, const QString &, const QString &formatted)
@@ -503,18 +550,17 @@ void MainWindow::appendLog(LogLevel, const QString &, const QString &, const QSt
 
 void MainWindow::showVideoFrame(const QImage &image, double fps, quint32 timestampSeconds, quint32 timestampMicros)
 {
-    m_videoLabel->setPixmap(QPixmap::fromImage(image).scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    m_videoStatsLabel->setText(QStringLiteral("视频: %1x%2  %3 FPS  时间戳 %4.%5")
-                                   .arg(image.width())
-                                   .arg(image.height())
-                                   .arg(fps, 0, 'f', 1)
-                                   .arg(timestampSeconds)
-                                   .arg(timestampMicros, 6, 10, QLatin1Char('0')));
-    updateStatistics();
+    ++m_videoDecodedFrames;
+    m_pendingVideoImage = image;
+    m_pendingVideoFps = fps;
+    m_pendingVideoTimestampSeconds = timestampSeconds;
+    m_pendingVideoTimestampMicros = timestampMicros;
+    m_hasPendingVideoFrame = true;
 }
 
 void MainWindow::updateAudioLevel(double peakLevel, qint64 bytesReceived, quint32 timestampSeconds, quint32 timestampMicros)
 {
+    m_audioBytesReceived = bytesReceived;
     m_audioLevel->setValue(static_cast<int>(std::clamp(peakLevel, 0.0, 1.0) * 100.0));
     m_audioStatsLabel->setText(QStringLiteral("音频: %1 B  选中通道峰值 %2%  时间戳 %3.%4")
                                    .arg(bytesReceived)
@@ -526,7 +572,39 @@ void MainWindow::updateAudioLevel(double peakLevel, qint64 bytesReceived, quint3
 
 void MainWindow::showArrayFrame(const DecodedAudioFrame &frame)
 {
-    updateCalibrationGrid(frame);
+    m_audioOutputChannel = frame.outputChannel;
+    m_pendingAudioFrame = frame;
+    m_hasPendingAudioFrame = true;
+}
+
+void MainWindow::renderPendingVideoFrame()
+{
+    if (!m_hasPendingVideoFrame || m_pendingVideoImage.isNull()) {
+        return;
+    }
+
+    m_videoLabel->setPixmap(QPixmap::fromImage(m_pendingVideoImage).scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    m_videoStatsLabel->setText(QStringLiteral("视频: %1x%2  %3 FPS  时间戳 %4.%5")
+                                   .arg(m_pendingVideoImage.width())
+                                   .arg(m_pendingVideoImage.height())
+                                   .arg(m_pendingVideoFps, 0, 'f', 1)
+                                   .arg(m_pendingVideoTimestampSeconds)
+                                   .arg(m_pendingVideoTimestampMicros, 6, 10, QLatin1Char('0')));
+    m_hasPendingVideoFrame = false;
+    updateStatistics();
+}
+
+void MainWindow::renderPendingAudioFrame()
+{
+    if (!m_hasPendingAudioFrame) {
+        return;
+    }
+
+    if (m_waveformWidget != nullptr && m_pendingAudioFrame.valid) {
+        m_waveformWidget->appendPcm16(m_pendingAudioFrame.outputPcm16);
+    }
+    updateCalibrationGrid(m_pendingAudioFrame);
+    m_hasPendingAudioFrame = false;
 }
 
 void MainWindow::updateAudioSettingsFromUi()
@@ -537,7 +615,12 @@ void MainWindow::updateAudioSettingsFromUi()
     audio.outputChannel = m_outputChannelSpin->value();
     audio.averageWindowFrames = m_averageWindowSpin->value();
     audio.playbackEnabled = m_audioPlaybackCheck->isChecked();
-    m_audioProcessor.configure(audio);
+    m_audioOutputChannel = audio.outputChannel;
+    m_audioAverageWindowFrames = audio.averageWindowFrames;
+    QMetaObject::invokeMethod(m_audioProcessor,
+                              "configure",
+                              Qt::QueuedConnection,
+                              Q_ARG(AudioSettings, audio));
     m_settings.saveAudio(audio);
     updateStatistics();
 }
@@ -618,7 +701,7 @@ void MainWindow::updateCalibrationGrid(const DecodedAudioFrame &frame)
     }
 
     m_calibrationStatsLabel->setText(QStringLiteral("窗口: %1 帧，最大通道 %2=%3，最小通道 %4=%5，播放通道 %6")
-                                         .arg(m_audioProcessor.averageWindowFrames())
+                                         .arg(m_audioAverageWindowFrames)
                                          .arg(frame.maxAverageChannel)
                                          .arg(frame.maxAverageAmplitude, 0, 'f', 0)
                                          .arg(frame.minAverageChannel)

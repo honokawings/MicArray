@@ -100,27 +100,36 @@ QByteArray ProtocolCodec::encodeControl(const ControlValues &values)
 ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
 {
     ParseResult result;
+    result.bufferBefore = m_buffer.size();
+    result.bytesAppended = streamChunk.size();
     m_buffer.append(streamChunk.data(), streamChunk.size());
+
+    const auto finish = [&result, this]() {
+        result.bufferAfter = m_buffer.size();
+        return result;
+    };
 
     while (true) {
         const qsizetype headerIndex = m_buffer.indexOf(QByteArray::fromHex("7e7e"));
         if (headerIndex < 0) {
             if (!m_buffer.isEmpty()) {
+                result.bytesDiscarded += m_buffer.size();
                 result.errors.append({ParseErrorCode::GarbageDiscarded,
                                       QStringLiteral("Discarded %1 bytes before frame header").arg(m_buffer.size())});
                 m_buffer.clear();
             }
-            return result;
+            return finish();
         }
 
         if (headerIndex > 0) {
+            result.bytesDiscarded += headerIndex;
             result.errors.append({ParseErrorCode::GarbageDiscarded,
                                   QStringLiteral("Discarded %1 bytes before frame header").arg(headerIndex)});
             m_buffer.remove(0, headerIndex);
         }
 
         if (m_buffer.size() < MediaHeaderSize) {
-            return result;
+            return finish();
         }
 
         const quint16 rawType = readU16(m_buffer, 2);
@@ -129,6 +138,7 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
         if (payloadLength > MaxPayloadSize) {
             result.errors.append({ParseErrorCode::InvalidLength,
                                   QStringLiteral("Payload length %1 exceeds maximum").arg(payloadLength)});
+            result.bytesDiscarded += 1;
             m_buffer.remove(0, 1);
             continue;
         }
@@ -136,7 +146,7 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
         const int tailSize = expectedIncomingTailSize(rawType);
         const qsizetype frameSize = MediaHeaderSize + payloadLength + tailSize;
         if (m_buffer.size() < frameSize) {
-            return result;
+            return finish();
         }
 
         const qsizetype tailOffset = MediaHeaderSize + payloadLength;
@@ -165,6 +175,7 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
                                 .arg(hexPreview(error.headerPreview))
                                 .arg(hexPreview(error.tailContext));
             result.errors.append(error);
+            result.bytesDiscarded += 1;
             m_buffer.remove(0, 1);
             continue;
         }
@@ -185,6 +196,8 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
                                       .arg(rawType, 4, 16, QLatin1Char('0'))});
         }
 
+        result.bytesParsed += frameSize;
+        result.frameSizes.append(frameSize);
         m_buffer.remove(0, frameSize);
     }
 }

@@ -13,6 +13,7 @@ class VideoDecoder : public QObject
 public:
     explicit VideoDecoder(QObject *parent = nullptr);
 
+public slots:
     bool decodeJpeg(const QByteArray &payload, quint32 timestampSeconds, quint32 timestampMicros);
     double framesPerSecond() const { return m_fps; }
     int decodedFrames() const { return m_decodedFrames; }

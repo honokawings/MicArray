@@ -5,6 +5,7 @@
 #include <QSignalSpy>
 
 #include "device/deviceclient.h"
+#include "device/networkworker.h"
 #include "protocol/protocolcodec.h"
 
 using namespace MicArray;
@@ -17,6 +18,10 @@ private slots:
     void sendsHeartbeatAfterConnect();
     void emitsFramesFromServerData();
     void emitsUnknownStructuredFramesOnlyToGenericSignal();
+    void exposesProtocolPipelineCounters();
+    void networkWorkerConfiguresBoundedReadBuffer();
+    void reportsNetworkReadBufferConfiguration();
+    void networkWorkerReportsReceiveBackpressure();
     void rejectsControlWhenDisconnected();
 };
 
@@ -90,6 +95,89 @@ void DeviceClientTest::emitsUnknownStructuredFramesOnlyToGenericSignal()
     QCOMPARE(videoSpy.count(), 0);
     QCOMPARE(client.framesReceived(), 1u);
     QCOMPARE(client.parseErrorCount(), 1u);
+}
+
+void DeviceClientTest::exposesProtocolPipelineCounters()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+
+    DeviceClient client;
+    client.setAutoReconnect(false);
+    QSignalSpy audioSpy(&client, &DeviceClient::audioFrameReceived);
+
+    client.connectToDevice(QStringLiteral("127.0.0.1"), server.serverPort());
+    QVERIFY(server.waitForNewConnection(1000));
+    QTcpSocket *socket = server.nextPendingConnection();
+    QVERIFY(socket != nullptr);
+
+    const QByteArray garbage = QByteArray::fromHex("0001");
+    const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
+    const QByteArray partial = QByteArray::fromHex("7e7e11ee010000000300000004000000");
+    socket->write(garbage + audio + partial);
+    QVERIFY(socket->waitForBytesWritten(1000));
+
+    QVERIFY(audioSpy.wait(1000));
+    QTRY_COMPARE_WITH_TIMEOUT(client.protocolBytesParsed(), quint64(audio.size()), 1000);
+    QCOMPARE(client.protocolBytesDiscarded(), quint64(garbage.size()));
+    QCOMPARE(client.protocolBufferedBytes(), qsizetype(partial.size()));
+}
+
+void DeviceClientTest::networkWorkerConfiguresBoundedReadBuffer()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+
+    NetworkWorker worker;
+    QSignalSpy configuredSpy(&worker, &NetworkWorker::transportConfigured);
+
+    worker.connectToHost(QStringLiteral("127.0.0.1"), server.serverPort(), false);
+
+    QCOMPARE(configuredSpy.count(), 1);
+    QCOMPARE(configuredSpy.takeFirst().at(0).toLongLong(), NetworkWorker::ReadBufferLimitBytes);
+}
+
+void DeviceClientTest::reportsNetworkReadBufferConfiguration()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+
+    DeviceClient client;
+    client.setAutoReconnect(false);
+    QSignalSpy logSpy(&client, &DeviceClient::logMessage);
+
+    client.connectToDevice(QStringLiteral("127.0.0.1"), server.serverPort());
+
+    QTRY_VERIFY_WITH_TIMEOUT(std::any_of(logSpy.cbegin(), logSpy.cend(), [](const QList<QVariant> &entry) {
+        return entry.size() >= 2
+            && entry.at(0).toString() == QStringLiteral("network")
+            && entry.at(1).toString().contains(QStringLiteral("read buffer"));
+    }), 1000);
+}
+
+void DeviceClientTest::networkWorkerReportsReceiveBackpressure()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+
+    NetworkWorker worker;
+    QSignalSpy backpressureSpy(&worker, &NetworkWorker::receiveBackpressureChanged);
+
+    worker.connectToHost(QStringLiteral("127.0.0.1"), server.serverPort(), false);
+    QVERIFY(server.waitForNewConnection(1000));
+    QTcpSocket *socket = server.nextPendingConnection();
+    QVERIFY(socket != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(socket->state(), QAbstractSocket::ConnectedState, 1000);
+
+    socket->write(QByteArray(NetworkWorker::PendingProtocolPauseBytes + 1024, char(0x55)));
+    QVERIFY(socket->waitForBytesWritten(1000));
+
+    QTRY_VERIFY_WITH_TIMEOUT(!backpressureSpy.isEmpty(), 1000);
+    QCOMPARE(backpressureSpy.takeFirst().at(0).toBool(), true);
+
+    worker.onProtocolBytesProcessed(NetworkWorker::PendingProtocolPauseBytes + 1024);
+    QTRY_VERIFY_WITH_TIMEOUT(!backpressureSpy.isEmpty(), 1000);
+    QCOMPARE(backpressureSpy.takeLast().at(0).toBool(), false);
 }
 
 void DeviceClientTest::rejectsControlWhenDisconnected()

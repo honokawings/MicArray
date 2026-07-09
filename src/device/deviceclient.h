@@ -2,13 +2,15 @@
 
 #include <QDateTime>
 #include <QObject>
-#include <QTcpSocket>
-#include <QTimer>
+#include <QThread>
 
 #include "control/controlvalues.h"
 #include "protocol/protocolcodec.h"
 
 namespace MicArray {
+
+class NetworkWorker;
+class ProtocolWorker;
 
 enum class DeviceState {
     Disconnected,
@@ -26,12 +28,13 @@ class DeviceClient : public QObject
 
 public:
     explicit DeviceClient(QObject *parent = nullptr);
+    ~DeviceClient() override;
 
     void connectToDevice(const QString &host, quint16 port);
     void disconnectFromDevice();
     bool sendControl(const ControlValues &values);
 
-    void setAutoReconnect(bool enabled) { m_autoReconnect = enabled; }
+    void setAutoReconnect(bool enabled);
     bool autoReconnect() const { return m_autoReconnect; }
     DeviceState state() const { return m_state; }
     QString host() const { return m_host; }
@@ -40,6 +43,11 @@ public:
     quint64 bytesReceived() const { return m_bytesReceived; }
     quint64 framesReceived() const { return m_framesReceived; }
     quint64 parseErrorCount() const { return m_parseErrorCount; }
+    quint64 protocolBytesParsed() const { return m_protocolBytesParsed; }
+    quint64 protocolBytesDiscarded() const { return m_protocolBytesDiscarded; }
+    qsizetype protocolBufferedBytes() const { return m_protocolBufferedBytes; }
+    bool receiveBackpressureActive() const { return m_receiveBackpressureActive; }
+    qint64 pendingProtocolBytes() const { return m_pendingProtocolBytes; }
 
 signals:
     void stateChanged(DeviceState state);
@@ -53,30 +61,33 @@ signals:
     void statisticsChanged();
 
 private slots:
-    void onConnected();
-    void onDisconnected();
-    void onReadyRead();
-    void onSocketError(QAbstractSocket::SocketError error);
-    void sendHeartbeat();
-    void reconnect();
+    void onBytesReceivedChanged(quint64 totalBytes, QDateTime lastReceiveTime);
+    void onProtocolStatisticsChanged(quint64 frames, quint64 errors);
+    void onProtocolPipelineMetricsChanged(quint64 bytesAppended, quint64 bytesParsed, quint64 bytesDiscarded, qint64 bufferedBytes);
+    void onReceiveBackpressureChanged(bool active, qint64 pendingProtocolBytes);
 
 private:
     void setState(DeviceState state);
-    void scheduleReconnect();
 
-    QTcpSocket m_socket;
-    QTimer m_heartbeatTimer;
-    QTimer m_reconnectTimer;
-    ProtocolCodec m_codec;
+    QThread m_networkThread;
+    QThread m_protocolThread;
+    NetworkWorker *m_networkWorker = nullptr;
+    ProtocolWorker *m_protocolWorker = nullptr;
     DeviceState m_state = DeviceState::Disconnected;
     QString m_host = QStringLiteral("192.168.2.10");
     quint16 m_port = 9968;
     bool m_autoReconnect = true;
-    bool m_manualDisconnect = false;
     QDateTime m_lastReceiveTime;
     quint64 m_bytesReceived = 0;
     quint64 m_framesReceived = 0;
     quint64 m_parseErrorCount = 0;
+    quint64 m_protocolBytesParsed = 0;
+    quint64 m_protocolBytesDiscarded = 0;
+    qsizetype m_protocolBufferedBytes = 0;
+    bool m_receiveBackpressureActive = false;
+    qint64 m_pendingProtocolBytes = 0;
 };
 
 } // namespace MicArray
+
+Q_DECLARE_METATYPE(MicArray::DeviceState)

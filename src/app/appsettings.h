@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QMetaType>
 #include <QObject>
 #include <QString>
 
@@ -40,3 +41,5 @@ public:
 };
 
 } // namespace MicArray
+
+Q_DECLARE_METATYPE(MicArray::AudioSettings)

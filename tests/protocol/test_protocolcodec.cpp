@@ -19,6 +19,7 @@ private slots:
     void keepsStructurallyValidUnknownTypeForDebug();
     void resynchronizesAfterGarbage();
     void reportsInvalidTailAndRecovers();
+    void reportsParseMetrics();
 };
 
 void ProtocolCodecTest::encodesHeartbeat()
@@ -152,6 +153,25 @@ void ProtocolCodecTest::reportsInvalidTailAndRecovers()
     QCOMPARE(result.errors.first().headerPreview.toHex(), QByteArray("7e7e11ee010000000100000001000000"));
     QVERIFY(!result.errors.first().tailContext.isEmpty());
     QCOMPARE(result.frames.first().type, FrameType::Video);
+}
+
+void ProtocolCodecTest::reportsParseMetrics()
+{
+    ProtocolCodec codec;
+    const QByteArray garbage = QByteArray::fromHex("0001");
+    const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
+    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a");
+    const QByteArray partial = QByteArray::fromHex("7e7e11ee010000000300000004000000");
+
+    const ParseResult result = codec.parseIncoming(garbage + audio + video + partial);
+
+    QCOMPARE(result.frames.size(), 2);
+    QCOMPARE(result.bytesAppended, qsizetype(garbage.size() + audio.size() + video.size() + partial.size()));
+    QCOMPARE(result.bufferBefore, qsizetype(0));
+    QCOMPARE(result.bytesDiscarded, qsizetype(garbage.size()));
+    QCOMPARE(result.bytesParsed, qsizetype(audio.size() + video.size()));
+    QCOMPARE(result.bufferAfter, qsizetype(partial.size()));
+    QCOMPARE(result.frameSizes, QList<qsizetype>({audio.size(), video.size()}));
 }
 
 QTEST_MAIN(ProtocolCodecTest)
