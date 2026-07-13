@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import math
 import random
 import socket
@@ -13,6 +12,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 
 HEADER = 0x7E7E
@@ -40,20 +40,20 @@ CLIENT_SOCKET_TIMEOUT_SECONDS = 0.5
 HEARTBEAT_FRAME_LEN = 10
 CONTROL_FRAME_LEN = 26
 
-# A tiny 2x2 JPEG generated from a PPM test pattern with cjpeg. The
-# upper-computer only needs a decodable payload for smoke testing the video path;
-# the audio and calibration paths are the focus.
-JPEG_PAYLOAD = base64.b64decode(
-    b"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5"
-    b"PTgyPC4zNDL/2wBDAQgJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAC"
-    b"AAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1Fh"
-    b"ByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJ"
-    b"ipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEB"
-    b"AQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl"
-    b"8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3"
-    b"uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD1jwfpenzeCdBllsbV5H063ZnaFSWJjXJJxya"
-    b"KKKrFUKXt5+4vil0Xd+Rh7Ck9XBX9F/kf/9k="
-)
+VIDEO_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "mock_video_1920x1080.jpg"
+
+
+def load_video_payload(path: Path) -> bytes:
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"Unable to read mock video asset '{path}': {exc}") from exc
+    if not payload:
+        raise RuntimeError(f"Mock video asset '{path}' is empty")
+    return payload
+
+
+JPEG_PAYLOAD = load_video_payload(VIDEO_ASSET_PATH)
 
 
 @dataclass
@@ -651,8 +651,8 @@ def self_test() -> int:
     ]
     assert max(output_channel_samples) > 0, max(output_channel_samples)
     assert min(output_channel_samples) < 0, min(output_channel_samples)
-    assert JPEG_PAYLOAD.startswith(b"\xff\xd8"), JPEG_PAYLOAD[:4].hex()
-    assert JPEG_PAYLOAD.endswith(b"\xff\xd9"), JPEG_PAYLOAD[-4:].hex()
+    assert JPEG_PAYLOAD, "mock video payload is empty"
+    assert JPEG_PAYLOAD == VIDEO_ASSET_PATH.read_bytes(), str(VIDEO_ASSET_PATH)
 
     frame = pack_media_frame(TYPE_AUDIO, payload)
     assert len(frame) == MEDIA_HEADER_LEN + AUDIO_PAYLOAD_LEN + MEDIA_TAIL_LEN, len(frame)
@@ -670,6 +670,7 @@ def self_test() -> int:
     assert tail == TAIL, hex(tail)
 
     video_frame = pack_media_frame(TYPE_VIDEO, JPEG_PAYLOAD)
+    assert video_frame[MEDIA_HEADER_LEN:-VIDEO_TAIL_LEN] == JPEG_PAYLOAD
     assert video_frame[-1:] == b"\x0a", video_frame[-4:].hex(" ")
     assert video_frame[-2:] != bytes.fromhex("0a 0d"), video_frame[-4:].hex(" ")
 

@@ -314,6 +314,14 @@ python tools\mock_device_server.py --host 0.0.0.0 --port 9968 --pattern gradient
 python tools\mock_device_server.py --self-test
 ```
 
+视频测试资源：
+
+- `tools/assets/mock_video_1920x1080.jpg` 是随模拟服务端提供的 `1920x1080` 工业测试图，包含彩色条、灰阶、网格和分辨率标识，用于观察上位机的视频解码、缩放和显示。
+- `tools/generate_mock_video_pattern.ps1` 用于重新生成该测试图；日常运行不需要执行该脚本。
+- 服务端从 `mock_device_server.py` 所在目录相对定位并一次性读取该资源，将其作为不透明字节缓存和发送，因此启动位置不影响资源查找。
+- 连接模拟服务端后，实时监控页应显示视频分辨率 `1920x1080`，预览保持原始宽高比。
+- Python 模拟服务端不解析或验证 JPEG 编码内容；JPEG 是否可解码由 Qt 上位机的 `QImage::loadFromData` 在接收端确认。
+
 常用参数：
 
 ```powershell
@@ -402,6 +410,7 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-13 | 模拟视频自检与文档修订 | tools、测试、文档 | 模拟服务端将 `1920x1080` 工业测试图作为脚本相对路径的不透明字节资源加载；自检确认缓存 payload 非空、与配置资源一致、完整写入视频帧且视频帧尾为单字节 `0A`。JPEG 解码有效性由 Qt 上位机确认，不在 Python 服务端解析。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools\mock_device_server.py --self-test`、从其他当前工作目录运行自检、`python -m py_compile tools\mock_device_server.py tests\tools\test_mock_device_server.py`、`cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md docs/superpowers/specs/2026-07-12-mock-server-1080p-test-pattern-design.md docs/superpowers/plans/2026-07-12-mock-server-1080p-test-pattern.md` |
 | 2026-07-09 | 压测能力增强 | tools、测试、文档 | `mock_device_server.py` 新增 `normal/sustained/burst` 压测用法说明与 `tx/average/peak/blocked/max_send/bursts/overruns` 指标解释；内置自检补充 burst/no-video 与限速校验；新增基于 `socket.socketpair()` 的自动化集成测试。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`python -m py_compile tools/mock_device_server.py tests/tools/test_mock_device_server.py`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md` |
 | 2026-07-09 | 稳定性增强 | 设备通信、协议线程、UI、测试、文档 | 新增网络到协议线程的 ACK 背压机制：`NetworkWorker` 统计已投递但未确认的待解析字节，超过 `4 MB` 暂停读取，降到 `2 MB` 以下恢复；`ProtocolWorker` 每个 chunk 解析完成后回 ACK；UI 诊断显示背压状态和待解析队列字节数。 | `cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |
 | 2026-07-08 | 稳定性增强 | 设备通信、测试、文档 | `NetworkWorker` 为 `QTcpSocket` 配置 `8 MB` 读缓冲上限并上报配置日志，避免高吞吐异常时应用侧接收缓冲无界增长；`DeviceClient` 断开请求改为同步投递到网络线程执行，提高析构和手动断开的确定性。 | `cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |

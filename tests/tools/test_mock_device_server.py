@@ -6,6 +6,7 @@ import pathlib
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import unittest
 
@@ -20,6 +21,35 @@ def load_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+class VideoPayloadTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_module()
+
+    def test_builtin_video_payload_equals_nonempty_asset_bytes(self):
+        self.assertTrue(self.mod.VIDEO_ASSET_PATH.is_file())
+        self.assertEqual(self.mod.JPEG_PAYLOAD, self.mod.VIDEO_ASSET_PATH.read_bytes())
+        self.assertTrue(self.mod.JPEG_PAYLOAD)
+
+    def test_load_video_payload_rejects_missing_asset(self):
+        missing = pathlib.Path(__file__).with_name("missing-video-asset.jpg")
+        with self.assertRaisesRegex(RuntimeError, "Unable to read mock video asset"):
+            self.mod.load_video_payload(missing)
+
+    def test_load_video_payload_rejects_empty_asset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "empty.jpg"
+            path.write_bytes(b"")
+            with self.assertRaisesRegex(RuntimeError, "is empty"):
+                self.mod.load_video_payload(path)
+
+    def test_load_video_payload_accepts_nonempty_opaque_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "opaque.bin"
+            payload = b"opaque mock video payload\x00\xff"
+            path.write_bytes(payload)
+            self.assertEqual(self.mod.load_video_payload(path), payload)
 
 
 class ArgumentValidationTests(unittest.TestCase):
@@ -738,6 +768,18 @@ class SelfTestCoverageTests(unittest.TestCase):
                 self.mod.self_test()
         finally:
             self.mod.rate_limit_delay = original_rate_limit_delay
+
+    def test_self_test_rejects_cached_video_payload_from_different_resource(self):
+        with tempfile.TemporaryDirectory() as directory:
+            replacement_path = pathlib.Path(directory) / "different-video-resource.bin"
+            replacement_path.write_bytes(b"different non-empty video resource")
+            original_video_asset_path = self.mod.VIDEO_ASSET_PATH
+            self.mod.VIDEO_ASSET_PATH = replacement_path
+            try:
+                with self.assertRaises(AssertionError):
+                    self.mod.self_test()
+            finally:
+                self.mod.VIDEO_ASSET_PATH = original_video_asset_path
 
 
 @unittest.skipUnless(hasattr(socket, "socketpair"), "socket.socketpair() is unavailable")
