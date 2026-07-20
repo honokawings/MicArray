@@ -23,6 +23,7 @@ public slots:
 signals:
     void frameReady(const QImage &image, double fps, quint32 timestampSeconds, quint32 timestampMicros);
     void decodeError(const QString &message);
+    void frameProcessed(bool valid);
 
 private:
     QElapsedTimer m_timer;

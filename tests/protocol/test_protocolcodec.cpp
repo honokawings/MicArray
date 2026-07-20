@@ -20,6 +20,9 @@ private slots:
     void resynchronizesAfterGarbage();
     void reportsInvalidTailAndRecovers();
     void reportsParseMetrics();
+    void capturesSixteenBytesAfterTailInSameChunk();
+    void completesPostTailPreviewAcrossChunksWithoutDelayingMediaFrame();
+    void flushesIncompletePostTailPreviewOnClear();
 };
 
 void ProtocolCodecTest::encodesHeartbeat()
@@ -172,6 +175,53 @@ void ProtocolCodecTest::reportsParseMetrics()
     QCOMPARE(result.bytesParsed, qsizetype(audio.size() + video.size()));
     QCOMPARE(result.bufferAfter, qsizetype(partial.size()));
     QCOMPARE(result.frameSizes, QList<qsizetype>({audio.size(), video.size()}));
+}
+
+void ProtocolCodecTest::capturesSixteenBytesAfterTailInSameChunk()
+{
+    ProtocolCodec codec;
+    const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
+    const QByteArray afterTail = QByteArray::fromHex("00112233445566778899aabbccddeeff");
+
+    const ParseResult result = codec.parseIncoming(audio + afterTail);
+
+    QCOMPARE(result.frames.size(), 1);
+    QCOMPARE(result.debugFrames.size(), 1);
+    QCOMPARE(result.debugFrames.first().postTailPreview, afterTail);
+    QVERIFY(result.debugFrames.first().postTailPreviewComplete);
+}
+
+void ProtocolCodecTest::completesPostTailPreviewAcrossChunksWithoutDelayingMediaFrame()
+{
+    ProtocolCodec codec;
+    const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
+    const QByteArray firstPreviewPart = QByteArray::fromHex("0011223344");
+    const QByteArray secondPreviewPart = QByteArray::fromHex("5566778899aabbccddeeff");
+
+    const ParseResult first = codec.parseIncoming(audio + firstPreviewPart);
+    QCOMPARE(first.frames.size(), 1);
+    QCOMPARE(first.debugFrames.size(), 0);
+
+    const ParseResult second = codec.parseIncoming(secondPreviewPart);
+    QCOMPARE(second.debugFrames.size(), 1);
+    QCOMPARE(second.debugFrames.first().postTailPreview, firstPreviewPart + secondPreviewPart);
+    QVERIFY(second.debugFrames.first().postTailPreviewComplete);
+}
+
+void ProtocolCodecTest::flushesIncompletePostTailPreviewOnClear()
+{
+    ProtocolCodec codec;
+    const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
+    const QByteArray afterTail = QByteArray::fromHex("aabbcc");
+
+    const ParseResult result = codec.parseIncoming(audio + afterTail);
+    QCOMPARE(result.frames.size(), 1);
+    QCOMPARE(result.debugFrames.size(), 0);
+
+    const QList<HostFrame> flushed = codec.clear();
+    QCOMPARE(flushed.size(), 1);
+    QCOMPARE(flushed.first().postTailPreview, afterTail);
+    QVERIFY(!flushed.first().postTailPreviewComplete);
 }
 
 QTEST_MAIN(ProtocolCodecTest)

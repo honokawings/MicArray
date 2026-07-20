@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 project(MicArray LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Test)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Test Charts)
 
 qt_standard_project_setup()
 
@@ -15,13 +15,23 @@ set(MICARRAY_SOURCES
     src/control/controlvalues.cpp
     src/device/deviceclient.cpp
     src/device/networkworker.cpp
+    src/diagnostics/alertcoalescer.cpp
+    src/diagnostics/diagnosticexporter.cpp
     src/media/audioframedecoder.cpp
     src/media/audioprocessor.cpp
+    src/media/audiorecorder.cpp
+    src/media/mediaframequeue.cpp
+    src/media/multichannelwavwriter.cpp
     src/media/videodecoder.cpp
+    src/monitoring/healthmonitor.cpp
     src/protocol/protocolcodec.cpp
     src/protocol/protocolworker.cpp
     src/ui/audiowaveformwidget.cpp
+    src/ui/arrayheatmapwidget.cpp
+    src/ui/displayformat.cpp
     src/ui/mainwindow.cpp
+    src/ui/trendchartwidget.cpp
+    src/ui/videopreviewwidget.cpp
 )
 
 set(MICARRAY_HEADERS
@@ -30,13 +40,23 @@ set(MICARRAY_HEADERS
     src/control/controlvalues.h
     src/device/deviceclient.h
     src/device/networkworker.h
+    src/diagnostics/alertcoalescer.h
+    src/diagnostics/diagnosticexporter.h
     src/media/audioframedecoder.h
     src/media/audioprocessor.h
+    src/media/audiorecorder.h
+    src/media/mediaframequeue.h
+    src/media/multichannelwavwriter.h
     src/media/videodecoder.h
+    src/monitoring/healthmonitor.h
     src/protocol/protocolcodec.h
     src/protocol/protocolworker.h
     src/ui/audiowaveformwidget.h
+    src/ui/arrayheatmapwidget.h
+    src/ui/displayformat.h
     src/ui/mainwindow.h
+    src/ui/trendchartwidget.h
+    src/ui/videopreviewwidget.h
 )
 
 list(TRANSFORM MICARRAY_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
@@ -58,6 +78,7 @@ target_link_libraries(MicArray
         Qt::Widgets
         Qt::Network
         Qt::Multimedia
+        Qt::Charts
 )
 
 enable_testing()
@@ -74,6 +95,7 @@ target_link_libraries(MicArrayCore
         Qt::Widgets
         Qt::Network
         Qt::Multimedia
+        Qt::Charts
 )
 
 qt_add_executable(test_protocol
@@ -96,6 +118,20 @@ qt_add_executable(test_media
 target_link_libraries(test_media PRIVATE MicArrayCore Qt::Test Qt::Gui Qt::Multimedia)
 add_test(NAME test_media COMMAND test_media)
 set_tests_properties(test_media PROPERTIES ENVIRONMENT "PATH=${QT_BIN_DIR};$ENV{PATH}")
+
+qt_add_executable(test_app
+    tests/app/test_app.cpp
+)
+target_link_libraries(test_app PRIVATE MicArrayCore Qt::Test)
+add_test(NAME test_app COMMAND test_app)
+set_tests_properties(test_app PROPERTIES ENVIRONMENT "PATH=${QT_BIN_DIR};$ENV{PATH}")
+
+qt_add_executable(test_ui
+    tests/ui/test_dashboard.cpp
+)
+target_link_libraries(test_ui PRIVATE MicArrayCore Qt::Test Qt::Charts)
+add_test(NAME test_ui COMMAND test_ui)
+set_tests_properties(test_ui PROPERTIES ENVIRONMENT "PATH=${QT_BIN_DIR};$ENV{PATH}")
 
 install(TARGETS MicArray
     BUNDLE  DESTINATION .

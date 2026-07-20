@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QImage>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QPlainTextEdit>
 #include <QProgressBar>
@@ -15,16 +16,25 @@
 #include <QTextEdit>
 #include <QThread>
 #include <QTimer>
+#include <QToolButton>
 #include <QVector>
 
 #include "app/appsettings.h"
 #include "app/logger.h"
 #include "control/controlvalues.h"
 #include "device/deviceclient.h"
+#include "diagnostics/alertcoalescer.h"
+#include "diagnostics/diagnosticexporter.h"
 #include "media/audioprocessor.h"
+#include "media/audiorecorder.h"
 #include "media/audioframedecoder.h"
+#include "media/mediaframequeue.h"
 #include "media/videodecoder.h"
+#include "monitoring/healthmonitor.h"
+#include "ui/arrayheatmapwidget.h"
 #include "ui/audiowaveformwidget.h"
+#include "ui/trendchartwidget.h"
+#include "ui/videopreviewwidget.h"
 
 namespace MicArray {
 
@@ -51,12 +61,28 @@ private slots:
     void renderPendingVideoFrame();
     void renderPendingAudioFrame();
     void updateAudioSettingsFromUi();
+    void updateHealthSnapshot();
+    void dispatchNextAudioFrame();
+    void dispatchNextVideoFrame();
+    void togglePresentationMode();
+    void applyControlPreset();
+    void saveControlPreset();
+    void deleteControlPreset();
+    void restoreLastSentControl();
+    void exportDiagnostics();
+    void resetSettingsToDefaults();
+    void startRecording();
+    void stopRecording();
+    void chooseRecordingDirectory();
+    void updateRecordingState(RecordingState state);
+    void updateRecordingStatistics(const RecordingStatistics &statistics);
 
 private:
     void buildUi();
     QWidget *buildMonitorPage();
     QWidget *buildDebugPage();
     QWidget *buildCalibrationPage();
+    QWidget *buildRecordingPage();
     void connectSignals();
     void loadSettings();
     void saveSettings();
@@ -70,10 +96,18 @@ private:
     static QString frameTypeDisplayName(quint16 rawType);
     void updateDebugSegments(const HostFrame &frame);
     void flashDebugSegments();
+    void refreshControlPresets();
+    void appendAlert(LogLevel level, const QString &message);
+    QVector<qint16> currentControlVector() const;
+    void setControlVector(const QVector<qint16> &values);
+    QVector<int> selectedRecordingChannels() const;
+    void setRecordingConfigurationEnabled(bool enabled);
+    void updateRecordingStartEnabled();
 
     AppSettings m_settings;
     Logger m_logger;
     DeviceClient m_client;
+    AudioRecorder m_audioRecorder;
     QThread m_audioThread;
     QThread m_videoThread;
     VideoDecoder *m_videoDecoder = nullptr;
@@ -82,7 +116,8 @@ private:
     ControlValues m_controlValues;
     int m_videoDecodedFrames = 0;
     qint64 m_audioBytesReceived = 0;
-    int m_audioDroppedFrames = 0;
+    quint64 m_audioDroppedFrames = 0;
+    quint64 m_videoDroppedFrames = 0;
     int m_audioOutputChannel = 0;
     int m_audioAverageWindowFrames = 100;
     QTimer m_videoRenderTimer;
@@ -94,6 +129,22 @@ private:
     bool m_hasPendingVideoFrame = false;
     DecodedAudioFrame m_pendingAudioFrame;
     bool m_hasPendingAudioFrame = false;
+    HealthMonitor m_healthMonitor;
+    HealthSnapshot m_healthSnapshot;
+    HealthLevel m_lastHealthLevel = HealthLevel::Disconnected;
+    QTimer m_healthTimer;
+    QElapsedTimer m_sessionTimer;
+    MediaFrameQueue m_audioFrameQueue {8};
+    MediaFrameQueue m_videoFrameQueue {1};
+    bool m_audioProcessing = false;
+    bool m_videoProcessing = false;
+    QVector<qint16> m_lastSentControlValues;
+    bool m_hasLastSentControl = false;
+    bool m_presentationMode = false;
+    AlertCoalescer m_alertCoalescer;
+    QStringList m_alertEvents;
+    QDateTime m_sessionStartedAt;
+    double m_peakReceiveMbps = 0.0;
 
     QComboBox *m_presetCombo = nullptr;
     QLineEdit *m_hostEdit = nullptr;
@@ -105,8 +156,11 @@ private:
     QLabel *m_heartbeatLabel = nullptr;
     QLabel *m_rateLabel = nullptr;
     QLabel *m_errorLabel = nullptr;
-    QLabel *m_videoLabel = nullptr;
+    QLabel *m_healthLabel = nullptr;
+    VideoPreviewWidget *m_videoLabel = nullptr;
     AudioWaveformWidget *m_waveformWidget = nullptr;
+    ArrayHeatmapWidget *m_dashboardHeatmap = nullptr;
+    TrendChartWidget *m_trendChart = nullptr;
     QLabel *m_videoStatsLabel = nullptr;
     QLabel *m_audioStatsLabel = nullptr;
     QProgressBar *m_audioLevel = nullptr;
@@ -114,13 +168,20 @@ private:
     QLabel *m_debugMetaLabel = nullptr;
     QLabel *m_debugHeadLabel = nullptr;
     QLabel *m_debugTailLabel = nullptr;
+    QLabel *m_debugPostTailLabel = nullptr;
     QSpinBox *m_debugHistorySpin = nullptr;
     QPlainTextEdit *m_debugHistoryView = nullptr;
     QPlainTextEdit *m_debugErrorView = nullptr;
     QLabel *m_calibrationStatsLabel = nullptr;
     QPlainTextEdit *m_logView = nullptr;
+    QPlainTextEdit *m_alertTimeline = nullptr;
     QPushButton *m_sendControlButton = nullptr;
     QPushButton *m_resetControlButton = nullptr;
+    QPushButton *m_undoControlButton = nullptr;
+    QComboBox *m_controlPresetCombo = nullptr;
+    QPushButton *m_applyPresetButton = nullptr;
+    QPushButton *m_savePresetButton = nullptr;
+    QPushButton *m_deletePresetButton = nullptr;
     QCheckBox *m_lockControlCheck = nullptr;
     QSpinBox *m_controlSpins[ControlValues::ChannelCount] {};
     QDoubleSpinBox *m_sampleRateSpin = nullptr;
@@ -129,8 +190,21 @@ private:
     QSpinBox *m_averageWindowSpin = nullptr;
     QCheckBox *m_audioPlaybackCheck = nullptr;
     QComboBox *m_videoFormatCombo = nullptr;
+    QPushButton *m_resetSettingsButton = nullptr;
     QVector<QLabel *> m_arrayCells;
     QVector<QLabel *> m_debugSegmentLabels;
+    QTabWidget *m_mainTabs = nullptr;
+    QPushButton *m_presentationButton = nullptr;
+    QPushButton *m_exportDiagnosticsButton = nullptr;
+    QLineEdit *m_recordingDirectoryEdit = nullptr;
+    QPushButton *m_recordingBrowseButton = nullptr;
+    QPushButton *m_recordingStartButton = nullptr;
+    QPushButton *m_recordingStopButton = nullptr;
+    QLabel *m_recordingStateLabel = nullptr;
+    QLabel *m_recordingStatisticsLabel = nullptr;
+    QLabel *m_recordingErrorLabel = nullptr;
+    QWidget *m_recordingSelectionCommands = nullptr;
+    QVector<QToolButton *> m_recordingChannelButtons;
     bool m_controlDirty = false;
 };
 

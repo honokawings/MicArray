@@ -6,6 +6,8 @@
 #include <QMetaType>
 #include <QString>
 
+#include <optional>
+
 namespace MicArray {
 
 enum class FrameType : quint16 {
@@ -24,6 +26,8 @@ struct HostFrame {
     quint32 timestampSeconds = 0;
     quint32 timestampMicros = 0;
     QByteArray payload;
+    QByteArray postTailPreview;
+    bool postTailPreviewComplete = false;
 };
 
 enum class ParseErrorCode {
@@ -48,6 +52,7 @@ struct ParseError {
 
 struct ParseResult {
     QList<HostFrame> frames;
+    QList<HostFrame> debugFrames;
     QList<ParseError> errors;
     qsizetype bytesAppended = 0;
     qsizetype bufferBefore = 0;
@@ -73,10 +78,11 @@ public:
     static QByteArray encodeControl(const ControlValues &values);
 
     ParseResult parseIncoming(QByteArrayView streamChunk);
-    void clear();
+    QList<HostFrame> clear();
 
 private:
     QByteArray m_buffer;
+    std::optional<HostFrame> m_pendingDebugFrame;
 };
 
 } // namespace MicArray

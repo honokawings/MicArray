@@ -99,6 +99,8 @@ QByteArray ProtocolCodec::encodeControl(const ControlValues &values)
 
 ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
 {
+    static constexpr qsizetype DebugPostTailPreviewSize = 16;
+
     ParseResult result;
     result.bufferBefore = m_buffer.size();
     result.bytesAppended = streamChunk.size();
@@ -108,6 +110,19 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
         result.bufferAfter = m_buffer.size();
         return result;
     };
+
+    if (m_pendingDebugFrame.has_value()) {
+        const qsizetype captured = m_pendingDebugFrame->postTailPreview.size();
+        const qsizetype available = std::max<qsizetype>(0, m_buffer.size() - captured);
+        const qsizetype required = DebugPostTailPreviewSize - captured;
+        m_pendingDebugFrame->postTailPreview.append(m_buffer.mid(captured, std::min(available, required)));
+        if (m_pendingDebugFrame->postTailPreview.size() < DebugPostTailPreviewSize) {
+            return finish();
+        }
+        m_pendingDebugFrame->postTailPreviewComplete = true;
+        result.debugFrames.append(*m_pendingDebugFrame);
+        m_pendingDebugFrame.reset();
+    }
 
     while (true) {
         const qsizetype headerIndex = m_buffer.indexOf(QByteArray::fromHex("7e7e"));
@@ -188,6 +203,8 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
         frame.timestampSeconds = readU32(m_buffer, 8);
         frame.timestampMicros = readU32(m_buffer, 12);
         frame.payload = m_buffer.mid(MediaHeaderSize, payloadLength);
+        frame.postTailPreview = m_buffer.mid(frameSize, DebugPostTailPreviewSize);
+        frame.postTailPreviewComplete = frame.postTailPreview.size() == DebugPostTailPreviewSize;
         result.frames.append(frame);
 
         if (!isMediaType(rawType)) {
@@ -199,12 +216,24 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
         result.bytesParsed += frameSize;
         result.frameSizes.append(frameSize);
         m_buffer.remove(0, frameSize);
+        if (frame.postTailPreviewComplete) {
+            result.debugFrames.append(frame);
+        } else {
+            m_pendingDebugFrame = frame;
+            return finish();
+        }
     }
 }
 
-void ProtocolCodec::clear()
+QList<HostFrame> ProtocolCodec::clear()
 {
+    QList<HostFrame> pendingFrames;
+    if (m_pendingDebugFrame.has_value()) {
+        pendingFrames.append(*m_pendingDebugFrame);
+    }
     m_buffer.clear();
+    m_pendingDebugFrame.reset();
+    return pendingFrames;
 }
 
 } // namespace MicArray

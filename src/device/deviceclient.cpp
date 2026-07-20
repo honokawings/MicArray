@@ -52,6 +52,11 @@ DeviceClient::DeviceClient(QObject *parent)
                         QStringLiteral("TCP read buffer limit configured: %1 B").arg(readBufferLimitBytes));
     }, Qt::QueuedConnection);
     connect(m_networkWorker, &NetworkWorker::receiveBackpressureChanged, this, &DeviceClient::onReceiveBackpressureChanged, Qt::QueuedConnection);
+    connect(m_networkWorker, &NetworkWorker::reconnectCountChanged, this, [this](quint64 count) {
+        m_reconnectCount = count;
+        emit reconnectCountChanged(count);
+        emit statisticsChanged();
+    }, Qt::QueuedConnection);
 
     connect(m_protocolWorker, &ProtocolWorker::frameParsed, this, &DeviceClient::frameReceived, Qt::QueuedConnection);
     connect(m_protocolWorker, &ProtocolWorker::audioFrameParsed, this, &DeviceClient::audioFrameReceived, Qt::QueuedConnection);
@@ -90,6 +95,9 @@ void DeviceClient::connectToDevice(const QString &host, quint16 port)
     m_protocolBufferedBytes = 0;
     m_receiveBackpressureActive = false;
     m_pendingProtocolBytes = 0;
+    m_reconnectCount = 0;
+    m_lastReceiveTime = QDateTime();
+    m_connectedSince = QDateTime();
     if (m_protocolWorker != nullptr) {
         QMetaObject::invokeMethod(m_protocolWorker, "clear", Qt::QueuedConnection);
     }
@@ -134,6 +142,12 @@ void DeviceClient::setAutoReconnect(bool enabled)
     m_autoReconnect = enabled;
 }
 
+qint64 DeviceClient::lastReceiveAgeMs() const
+{
+    const QDateTime reference = m_lastReceiveTime.isValid() ? m_lastReceiveTime : m_connectedSince;
+    return reference.isValid() ? std::max<qint64>(0, reference.msecsTo(QDateTime::currentDateTime())) : 0;
+}
+
 void DeviceClient::onBytesReceivedChanged(quint64 totalBytes, QDateTime lastReceiveTime)
 {
     m_bytesReceived = totalBytes;
@@ -169,6 +183,9 @@ void DeviceClient::setState(DeviceState state)
         return;
     }
     m_state = state;
+    if (state == DeviceState::Connected) {
+        m_connectedSince = QDateTime::currentDateTime();
+    }
     emit stateChanged(m_state);
     emit statisticsChanged();
 }

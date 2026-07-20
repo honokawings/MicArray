@@ -34,6 +34,7 @@ signals:
     void levelChanged(double peakLevel, qint64 bytesReceived, quint32 timestampSeconds, quint32 timestampMicros);
     void arrayFrameDecoded(const DecodedAudioFrame &frame);
     void audioWarning(const QString &message);
+    void frameProcessed(bool valid);
 
 private:
     QAudioFormat m_format;

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QObject>
+#include <QElapsedTimer>
 
+#include "diagnostics/alertcoalescer.h"
 #include "protocol/protocolcodec.h"
 
 namespace MicArray {
@@ -34,6 +36,9 @@ private:
     quint64 m_bytesAppended = 0;
     quint64 m_bytesParsed = 0;
     quint64 m_bytesDiscarded = 0;
+    QElapsedTimer m_debugSampleTimer;
+    QElapsedTimer m_errorTimer;
+    AlertCoalescer m_warningCoalescer;
 };
 
 } // namespace MicArray

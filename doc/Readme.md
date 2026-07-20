@@ -124,6 +124,26 @@ UI 支持有线、无线和自定义 IP/端口。
 - `AudioProcessor` 运行在独立音频处理线程，音频 payload 解码、平均幅值统计、监听通道 PCM 转换和可选播放不占用 UI 线程。
 - UI 只接收处理后的 `DecodedAudioFrame`，并通过定时刷新节流更新波形和阵列热力图，避免高频音频帧导致界面事件队列拥塞。
 
+### 多通道音频录制
+
+路径：
+
+- `src/media/audiorecorder.h`
+- `src/media/audiorecorder.cpp`
+- `src/media/multichannelwavwriter.h`
+- `src/media/multichannelwavwriter.cpp`
+
+功能与文件约定：
+
+- 可从 48 路阵列中任意选择一个或多个通道，按物理通道编号升序写入单个多通道 WAV 文件。
+- 录制直接使用协议层确认完整的原始音频 payload，不依赖播放通道、音频播放是否启用或 UI 波形刷新。
+- WAV 使用 `WAVE_FORMAT_EXTENSIBLE`，每通道为 32-bit 容器、24-bit 有效位，采样率使用开始录制时的音频设置。
+- 每个音频协议帧的 200 个采样点作为不可拆分单元写入；文件接近 RIFF 32-bit 大小上限时自动从完整帧边界分段，后续文件使用 `_part002.wav` 等后缀。
+- 同目录生成 JSON 清单，记录录制通道与 WAV 通道位置映射、分段文件、样本帧数、数据量、有效性和停止原因。
+- 录制文件与清单均采用不覆盖策略；同名目标已存在时开始录制失败，避免覆盖现场数据。
+- `AudioRecorder` 在专用工作线程串行写盘，UI 线程只执行有界入队；待写队列上限为 `64 MiB`，溢出或写盘失败会进入错误状态并停止接受后续帧。
+- 用户停止、设备断线和应用退出都会按顺序完成已接受帧、更新 WAV 头和 JSON 清单；异常或无效分段会在清单中明确标记。
+
 ### 控制层
 
 路径：
@@ -201,13 +221,19 @@ Connecting -> Error
 
 当前页面：
 
-- `Monitor`：连接、控制、媒体设置、视频预览、音频电平、诊断和日志。
+- `音视频融合`：连接、控制、媒体设置、视频预览、音频电平、诊断和日志。
 - 实时监控页的视频预览下方显示当前播放通道的滚动音频波形，用于快速确认选中通道是否有信号、是否削顶或静音。
-- `Frame Debug`：显示最近解析帧的元信息、前 16 字节和尾 16 字节；支持自定义历史保留帧数，并用分段动效展示帧头、类型、长度、时间戳、payload 和帧尾；原始字节预览和历史记录使用等宽字体，便于对齐查看。
+- `音频录制`：以 6x8 通道矩阵选择一个或多个通道，支持全选、清空、反选和同步当前监听通道，显示录制状态、时长、写入量、速率、待写队列、帧数、丢弃帧和清单路径。
+- `高级帧调试`：显示最近解析帧的元信息、前 16 字节、尾 16 字节和帧尾之后的实际 16 字节；跨 TCP chunk 时等待后续数据补齐，连接清理时以“不完整”标记未满 16 字节的后续预览。页面支持自定义历史保留帧数，并用分段动效展示帧头、类型、长度、时间戳、payload 和帧尾；原始字节预览和历史记录使用等宽字体，便于对齐查看。
 - 帧调试页包含“解析异常诊断”，当帧尾、长度或帧结构异常时显示帧类型、payload 长度、计算帧尾偏移、缓冲区大小、实际帧尾、期望帧尾、头 16 字节和帧尾附近上下文。
 - 实时诊断区域显示协议链路累计 `received/parsed/discarded/buffered` 指标；正常稳定链路下 parsed 应持续接近 received，discarded 不应持续增长，buffered 应只在半包期间短暂波动。
 - 实时诊断区域显示接收背压状态和待协议线程确认的字节数；背压短时触发表示应用正在自我保护，长期保持启用则说明协议解析或后续处理吞吐不足，需要降低设备帧率或继续优化处理链路。
 - `Array Calibration`：显示 6x8 阵列热力图，通道从左到右、从上到下编号 0-47。
+
+字节统计显示规则：
+
+- 面向操作人员的累计字节数、队列大小、写入量和传输速率使用 `B/KiB/MiB/GiB/TiB` 自适应显示，速率追加 `/s`。
+- 协议字段中的 payload 长度、帧大小、偏移和错误上下文保持精确字节数，不做单位换算，便于逐字节联调。
 
 阵列校准显示规则：
 
@@ -226,6 +252,8 @@ Connecting -> Error
 - 平均窗口变化后立即影响后续校准热力图。
 - 视频预览、音频波形和阵列热力图采用 UI 线程定时渲染，当前周期内多次到达的数据会合并为最新状态，降低高吞吐接收时的界面卡顿风险。
 - 网络接收、协议解析、音频处理、视频解码和 UI 绘图分别由不同线程/职责承担，UI 不直接执行 TCP 读取、流式拆包或媒体解码。
+- 录制期间锁定通道选择、采样率、保存目录和恢复默认设置，防止运行中改变 WAV 文件结构；监听通道仍可独立切换。
+- 未连接、未选择录制通道或保存目录不可写时禁用开始录制；设备断线会自动停止当前录制并保留已成功写入的数据。
 
 ## 发布脚本
 
@@ -266,6 +294,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps
 - `tests/protocol/test_protocolcodec.cpp`
 - `tests/device/test_deviceclient.cpp`
 - `tests/media/test_media.cpp`
+- `tests/ui/test_mainwindow.cpp`
 
 测试覆盖：
 
@@ -280,6 +309,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps
 - 选中通道监听 PCM 转换。
 - 阵列平均幅值窗口和归一化计算。
 - 音频输出格式配置。
+- 多通道 WAV 头、通道交织、自动分段、JSON 清单、不覆盖策略和文件写入异常。
+- 录制工作线程的开始/停止顺序、有界队列、队列溢出、格式错误和启动失败处理。
+- 自适应字节单位、录制页面交互、持久化默认通道和 1366x768 布局。
+- 帧尾后 16 字节在同一 chunk、跨 chunk 和连接清理场景下的调试预览。
 
 验证命令：
 
@@ -410,6 +443,7 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-13 | UI、录制与诊断增强 | UI、协议、媒体、测试、文档 | “交互驾驶舱”更名为“音视频融合”；操作统计改用自适应字节单位；高级帧调试历史增加帧尾后实际 16 字节及不完整标记；新增可任意选择 1-48 路通道的单文件多通道 WAV 异步录制、完整帧分段、JSON 清单、不覆盖保护、断线停止和录制状态诊断。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test` |
 | 2026-07-13 | 模拟视频自检与文档修订 | tools、测试、文档 | 模拟服务端将 `1920x1080` 工业测试图作为脚本相对路径的不透明字节资源加载；自检确认缓存 payload 非空、与配置资源一致、完整写入视频帧且视频帧尾为单字节 `0A`。JPEG 解码有效性由 Qt 上位机确认，不在 Python 服务端解析。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools\mock_device_server.py --self-test`、从其他当前工作目录运行自检、`python -m py_compile tools\mock_device_server.py tests\tools\test_mock_device_server.py`、`cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md docs/superpowers/specs/2026-07-12-mock-server-1080p-test-pattern-design.md docs/superpowers/plans/2026-07-12-mock-server-1080p-test-pattern.md` |
 | 2026-07-09 | 压测能力增强 | tools、测试、文档 | `mock_device_server.py` 新增 `normal/sustained/burst` 压测用法说明与 `tx/average/peak/blocked/max_send/bursts/overruns` 指标解释；内置自检补充 burst/no-video 与限速校验；新增基于 `socket.socketpair()` 的自动化集成测试。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`python -m py_compile tools/mock_device_server.py tests/tools/test_mock_device_server.py`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md` |
 | 2026-07-09 | 稳定性增强 | 设备通信、协议线程、UI、测试、文档 | 新增网络到协议线程的 ACK 背压机制：`NetworkWorker` 统计已投递但未确认的待解析字节，超过 `4 MB` 暂停读取，降到 `2 MB` 以下恢复；`ProtocolWorker` 每个 chunk 解析完成后回 ACK；UI 诊断显示背压状态和待解析队列字节数。 | `cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |

@@ -14,6 +14,7 @@ bool VideoDecoder::decodeJpeg(const QByteArray &payload, quint32 timestampSecond
     if (!image.loadFromData(payload, "JPG")) {
         ++m_failedFrames;
         emit decodeError(QStringLiteral("Video payload is not a valid JPEG frame"));
+        emit frameProcessed(false);
         return false;
     }
 
@@ -24,6 +25,7 @@ bool VideoDecoder::decodeJpeg(const QByteArray &payload, quint32 timestampSecond
         m_fps = 1000.0 * static_cast<double>(m_decodedFrames) / static_cast<double>(elapsed);
     }
     emit frameReady(m_lastFrame, m_fps, timestampSeconds, timestampMicros);
+    emit frameProcessed(true);
     return true;
 }
 

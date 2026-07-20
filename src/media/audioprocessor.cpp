@@ -70,6 +70,7 @@ void AudioProcessor::processArrayFrame(const QByteArray &payload, quint32 timest
     if (!frame.valid) {
         ++m_droppedFrames;
         emit audioWarning(frame.error);
+        emit frameProcessed(false);
         return;
     }
 
@@ -85,6 +86,7 @@ void AudioProcessor::processArrayFrame(const QByteArray &payload, quint32 timest
 
     emit arrayFrameDecoded(frame);
     emit levelChanged(m_peakLevel, m_bytesReceived, timestampSeconds, timestampMicros);
+    emit frameProcessed(true);
 }
 
 } // namespace MicArray

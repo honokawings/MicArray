@@ -3,6 +3,11 @@
 #include <QMetaType>
 #include <QObject>
 #include <QString>
+#include <QVector>
+
+#include <memory>
+
+class QSettings;
 
 namespace MicArray {
 
@@ -24,12 +29,21 @@ struct VideoSettings {
     QString format = QStringLiteral("JPG");
 };
 
+struct ControlPreset {
+    QString name;
+    QVector<qint16> values;
+
+    bool operator==(const ControlPreset &) const = default;
+};
+
 class AppSettings : public QObject
 {
     Q_OBJECT
 
 public:
     explicit AppSettings(QObject *parent = nullptr);
+    explicit AppSettings(const QString &fileName, QObject *parent = nullptr);
+    ~AppSettings() override;
 
     ConnectionSettings connection() const;
     AudioSettings audio() const;
@@ -38,6 +52,18 @@ public:
     void saveConnection(const ConnectionSettings &settings);
     void saveAudio(const AudioSettings &settings);
     void saveVideo(const VideoSettings &settings);
+
+    QList<ControlPreset> controlPresets() const;
+    bool saveControlPreset(const ControlPreset &preset);
+    bool removeControlPreset(const QString &name);
+    void resetAll();
+
+    static constexpr int SchemaVersion = 1;
+
+private:
+    void initializeSchema();
+    void writeControlPresets(const QList<ControlPreset> &presets);
+    std::unique_ptr<QSettings> m_settings;
 };
 
 } // namespace MicArray

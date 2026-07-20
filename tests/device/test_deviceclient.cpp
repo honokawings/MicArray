@@ -23,6 +23,9 @@ private slots:
     void reportsNetworkReadBufferConfiguration();
     void networkWorkerReportsReceiveBackpressure();
     void rejectsControlWhenDisconnected();
+    void reconnectBackoffUsesBoundedExponentialDelays();
+    void networkWorkerReconnectsAfterDataTimeout();
+    void genericDebugSignalIsSampledWhileMediaSignalsRemainComplete();
 };
 
 void DeviceClientTest::sendsHeartbeatAfterConnect()
@@ -86,7 +89,8 @@ void DeviceClientTest::emitsUnknownStructuredFramesOnlyToGenericSignal()
     QVERIFY(socket != nullptr);
 
     const QByteArray unknown = QByteArray::fromHex("7e7e3412030000000900000008000000aabbcc0a0d");
-    socket->write(unknown);
+    const QByteArray followingHeader = QByteArray::fromHex("7e7e11ee010000000100000001000000");
+    socket->write(unknown + followingHeader);
     QVERIFY(socket->waitForBytesWritten(1000));
 
     QVERIFY(frameSpy.wait(1000));
@@ -188,6 +192,61 @@ void DeviceClientTest::rejectsControlWhenDisconnected()
 
     QVERIFY(!client.sendControl(values));
     QCOMPARE(warningSpy.count(), 1);
+}
+
+void DeviceClientTest::reconnectBackoffUsesBoundedExponentialDelays()
+{
+    ReconnectBackoff backoff;
+    QCOMPARE(backoff.nextDelayMs(0.0), 1000);
+    QCOMPARE(backoff.nextDelayMs(0.0), 2000);
+    QCOMPARE(backoff.nextDelayMs(0.0), 4000);
+    QCOMPARE(backoff.nextDelayMs(0.0), 8000);
+    QCOMPARE(backoff.nextDelayMs(0.0), 15000);
+    QCOMPARE(backoff.nextDelayMs(0.0), 15000);
+    backoff.reset();
+    QCOMPARE(backoff.nextDelayMs(-1.0), 800);
+    backoff.reset();
+    QCOMPARE(backoff.nextDelayMs(1.0), 1200);
+}
+
+void DeviceClientTest::networkWorkerReconnectsAfterDataTimeout()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    NetworkWorker worker;
+    QSignalSpy warningSpy(&worker, &NetworkWorker::warningMessage);
+    worker.connectToHost(QStringLiteral("127.0.0.1"), server.serverPort(), true);
+    QVERIFY(server.waitForNewConnection(1000));
+
+    QTRY_VERIFY_WITH_TIMEOUT([&warningSpy]() {
+        for (const QList<QVariant> &arguments : warningSpy) {
+            if (arguments.at(1).toString().contains(QStringLiteral("timeout"), Qt::CaseInsensitive)) {
+                return true;
+            }
+        }
+        return false;
+    }(), 6500);
+}
+
+void DeviceClientTest::genericDebugSignalIsSampledWhileMediaSignalsRemainComplete()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    DeviceClient client;
+    client.setAutoReconnect(false);
+    QSignalSpy frameSpy(&client, &DeviceClient::frameReceived);
+    QSignalSpy audioSpy(&client, &DeviceClient::audioFrameReceived);
+    client.connectToDevice(QStringLiteral("127.0.0.1"), server.serverPort());
+    QVERIFY(server.waitForNewConnection(1000));
+    QTcpSocket *socket = server.nextPendingConnection();
+    QVERIFY(socket != nullptr);
+
+    const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
+    socket->write(audio.repeated(20));
+    QVERIFY(socket->waitForBytesWritten(1000));
+
+    QTRY_COMPARE_WITH_TIMEOUT(audioSpy.count(), 20, 1000);
+    QCOMPARE(frameSpy.count(), 1);
 }
 
 QTEST_MAIN(DeviceClientTest)

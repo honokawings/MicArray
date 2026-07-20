@@ -48,6 +48,8 @@ public:
     qsizetype protocolBufferedBytes() const { return m_protocolBufferedBytes; }
     bool receiveBackpressureActive() const { return m_receiveBackpressureActive; }
     qint64 pendingProtocolBytes() const { return m_pendingProtocolBytes; }
+    quint64 reconnectCount() const { return m_reconnectCount; }
+    qint64 lastReceiveAgeMs() const;
 
 signals:
     void stateChanged(DeviceState state);
@@ -59,6 +61,7 @@ signals:
     void audioFrameReceived(const HostFrame &frame);
     void videoFrameReceived(const HostFrame &frame);
     void statisticsChanged();
+    void reconnectCountChanged(quint64 reconnectCount);
 
 private slots:
     void onBytesReceivedChanged(quint64 totalBytes, QDateTime lastReceiveTime);
@@ -86,6 +89,8 @@ private:
     qsizetype m_protocolBufferedBytes = 0;
     bool m_receiveBackpressureActive = false;
     qint64 m_pendingProtocolBytes = 0;
+    quint64 m_reconnectCount = 0;
+    QDateTime m_connectedSince;
 };
 
 } // namespace MicArray

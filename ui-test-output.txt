@@ -1,0 +1,10 @@
+********* Start testing of DashboardTest *********
+Config: Using QtTest library 6.11.1, Qt 6.11.1 (x86_64-little_endian-llp64 shared (dynamic) release build; by GCC 13.1.0), windows 11
+PASS   : DashboardTest::initTestCase()
+FAIL!  : DashboardTest::formatsAdaptiveByteUnits() Compared values are not the same
+   Actual   (formatByteSize(1024 * 1024 - 1)): "1024 KiB"
+   Expected (QStringLiteral("1 MiB"))        : "1 MiB"
+D:/Workspace/QT/MicArray/tests/ui/test_dashboard.cpp(148) : failure location
+PASS   : DashboardTest::cleanupTestCase()
+Totals: 2 passed, 1 failed, 0 skipped, 0 blacklisted, 1ms
+********* Finished testing of DashboardTest *********
