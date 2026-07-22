@@ -5,6 +5,9 @@
 #include "ui/mainwindow.h"
 
 #include <QSignalSpy>
+#include <QCheckBox>
+#include <QScrollArea>
+#include <QSlider>
 #include <QToolButton>
 #include <QStandardPaths>
 #include <QtTest>
@@ -22,6 +25,9 @@ private slots:
     void initTestCase();
     void clickingHeatmapCellSelectsChannel();
     void heatmapTracksPeakAndSelectedChannels();
+    void heatmapProvidesFortyEightGainControls();
+    void movingAutomaticGainSliderSwitchesChannelToManual();
+    void heatmapBulkGainCommandsUpdateVisibleState();
     void videoDoubleClickRequestsFullScreen();
     void trendChartRetainsSixtySamples();
     void mainWindowProvidesDashboardAndPresentationToggle();
@@ -33,6 +39,10 @@ private slots:
     void recordingPageProvidesChannelSelectionAndCommands();
     void recordingDefaultsToPersistedOutputChannel();
     void recordingPageFitsAtMinimumSupportedSize();
+    void gainGridFitsAtMinimumSupportedSize();
+    void audioVisualizationWaitsForRenderTick();
+    void audioPipelineAllowsMultipleFramesInFlight();
+    void heatmapAmplitudeRefreshKeepsStyleSheetStable();
 };
 
 void DashboardTest::initTestCase()
@@ -65,6 +75,83 @@ void DashboardTest::heatmapTracksPeakAndSelectedChannels()
     QCOMPARE(widget.peakChannel(), 23);
     QVERIFY(widget.findChild<QToolButton *>(QStringLiteral("channelCell_5"))->property("selected").toBool());
     QVERIFY(widget.findChild<QToolButton *>(QStringLiteral("channelCell_23"))->property("peak").toBool());
+}
+
+void DashboardTest::heatmapProvidesFortyEightGainControls()
+{
+    ArrayHeatmapWidget widget;
+    widget.resize(760, 320);
+    widget.show();
+    GainConfiguration configuration;
+    configuration.shifts[7] = -3;
+    configuration.automatic[7] = true;
+    widget.setGainConfiguration(configuration);
+
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        auto *slider = widget.findChild<QSlider *>(QStringLiteral("channelGainSlider_%1").arg(channel));
+        auto *automatic = widget.findChild<QCheckBox *>(QStringLiteral("channelAutoGain_%1").arg(channel));
+        QVERIFY(slider != nullptr);
+        QVERIFY(automatic != nullptr);
+        QCOMPARE(slider->orientation(), Qt::Vertical);
+        QCOMPARE(slider->minimum(), GainConfiguration::MinimumShift);
+        QCOMPARE(slider->maximum(), GainConfiguration::MaximumShift);
+    }
+    QCOMPARE(widget.findChild<QSlider *>(QStringLiteral("channelGainSlider_7"))->value(), -3);
+    QVERIFY(widget.findChild<QCheckBox *>(QStringLiteral("channelAutoGain_7"))->isChecked());
+    QVERIFY(widget.findChild<QToolButton *>(QStringLiteral("channelCell_7"))
+                ->text()
+                .contains(QStringLiteral("-3 bit A")));
+}
+
+void DashboardTest::movingAutomaticGainSliderSwitchesChannelToManual()
+{
+    ArrayHeatmapWidget widget;
+    GainConfiguration configuration;
+    configuration.automatic[5] = true;
+    widget.setGainConfiguration(configuration);
+    QSignalSpy shiftSpy(&widget, &ArrayHeatmapWidget::channelShiftChanged);
+    QSignalSpy automaticSpy(&widget, &ArrayHeatmapWidget::channelAutomaticChanged);
+    auto *slider = widget.findChild<QSlider *>(QStringLiteral("channelGainSlider_5"));
+    auto *automatic = widget.findChild<QCheckBox *>(QStringLiteral("channelAutoGain_5"));
+    QVERIFY(slider != nullptr);
+    QVERIFY(automatic != nullptr);
+
+    slider->setValue(2);
+
+    QCOMPARE(automaticSpy.count(), 1);
+    QCOMPARE(automaticSpy.first().at(0).toInt(), 5);
+    QCOMPARE(automaticSpy.first().at(1).toBool(), false);
+    QCOMPARE(shiftSpy.count(), 1);
+    QCOMPARE(shiftSpy.first().at(0).toInt(), 5);
+    QCOMPARE(shiftSpy.first().at(1).toInt(), 2);
+    QVERIFY(!automatic->isChecked());
+}
+
+void DashboardTest::heatmapBulkGainCommandsUpdateVisibleState()
+{
+    ArrayHeatmapWidget widget;
+    auto *allAutomatic = widget.findChild<QToolButton *>(QStringLiteral("gainAllAutomaticButton"));
+    auto *allManual = widget.findChild<QToolButton *>(QStringLiteral("gainAllManualButton"));
+    auto *reset = widget.findChild<QToolButton *>(QStringLiteral("gainResetButton"));
+    QVERIFY(allAutomatic != nullptr);
+    QVERIFY(allManual != nullptr);
+    QVERIFY(reset != nullptr);
+    QSignalSpy allSpy(&widget, &ArrayHeatmapWidget::setAllAutomaticRequested);
+    QSignalSpy resetSpy(&widget, &ArrayHeatmapWidget::resetRequested);
+
+    QTest::mouseClick(allAutomatic, Qt::LeftButton);
+    QCOMPARE(allSpy.takeFirst().at(0).toBool(), true);
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        QVERIFY(widget.findChild<QCheckBox *>(QStringLiteral("channelAutoGain_%1").arg(channel))->isChecked());
+    }
+    QTest::mouseClick(allManual, Qt::LeftButton);
+    QCOMPARE(allSpy.takeFirst().at(0).toBool(), false);
+    widget.findChild<QSlider *>(QStringLiteral("channelGainSlider_11"))->setValue(4);
+    QTest::mouseClick(reset, Qt::LeftButton);
+    QCOMPARE(resetSpy.count(), 1);
+    QCOMPARE(widget.findChild<QSlider *>(QStringLiteral("channelGainSlider_11"))->value(), 0);
+    QVERIFY(!widget.findChild<QCheckBox *>(QStringLiteral("channelAutoGain_11"))->isChecked());
+    QVERIFY(widget.findChild<QScrollArea *>(QStringLiteral("gainArrayScrollArea")) != nullptr);
 }
 
 void DashboardTest::videoDoubleClickRequestsFullScreen()
@@ -120,7 +207,7 @@ void DashboardTest::applyingPresetMarksValuesPendingWithoutSending()
     settings.resetAll();
     ControlPreset preset;
     preset.name = QStringLiteral("UI Test Preset");
-    preset.values = {11, 12, 13, 14, 15, 16, 0, 0};
+    preset.values = {11, 12, 13, 14, 15, 16};
     QVERIFY(settings.saveControlPreset(preset));
     QCOMPARE(settings.controlPresets().size(), 1);
 
@@ -129,10 +216,14 @@ void DashboardTest::applyingPresetMarksValuesPendingWithoutSending()
     auto *combo = window.findChild<QComboBox *>(QStringLiteral("controlPresetCombo"));
     auto *apply = window.findChild<QPushButton *>(QStringLiteral("applyControlPresetButton"));
     auto *control0 = window.findChild<QSpinBox *>(QStringLiteral("controlSpin_0"));
+    auto *control6 = window.findChild<QSpinBox *>(QStringLiteral("controlSpin_6"));
+    auto *control7 = window.findChild<QSpinBox *>(QStringLiteral("controlSpin_7"));
     auto *send = window.findChild<QPushButton *>(QStringLiteral("sendControlButton"));
     QVERIFY(combo != nullptr);
     QVERIFY(apply != nullptr);
     QVERIFY(control0 != nullptr);
+    QVERIFY(control6 == nullptr);
+    QVERIFY(control7 == nullptr);
     QVERIFY(send != nullptr);
     const int presetIndex = combo->findText(preset.name);
     QVERIFY(presetIndex >= 0);
@@ -285,6 +376,110 @@ void DashboardTest::recordingPageFitsAtMinimumSupportedSize()
             QVERIFY(!existing.intersects(pageRect));
         }
         channelRects.append(pageRect);
+    }
+}
+
+void DashboardTest::gainGridFitsAtMinimumSupportedSize()
+{
+    MainWindow window;
+    window.resize(1366, 768);
+    window.show();
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *monitorPage = window.findChild<QWidget *>(QStringLiteral("monitorPage"));
+    auto *scroll = window.findChild<QScrollArea *>(QStringLiteral("gainArrayScrollArea"));
+    auto *content = window.findChild<QWidget *>(QStringLiteral("gainArrayContent"));
+    QVERIFY(tabs != nullptr);
+    QVERIFY(monitorPage != nullptr);
+    QVERIFY(scroll != nullptr);
+    QVERIFY(content != nullptr);
+    tabs->setCurrentWidget(monitorPage);
+    QCoreApplication::processEvents();
+    QVERIFY(scroll->isVisible());
+    QVERIFY(scroll->width() > 100);
+    QVERIFY(scroll->height() > 80);
+
+    QList<QRect> panelRects;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        auto *panel = window.findChild<QWidget *>(QStringLiteral("channelGainPanel_%1").arg(channel));
+        auto *slider = window.findChild<QSlider *>(QStringLiteral("channelGainSlider_%1").arg(channel));
+        auto *automatic = window.findChild<QCheckBox *>(QStringLiteral("channelAutoGain_%1").arg(channel));
+        QVERIFY(panel != nullptr);
+        QVERIFY(slider != nullptr);
+        QVERIFY(automatic != nullptr);
+        QVERIFY(panel->size().width() > 0);
+        QVERIFY(panel->size().height() > 0);
+        QVERIFY(panel->rect().contains(QRect(slider->mapTo(panel, QPoint(0, 0)), slider->size())));
+        QVERIFY(panel->rect().contains(QRect(automatic->mapTo(panel, QPoint(0, 0)), automatic->size())));
+        const QRect panelRect(panel->mapTo(content, QPoint(0, 0)), panel->size());
+        for (const QRect &existing : panelRects) {
+            QVERIFY(!existing.intersects(panelRect));
+        }
+        panelRects.append(panelRect);
+    }
+}
+
+void DashboardTest::audioVisualizationWaitsForRenderTick()
+{
+    MainWindow window;
+    window.show();
+    QCoreApplication::processEvents();
+    auto *heatmap = window.findChild<ArrayHeatmapWidget *>();
+    QVERIFY(heatmap != nullptr);
+
+    DecodedAudioFrame frame;
+    frame.valid = true;
+    frame.outputChannel = 5;
+    frame.normalizedAmplitudes.fill(0.1, AudioFrameDecoder::ChannelCount);
+    frame.normalizedAmplitudes[23] = 1.0;
+    frame.outputPcm16 = QByteArray(AudioFrameDecoder::SamplesPerFrame * 2, char(0));
+
+    QCOMPARE(heatmap->peakChannel(), -1);
+    QVERIFY(QMetaObject::invokeMethod(&window,
+                                      "showArrayFrame",
+                                      Qt::DirectConnection,
+                                      Q_ARG(MicArray::DecodedAudioFrame, frame)));
+    QCOMPARE(heatmap->peakChannel(), -1);
+
+    QVERIFY(QMetaObject::invokeMethod(&window,
+                                      "renderPendingAudioFrame",
+                                      Qt::DirectConnection));
+    QCOMPARE(heatmap->peakChannel(), 23);
+}
+
+void DashboardTest::audioPipelineAllowsMultipleFramesInFlight()
+{
+    MainWindow window;
+    HostFrame frame;
+    frame.type = FrameType::Audio;
+
+    for (int index = 0; index < 4; ++index) {
+        QVERIFY(QMetaObject::invokeMethod(&window,
+                                          "enqueueAudioFrame",
+                                          Qt::DirectConnection,
+                                          Q_ARG(MicArray::HostFrame, frame)));
+    }
+
+    QCOMPARE(window.property("audioFramesInFlight").toInt(), 4);
+}
+
+void DashboardTest::heatmapAmplitudeRefreshKeepsStyleSheetStable()
+{
+    ArrayHeatmapWidget widget;
+    QVector<double> amplitudes(AudioFrameDecoder::ChannelCount, 0.1);
+    amplitudes[10] = 1.0;
+    widget.setAmplitudes(amplitudes, 5);
+
+    QStringList styles;
+    for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+        styles.append(widget.findChild<QToolButton *>(QStringLiteral("channelCell_%1").arg(channel))->styleSheet());
+    }
+
+    amplitudes.fill(0.2);
+    amplitudes[10] = 0.9;
+    widget.setAmplitudes(amplitudes, 5);
+    for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+        QCOMPARE(widget.findChild<QToolButton *>(QStringLiteral("channelCell_%1").arg(channel))->styleSheet(),
+                 styles.at(channel));
     }
 }
 

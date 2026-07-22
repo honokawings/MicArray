@@ -4,15 +4,19 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtEndian>
 
+#include <limits>
 #include <memory>
 
 #include "media/audioframedecoder.h"
 #include "media/audioprocessor.h"
 #include "media/audiorecorder.h"
+#include "media/channelgainprocessor.h"
+#include "media/gainprofilestore.h"
 #include "media/videodecoder.h"
 #include "media/mediaframequeue.h"
 #include "media/multichannelwavwriter.h"
@@ -26,6 +30,21 @@ void putSample(QByteArray &payload, int samplePoint, int channel, qint32 sample)
     const int offset = samplePoint * AudioFrameDecoder::BytesPerSamplePoint
         + channel * AudioFrameDecoder::BytesPerChannel;
     qToLittleEndian(sample, reinterpret_cast<uchar *>(payload.data() + offset));
+}
+
+qint32 readSample(const QByteArray &payload, int samplePoint, int channel)
+{
+    const int offset = samplePoint * AudioFrameDecoder::BytesPerSamplePoint
+        + channel * AudioFrameDecoder::BytesPerChannel;
+    return qFromLittleEndian<qint32>(
+        reinterpret_cast<const uchar *>(payload.constData() + offset));
+}
+
+void fillChannelSamples(QByteArray &payload, int channel, qint32 sample)
+{
+    for (int samplePoint = 0; samplePoint < AudioFrameDecoder::SamplesPerFrame; ++samplePoint) {
+        putSample(payload, samplePoint, channel, sample);
+    }
 }
 
 quint16 readLe16(const QByteArray &bytes, int offset)
@@ -83,9 +102,29 @@ private slots:
     void decodesFortyEightChannelFrame();
     void extractsSelectedChannelForPlayback();
     void normalizesArrayAmplitudeWindow();
+    void appliesChannelShiftsWithSaturation();
+    void accumulatesClipCountsOnlyForClippedSamples();
+    void preservesUntargetedGainChannels();
+    void rejectsInvalidGainPayload();
+    void rejectsSampleRateWithZeroFrameDuration();
+    void rejectsInvalidGainConfigurationAtomically();
+    void automaticGainAttacksStrongChannelIndependently();
+    void automaticGainHonorsReleaseHoldAndStep();
+    void automaticGainAccumulatesTruncatedFrameDurationAt48kHz();
+    void automaticGainLongFrameDoesNotOvershootThresholds();
+    void automaticGainRaisesSilenceToMaximum();
+    void changingOneGainChannelPreservesOtherAgcState();
+    void savesAndLoadsGainProfileWithAllChannels();
+    void rejectsInvalidGainProfileDocuments();
+    void rejectsGainProfileShapeAndTypeViolations();
+    void keepsExistingGainProfileWhenSaveFails();
+    void keepsExistingGainProfileWhenAtomicCommitFails();
+    void reportsUnwritableGainProfileTarget();
     void boundedFrameQueueDropsOldestAudioFrame();
     void singleFrameQueueKeepsLatestVideoFrame();
     void mediaProcessorsSignalCompletionForInvalidFrames();
+    void audioProcessorDistributesGainAdjustedFrame();
+    void recordsOnlyGainAdjustedAudioFrames();
     void writesSelectedChannelsToExtensibleWav();
     void rollsWavSegmentsOnWholeFrameBoundaries();
     void rejectsInvalidRecordingPayload();
@@ -97,6 +136,9 @@ private slots:
     void reservesManifestBeforeCreatingWav();
     void recordsUndeletableInitialHeaderFailure();
     void recordsAudioFramesAsynchronously();
+    void recorderRejectsInvalidPayloadBeforeQueueing();
+    void recorderBoundsPendingFrameCount();
+    void recordsGainMetadataInManifest();
     void rejectsInvalidAndRepeatedRecorderStarts();
     void stopsRecordingOnQueueOverflow();
     void preservesFormatFailureAfterQueuedFramesAndStop();
@@ -176,6 +218,652 @@ void MediaTest::decodesFortyEightChannelFrame()
     QCOMPARE(frame.amplitudes.at(0), 100.5);
     QCOMPARE(frame.timestampSeconds, 7u);
     QCOMPARE(frame.timestampMicros, 8u);
+}
+
+void MediaTest::appliesChannelShiftsWithSaturation()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.shifts[0] = 1;
+    configuration.shifts[1] = -1;
+    configuration.shifts[2] = -1;
+    configuration.shifts[3] = 1;
+    configuration.shifts[4] = 1;
+    QString error;
+    QVERIFY2(processor.setConfiguration(configuration, &error), qPrintable(error));
+
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    putSample(payload, 0, 0, 123);
+    putSample(payload, 0, 1, 9);
+    putSample(payload, 0, 2, -3);
+    putSample(payload, 0, 3, std::numeric_limits<qint32>::max());
+    putSample(payload, 0, 4, std::numeric_limits<qint32>::min());
+
+    const GainProcessResult result = processor.process(payload, 48000);
+
+    QVERIFY2(result.valid, qPrintable(result.error));
+    QCOMPARE(result.payload.size(), AudioFrameDecoder::FramePayloadBytes);
+    QCOMPARE(readSample(result.payload, 0, 0), qint32(246));
+    QCOMPARE(readSample(result.payload, 0, 1), qint32(4));
+    QCOMPARE(readSample(result.payload, 0, 2), qint32(-2));
+    QCOMPARE(readSample(result.payload, 0, 3), std::numeric_limits<qint32>::max());
+    QCOMPARE(readSample(result.payload, 0, 4), std::numeric_limits<qint32>::min());
+    QCOMPARE(result.snapshot.clipCounts.at(3), quint64(1));
+    QCOMPARE(result.snapshot.clipCounts.at(4), quint64(1));
+}
+
+void MediaTest::accumulatesClipCountsOnlyForClippedSamples()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.shifts[0] = 1;
+    QVERIFY(processor.setConfiguration(configuration));
+
+    QByteArray first(AudioFrameDecoder::FramePayloadBytes, char(0));
+    putSample(first, 0, 0, std::numeric_limits<qint32>::max());
+    putSample(first, 1, 0, std::numeric_limits<qint32>::min());
+    putSample(first, 2, 0, 1'073'741'823);
+    putSample(first, 0, 1, std::numeric_limits<qint32>::max());
+    GainProcessResult result = processor.process(first, 48000);
+    QCOMPARE(result.snapshot.clipCounts.at(0), quint64(2));
+    QCOMPARE(result.snapshot.clipCounts.at(1), quint64(0));
+
+    QByteArray second(AudioFrameDecoder::FramePayloadBytes, char(0));
+    putSample(second, 17, 0, std::numeric_limits<qint32>::max());
+    putSample(second, 18, 0, 1000);
+    result = processor.process(second, 48000);
+    QCOMPARE(result.snapshot.clipCounts.at(0), quint64(3));
+
+    const QByteArray noClipping(AudioFrameDecoder::FramePayloadBytes, char(1));
+    result = processor.process(noClipping, 48000);
+    QCOMPARE(result.snapshot.clipCounts.at(0), quint64(3));
+    QCOMPARE(result.snapshot.clipCounts.at(1), quint64(0));
+}
+
+void MediaTest::preservesUntargetedGainChannels()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.shifts[17] = 1;
+    QVERIFY(processor.setConfiguration(configuration));
+
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int samplePoint = 0; samplePoint < AudioFrameDecoder::SamplesPerFrame; ++samplePoint) {
+        for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+            putSample(payload, samplePoint, channel, samplePoint * 1000 + channel);
+        }
+    }
+
+    const GainProcessResult result = processor.process(payload, 48000);
+
+    QVERIFY2(result.valid, qPrintable(result.error));
+    for (int samplePoint = 0; samplePoint < AudioFrameDecoder::SamplesPerFrame; ++samplePoint) {
+        for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+            const qint32 expected = channel == 17
+                ? (samplePoint * 1000 + channel) * 2
+                : samplePoint * 1000 + channel;
+            QCOMPARE(readSample(result.payload, samplePoint, channel), expected);
+        }
+    }
+}
+
+void MediaTest::rejectsInvalidGainPayload()
+{
+    ChannelGainProcessor processor;
+
+    const GainProcessResult result = processor.process(QByteArray(38399, char(0)), 48000);
+
+    QVERIFY(!result.valid);
+    QVERIFY(result.payload.isEmpty());
+    QVERIFY(result.error.contains(QStringLiteral("38400")));
+}
+
+void MediaTest::rejectsSampleRateWithZeroFrameDuration()
+{
+    ChannelGainProcessor processor;
+    const QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+
+    const GainProcessResult result = processor.process(payload, 200'000'001);
+
+    QVERIFY(!result.valid);
+    QVERIFY(result.payload.isEmpty());
+    QVERIFY(result.error.contains(QStringLiteral("duration"), Qt::CaseInsensitive));
+    QVERIFY(result.error.contains(QStringLiteral("microsecond"), Qt::CaseInsensitive));
+}
+
+void MediaTest::rejectsInvalidGainConfigurationAtomically()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration initial;
+    initial.shifts[0] = 2;
+    initial.automatic[1] = true;
+    QVERIFY(processor.setConfiguration(initial));
+
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 0, std::numeric_limits<qint32>::max());
+    fillChannelSamples(payload, 1, 107'374'182);
+    for (int frame = 0; frame < 4; ++frame) {
+        QVERIFY(processor.process(payload, 2000).valid);
+    }
+
+    const GainConfiguration baselineConfiguration = processor.configuration();
+    const GainSnapshot baselineSnapshot = processor.snapshot();
+    QCOMPARE(baselineSnapshot.clipCounts.at(0), quint64(800));
+
+    QList<QPair<GainConfiguration, QString>> invalidConfigurations;
+    GainConfiguration invalid = baselineConfiguration;
+    invalid.shifts.resize(GainConfiguration::ChannelCount - 1);
+    invalidConfigurations.append({invalid, QStringLiteral("shifts")});
+    invalid = baselineConfiguration;
+    invalid.automatic.append(false);
+    invalidConfigurations.append({invalid, QStringLiteral("Automatic")});
+    invalid = baselineConfiguration;
+    invalid.shifts[47] = 9;
+    invalidConfigurations.append({invalid, QStringLiteral("shift")});
+    invalid = baselineConfiguration;
+    invalid.upperPeakRatio = std::numeric_limits<double>::quiet_NaN();
+    invalidConfigurations.append({invalid, QStringLiteral("upper")});
+    invalid = baselineConfiguration;
+    invalid.lowerPeakRatio = std::numeric_limits<double>::infinity();
+    invalidConfigurations.append({invalid, QStringLiteral("lower")});
+    invalid = baselineConfiguration;
+    invalid.upperPeakRatio = 1.01;
+    invalidConfigurations.append({invalid, QStringLiteral("upper")});
+    invalid = baselineConfiguration;
+    invalid.lowerPeakRatio = -0.01;
+    invalidConfigurations.append({invalid, QStringLiteral("lower")});
+    invalid = baselineConfiguration;
+    invalid.lowerPeakRatio = invalid.upperPeakRatio;
+    invalidConfigurations.append({invalid, QStringLiteral("lower")});
+    invalid = baselineConfiguration;
+    invalid.releaseHoldMs = 0;
+    invalidConfigurations.append({invalid, QStringLiteral("hold")});
+    invalid = baselineConfiguration;
+    invalid.releaseStepMs = -1;
+    invalidConfigurations.append({invalid, QStringLiteral("step")});
+
+    for (const auto &[candidate, errorFragment] : invalidConfigurations) {
+        QString error;
+        QVERIFY(!processor.setConfiguration(candidate, &error));
+        QVERIFY2(error.contains(errorFragment, Qt::CaseInsensitive), qPrintable(error));
+        QVERIFY(processor.configuration() == baselineConfiguration);
+        QCOMPARE(processor.snapshot().shifts, baselineSnapshot.shifts);
+        QCOMPARE(processor.snapshot().automatic, baselineSnapshot.automatic);
+        QCOMPARE(processor.snapshot().inputPeakRatios, baselineSnapshot.inputPeakRatios);
+        QCOMPARE(processor.snapshot().outputPeakRatios, baselineSnapshot.outputPeakRatios);
+        QCOMPARE(processor.snapshot().clipCounts, baselineSnapshot.clipCounts);
+    }
+
+    GainProcessResult result;
+    for (int frame = 0; frame < 4; ++frame) {
+        result = processor.process(payload, 2000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(1), 1);
+    QCOMPARE(result.snapshot.clipCounts.at(0), quint64(1600));
+}
+
+void MediaTest::automaticGainAttacksStrongChannelIndependently()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.automatic[0] = true;
+    configuration.automatic[1] = true;
+    QVERIFY(processor.setConfiguration(configuration));
+
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 0, 1'932'735'283);
+    fillChannelSamples(payload, 1, 1'073'741'824);
+
+    const GainProcessResult result = processor.process(payload, 48000);
+
+    QVERIFY2(result.valid, qPrintable(result.error));
+    QCOMPARE(result.snapshot.shifts.at(0), -1);
+    QCOMPARE(result.snapshot.shifts.at(1), 0);
+    QCOMPARE(readSample(result.payload, 0, 0), qint32(966'367'641));
+    QCOMPARE(readSample(result.payload, 0, 1), qint32(1'073'741'824));
+    QVERIFY(result.snapshot.inputPeakRatios.at(0) > 0.89);
+    QVERIFY(result.snapshot.outputPeakRatios.at(0) < 0.80);
+}
+
+void MediaTest::automaticGainHonorsReleaseHoldAndStep()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.automatic[0] = true;
+    QVERIFY(processor.setConfiguration(configuration));
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 0, 107'374'182);
+
+    GainProcessResult result;
+    for (int frame = 0; frame < 5; ++frame) {
+        result = processor.process(payload, 2000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 0);
+
+    for (int frame = 0; frame < 2; ++frame) {
+        result = processor.process(payload, 2000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 0);
+
+    result = processor.process(payload, 2000);
+    QCOMPARE(result.snapshot.shifts.at(0), 1);
+
+    result = processor.process(payload, 2000);
+    QCOMPARE(result.snapshot.shifts.at(0), 1);
+    result = processor.process(payload, 2000);
+    QCOMPARE(result.snapshot.shifts.at(0), 2);
+}
+
+void MediaTest::automaticGainAccumulatesTruncatedFrameDurationAt48kHz()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.automatic[0] = true;
+    QVERIFY(processor.setConfiguration(configuration));
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 0, 53'687'091);
+
+    GainProcessResult result;
+    for (int frame = 0; frame < 120; ++frame) {
+        result = processor.process(payload, 48000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 0);
+
+    result = processor.process(payload, 48000);
+    QCOMPARE(result.snapshot.shifts.at(0), 0);
+    for (int frame = 0; frame < 59; ++frame) {
+        result = processor.process(payload, 48000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 0);
+
+    result = processor.process(payload, 48000);
+    QCOMPARE(result.snapshot.shifts.at(0), 1);
+    for (int frame = 0; frame < 59; ++frame) {
+        result = processor.process(payload, 48000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 1);
+
+    result = processor.process(payload, 48000);
+    QCOMPARE(result.snapshot.shifts.at(0), 2);
+}
+
+void MediaTest::automaticGainLongFrameDoesNotOvershootThresholds()
+{
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 0, 429'496'729);
+
+    ChannelGainProcessor hysteresisProcessor;
+    GainConfiguration hysteresisConfiguration;
+    hysteresisConfiguration.automatic[0] = true;
+    QVERIFY(hysteresisProcessor.setConfiguration(hysteresisConfiguration));
+
+    const GainProcessResult hysteresisResult = hysteresisProcessor.process(payload, 100);
+
+    QVERIFY2(hysteresisResult.valid, qPrintable(hysteresisResult.error));
+    QCOMPARE(hysteresisResult.snapshot.shifts.at(0), 1);
+    QVERIFY(hysteresisResult.snapshot.outputPeakRatios.at(0) >= 0.35);
+    QVERIFY(hysteresisResult.snapshot.outputPeakRatios.at(0) <= 0.80);
+
+    ChannelGainProcessor upperLimitProcessor;
+    GainConfiguration upperLimitConfiguration;
+    upperLimitConfiguration.automatic[0] = true;
+    upperLimitConfiguration.upperPeakRatio = 0.40;
+    upperLimitConfiguration.lowerPeakRatio = 0.35;
+    QVERIFY(upperLimitProcessor.setConfiguration(upperLimitConfiguration));
+    fillChannelSamples(payload, 0, 644'245'094);
+
+    const GainProcessResult upperLimitResult = upperLimitProcessor.process(payload, 100);
+
+    QVERIFY2(upperLimitResult.valid, qPrintable(upperLimitResult.error));
+    QCOMPARE(upperLimitResult.snapshot.shifts.at(0), 0);
+    QVERIFY(upperLimitResult.snapshot.outputPeakRatios.at(0) <= 0.40);
+}
+
+void MediaTest::automaticGainRaisesSilenceToMaximum()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.automatic[0] = true;
+    QVERIFY(processor.setConfiguration(configuration));
+    const QByteArray silence(AudioFrameDecoder::FramePayloadBytes, char(0));
+
+    GainProcessResult result;
+    for (int frame = 0; frame < 24; ++frame) {
+        result = processor.process(silence, 2000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 7);
+
+    result = processor.process(silence, 2000);
+    QCOMPARE(result.snapshot.shifts.at(0), 8);
+    for (int frame = 0; frame < 10; ++frame) {
+        result = processor.process(silence, 2000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 8);
+}
+
+void MediaTest::changingOneGainChannelPreservesOtherAgcState()
+{
+    ChannelGainProcessor processor;
+    GainConfiguration configuration;
+    configuration.automatic[1] = true;
+    QVERIFY(processor.setConfiguration(configuration));
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 1, 107'374'182);
+
+    for (int frame = 0; frame < 4; ++frame) {
+        QVERIFY(processor.process(payload, 2000).valid);
+    }
+
+    GainConfiguration updated = processor.configuration();
+    updated.shifts[0] = 1;
+    QVERIFY(processor.setConfiguration(updated));
+
+    GainProcessResult result;
+    for (int frame = 0; frame < 4; ++frame) {
+        result = processor.process(payload, 2000);
+    }
+    QCOMPARE(result.snapshot.shifts.at(0), 1);
+    QCOMPARE(result.snapshot.shifts.at(1), 1);
+}
+
+void MediaTest::savesAndLoadsGainProfileWithAllChannels()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("gain-profile.json"));
+    GainConfiguration configuration;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        configuration.shifts[channel] = channel % 17 - 8;
+        configuration.automatic[channel] = channel % 3 == 0;
+    }
+    configuration.upperPeakRatio = 0.72;
+    configuration.lowerPeakRatio = 0.24;
+    configuration.releaseHoldMs = 600;
+    configuration.releaseStepMs = 175;
+
+    GainProfileStore store;
+    QString error;
+    QVERIFY2(store.save(path, configuration, &error), qPrintable(error));
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonObject document = QJsonDocument::fromJson(file.readAll()).object();
+    QCOMPARE(document.value(QStringLiteral("schemaVersion")).toInt(), 1);
+    QCOMPARE(document.value(QStringLiteral("channelCount")).toInt(), 48);
+    QCOMPARE(document.value(QStringLiteral("shifts")).toArray().size(), 48);
+    QCOMPARE(document.value(QStringLiteral("automatic")).toArray().size(), 48);
+    QVERIFY(document.value(QStringLiteral("agc")).isObject());
+
+    const std::optional<GainConfiguration> loaded = store.load(path, &error);
+    QVERIFY2(loaded.has_value(), qPrintable(error));
+    QCOMPARE(*loaded, configuration);
+}
+
+void MediaTest::rejectsInvalidGainProfileDocuments()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("gain-profile.json"));
+    GainConfiguration valid;
+    QJsonObject document;
+    document.insert(QStringLiteral("schemaVersion"), 1);
+    document.insert(QStringLiteral("channelCount"), GainConfiguration::ChannelCount);
+    QJsonArray shifts;
+    QJsonArray automatic;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        shifts.append(valid.shifts.at(channel));
+        automatic.append(valid.automatic.at(channel));
+    }
+    document.insert(QStringLiteral("shifts"), shifts);
+    document.insert(QStringLiteral("automatic"), automatic);
+    document.insert(QStringLiteral("agc"), QJsonObject {
+        {QStringLiteral("upperPeakRatio"), valid.upperPeakRatio},
+        {QStringLiteral("lowerPeakRatio"), valid.lowerPeakRatio},
+        {QStringLiteral("releaseHoldMs"), valid.releaseHoldMs},
+        {QStringLiteral("releaseStepMs"), valid.releaseStepMs},
+    });
+
+    struct InvalidDocument {
+        QJsonObject document;
+        QString errorFragment;
+    };
+    QList<InvalidDocument> invalidDocuments;
+    QJsonObject invalid = document;
+    invalid.insert(QStringLiteral("schemaVersion"), 2);
+    invalidDocuments.append({invalid, QStringLiteral("schema")});
+    invalid = document;
+    QJsonArray shortShifts = invalid.value(QStringLiteral("shifts")).toArray();
+    shortShifts.removeLast();
+    invalid.insert(QStringLiteral("shifts"), shortShifts);
+    invalidDocuments.append({invalid, QStringLiteral("shifts")});
+    invalid = document;
+    QJsonArray fractionalShifts = invalid.value(QStringLiteral("shifts")).toArray();
+    fractionalShifts[7] = 1.5;
+    invalid.insert(QStringLiteral("shifts"), fractionalShifts);
+    invalidDocuments.append({invalid, QStringLiteral("integer")});
+    invalid = document;
+    QJsonArray outOfRangeShifts = invalid.value(QStringLiteral("shifts")).toArray();
+    outOfRangeShifts[12] = 9;
+    invalid.insert(QStringLiteral("shifts"), outOfRangeShifts);
+    invalidDocuments.append({invalid, QStringLiteral("shift")});
+    invalid = document;
+    QJsonObject invalidAgc = invalid.value(QStringLiteral("agc")).toObject();
+    invalidAgc.insert(QStringLiteral("lowerPeakRatio"), 0.8);
+    invalidAgc.insert(QStringLiteral("upperPeakRatio"), 0.8);
+    invalid.insert(QStringLiteral("agc"), invalidAgc);
+    invalidDocuments.append({invalid, QStringLiteral("lower")});
+    invalid = document;
+    invalidAgc = invalid.value(QStringLiteral("agc")).toObject();
+    invalidAgc.insert(QStringLiteral("releaseHoldMs"), 0);
+    invalid.insert(QStringLiteral("agc"), invalidAgc);
+    invalidDocuments.append({invalid, QStringLiteral("hold")});
+
+    GainProfileStore store;
+    for (const InvalidDocument &invalidDocument : invalidDocuments) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write(QJsonDocument(invalidDocument.document).toJson());
+        file.close();
+
+        QString error;
+        QVERIFY(!store.load(path, &error).has_value());
+        QVERIFY2(error.contains(invalidDocument.errorFragment, Qt::CaseInsensitive), qPrintable(error));
+    }
+}
+
+void MediaTest::rejectsGainProfileShapeAndTypeViolations()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("gain-profile.json"));
+    GainConfiguration configuration;
+    QJsonObject document {
+        {QStringLiteral("schemaVersion"), 1},
+        {QStringLiteral("channelCount"), GainConfiguration::ChannelCount},
+    };
+    QJsonArray shifts;
+    QJsonArray automatic;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        shifts.append(configuration.shifts.at(channel));
+        automatic.append(configuration.automatic.at(channel));
+    }
+    document.insert(QStringLiteral("shifts"), shifts);
+    document.insert(QStringLiteral("automatic"), automatic);
+    document.insert(QStringLiteral("agc"), QJsonObject {
+        {QStringLiteral("upperPeakRatio"), configuration.upperPeakRatio},
+        {QStringLiteral("lowerPeakRatio"), configuration.lowerPeakRatio},
+        {QStringLiteral("releaseHoldMs"), configuration.releaseHoldMs},
+        {QStringLiteral("releaseStepMs"), configuration.releaseStepMs},
+    });
+
+    struct InvalidDocument {
+        QByteArray contents;
+        QString errorFragment;
+    };
+    QList<InvalidDocument> invalidDocuments;
+    const auto appendObject = [&invalidDocuments](const QJsonObject &value, const QString &errorFragment) {
+        invalidDocuments.append({QJsonDocument(value).toJson(), errorFragment});
+    };
+    invalidDocuments.append({QByteArrayLiteral("{ invalid"), QStringLiteral("parse")});
+    invalidDocuments.append({QJsonDocument(QJsonArray {1}).toJson(), QStringLiteral("root")});
+    QJsonObject invalid = document;
+    invalid.insert(QStringLiteral("unexpected"), true);
+    appendObject(invalid, QStringLiteral("unexpected"));
+    invalid = document;
+    invalid.remove(QStringLiteral("schemaVersion"));
+    appendObject(invalid, QStringLiteral("schemaVersion"));
+    invalid = document;
+    invalid.insert(QStringLiteral("schemaVersion"), QStringLiteral("1"));
+    appendObject(invalid, QStringLiteral("schemaVersion"));
+    invalid = document;
+    invalid.insert(QStringLiteral("channelCount"), true);
+    appendObject(invalid, QStringLiteral("channelCount"));
+    invalid = document;
+    invalid.remove(QStringLiteral("shifts"));
+    appendObject(invalid, QStringLiteral("shifts"));
+    invalid = document;
+    invalid.insert(QStringLiteral("shifts"), QStringLiteral("not-an-array"));
+    appendObject(invalid, QStringLiteral("shifts"));
+    invalid = document;
+    QJsonArray invalidShifts = invalid.value(QStringLiteral("shifts")).toArray();
+    invalidShifts[0] = true;
+    invalid.insert(QStringLiteral("shifts"), invalidShifts);
+    appendObject(invalid, QStringLiteral("shift"));
+    invalid = document;
+    invalidShifts = invalid.value(QStringLiteral("shifts")).toArray();
+    invalidShifts[0] = QStringLiteral("0");
+    invalid.insert(QStringLiteral("shifts"), invalidShifts);
+    appendObject(invalid, QStringLiteral("shift"));
+    invalid = document;
+    invalid.remove(QStringLiteral("automatic"));
+    appendObject(invalid, QStringLiteral("automatic"));
+    invalid = document;
+    invalid.insert(QStringLiteral("automatic"), QJsonObject {});
+    appendObject(invalid, QStringLiteral("automatic"));
+    invalid = document;
+    QJsonArray invalidAutomatic = invalid.value(QStringLiteral("automatic")).toArray();
+    invalidAutomatic.removeLast();
+    invalid.insert(QStringLiteral("automatic"), invalidAutomatic);
+    appendObject(invalid, QStringLiteral("automatic"));
+    invalid = document;
+    invalidAutomatic = invalid.value(QStringLiteral("automatic")).toArray();
+    invalidAutomatic[0] = 0;
+    invalid.insert(QStringLiteral("automatic"), invalidAutomatic);
+    appendObject(invalid, QStringLiteral("automatic"));
+    invalid = document;
+    invalid.remove(QStringLiteral("agc"));
+    appendObject(invalid, QStringLiteral("agc"));
+    invalid = document;
+    QJsonObject invalidAgc = invalid.value(QStringLiteral("agc")).toObject();
+    invalidAgc.insert(QStringLiteral("extra"), 1);
+    invalid.insert(QStringLiteral("agc"), invalidAgc);
+    appendObject(invalid, QStringLiteral("extra"));
+    invalid = document;
+    invalidAgc = invalid.value(QStringLiteral("agc")).toObject();
+    invalidAgc.remove(QStringLiteral("lowerPeakRatio"));
+    invalid.insert(QStringLiteral("agc"), invalidAgc);
+    appendObject(invalid, QStringLiteral("lowerPeakRatio"));
+    invalid = document;
+    invalidAgc = invalid.value(QStringLiteral("agc")).toObject();
+    invalidAgc.insert(QStringLiteral("upperPeakRatio"), true);
+    invalid.insert(QStringLiteral("agc"), invalidAgc);
+    appendObject(invalid, QStringLiteral("upperPeakRatio"));
+    invalid = document;
+    invalidAgc = invalid.value(QStringLiteral("agc")).toObject();
+    invalidAgc.insert(QStringLiteral("releaseHoldMs"), 1.5);
+    invalid.insert(QStringLiteral("agc"), invalidAgc);
+    appendObject(invalid, QStringLiteral("releaseHoldMs"));
+    invalid = document;
+    invalidAgc = invalid.value(QStringLiteral("agc")).toObject();
+    invalidAgc.insert(QStringLiteral("releaseStepMs"), QStringLiteral("250"));
+    invalid.insert(QStringLiteral("agc"), invalidAgc);
+    appendObject(invalid, QStringLiteral("releaseStepMs"));
+
+    GainProfileStore store;
+    for (const InvalidDocument &invalidDocument : invalidDocuments) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(file.write(invalidDocument.contents), invalidDocument.contents.size());
+        file.close();
+
+        QString error;
+        QVERIFY(!store.load(path, &error).has_value());
+        QVERIFY2(error.contains(invalidDocument.errorFragment, Qt::CaseInsensitive), qPrintable(error));
+    }
+}
+
+void MediaTest::keepsExistingGainProfileWhenSaveFails()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("gain-profile.json"));
+    GainProfileStore store;
+    GainConfiguration baseline;
+    baseline.shifts[17] = 4;
+    QVERIFY(store.save(path, baseline));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray originalContents = file.readAll();
+    file.close();
+
+    GainConfiguration invalid = baseline;
+    invalid.releaseStepMs = 0;
+    QString error;
+    QVERIFY(!store.save(path, invalid, &error));
+    QVERIFY(error.contains(QStringLiteral("step"), Qt::CaseInsensitive));
+
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), originalContents);
+    const std::optional<GainConfiguration> loaded = store.load(path, &error);
+    QVERIFY2(loaded.has_value(), qPrintable(error));
+    QCOMPARE(*loaded, baseline);
+}
+
+void MediaTest::keepsExistingGainProfileWhenAtomicCommitFails()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("gain-profile.json"));
+    GainConfiguration baseline;
+    baseline.shifts[5] = 3;
+    GainProfileStore normalStore;
+    QVERIFY(normalStore.save(path, baseline));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray originalContents = file.readAll();
+    file.close();
+
+    GainConfiguration replacement = baseline;
+    replacement.shifts[5] = -3;
+    bool writeObserved = false;
+    GainProfileStore failingStore([&writeObserved](QSaveFile &file) {
+        writeObserved = file.size() > 0;
+        return false;
+    });
+    QString error;
+    QVERIFY(!failingStore.save(path, replacement, &error));
+    QVERIFY(error.contains(QStringLiteral("commit"), Qt::CaseInsensitive));
+    QVERIFY(writeObserved);
+
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), originalContents);
+    file.close();
+    const std::optional<GainConfiguration> loaded = normalStore.load(path, &error);
+    QVERIFY2(loaded.has_value(), qPrintable(error));
+    QCOMPARE(*loaded, baseline);
+}
+
+void MediaTest::reportsUnwritableGainProfileTarget()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    GainProfileStore store;
+    QString error;
+
+    QVERIFY(!store.save(directory.filePath(QStringLiteral("missing/profile.json")),
+                        GainConfiguration(),
+                        &error));
+    QVERIFY(!error.isEmpty());
 }
 
 void MediaTest::extractsSelectedChannelForPlayback()
@@ -271,6 +959,103 @@ void MediaTest::mediaProcessorsSignalCompletionForInvalidFrames()
     QCOMPARE(audioSpy.first().at(0).toBool(), false);
     QCOMPARE(videoSpy.count(), 1);
     QCOMPARE(videoSpy.first().at(0).toBool(), false);
+}
+
+void MediaTest::audioProcessorDistributesGainAdjustedFrame()
+{
+    AudioProcessor processor;
+    processor.configure({48000, 48, 0, 1, false});
+    GainConfiguration configuration;
+    configuration.shifts[0] = 1;
+    configuration.automatic[0] = true;
+    processor.setGainConfiguration(configuration);
+    processor.setChannelShift(0, 1);
+
+    QSignalSpy adjustedSpy(&processor, &AudioProcessor::adjustedFrameReady);
+    QSignalSpy decodedSpy(&processor, &AudioProcessor::arrayFrameDecoded);
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 0, 100'000);
+
+    processor.processArrayFrame(payload, 12, 34);
+
+    QCOMPARE(adjustedSpy.count(), 1);
+    QCOMPARE(decodedSpy.count(), 1);
+    const QByteArray adjusted = adjustedSpy.first().at(0).toByteArray();
+    QCOMPARE(readSample(adjusted, 0, 0), qint32(200'000));
+    QCOMPARE(adjustedSpy.first().at(1).toUInt(), quint32(12));
+    QCOMPARE(adjustedSpy.first().at(2).toUInt(), quint32(34));
+    const GainSnapshot snapshot = qvariant_cast<GainSnapshot>(adjustedSpy.first().at(3));
+    QCOMPARE(snapshot.shifts.at(0), 1);
+    QCOMPARE(snapshot.automatic.at(0), false);
+
+    const DecodedAudioFrame decoded = qvariant_cast<DecodedAudioFrame>(decodedSpy.first().at(0));
+    QCOMPARE(decoded.samples.at(0), qint32(200'000));
+    QCOMPARE(decoded.amplitudes.at(0), 200'000.0);
+}
+
+void MediaTest::recordsOnlyGainAdjustedAudioFrames()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AudioRecorder recorder;
+    GainConfiguration configuration;
+    configuration.shifts[0] = 1;
+    RecordingSettings settings {directory.path(), QStringLiteral("adjusted_only"), {0}, 48000};
+    settings.gainApplied = true;
+    settings.initialGainConfiguration = GainConfiguration {};
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+
+    AudioProcessor processor;
+    processor.configure({48000, 48, 0, 1, false});
+    processor.setGainConfiguration(configuration);
+    connect(&processor,
+            &AudioProcessor::adjustedFrameReady,
+            &recorder,
+            [&recorder, configuration](const QByteArray &payload,
+                                       quint32,
+                                       quint32,
+                                       const GainSnapshot &) {
+                recorder.enqueueFrame(payload, configuration);
+            });
+    QByteArray raw(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(raw, 0, 123'456);
+    processor.processArrayFrame(raw, 1, 2);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.statistics().inputFrames, quint64(1), 3000);
+    recorder.stopRecording(QStringLiteral("user"));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Idle, 3000);
+
+    const RecordingStatistics statistics = recorder.statistics();
+    QFile manifest(statistics.outputPath);
+    QVERIFY(manifest.open(QIODevice::ReadOnly));
+    const QJsonObject root = QJsonDocument::fromJson(manifest.readAll()).object();
+    const QJsonObject gain = root.value(QStringLiteral("gain")).toObject();
+    QCOMPARE(gain.value(QStringLiteral("initial"))
+                 .toObject()
+                 .value(QStringLiteral("shifts"))
+                 .toArray()
+                 .at(0)
+                 .toInt(),
+             0);
+    QCOMPARE(gain.value(QStringLiteral("final"))
+                 .toObject()
+                 .value(QStringLiteral("shifts"))
+                 .toArray()
+                 .at(0)
+                 .toInt(),
+             1);
+    const QString wavName = root.value(QStringLiteral("segments"))
+                                .toArray()
+                                .first()
+                                .toObject()
+                                .value(QStringLiteral("file"))
+                                .toString();
+    QFile wav(directory.filePath(wavName));
+    QVERIFY(wav.open(QIODevice::ReadOnly));
+    const QByteArray bytes = wav.readAll();
+    QCOMPARE(qFromLittleEndian<qint32>(
+                 reinterpret_cast<const uchar *>(bytes.constData() + 68)),
+             qint32(246'912));
 }
 
 void MediaTest::writesSelectedChannelsToExtensibleWav()
@@ -608,6 +1393,80 @@ void MediaTest::recordsAudioFramesAsynchronously()
     QVERIFY(QFileInfo::exists(statistics.outputPath));
 }
 
+void MediaTest::recorderRejectsInvalidPayloadBeforeQueueing()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AudioRecorder recorder;
+    RecordingSettings settings {directory.path(), QStringLiteral("invalid_queue_payload"), {0}, 48000};
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+
+    QVERIFY(!recorder.enqueueFrame(QByteArray()));
+    QVERIFY(!recorder.enqueueFrame(QByteArray(10, char(0))));
+    QCOMPARE(recorder.statistics().pendingBytes, quint64(0));
+    QCOMPARE(recorder.statistics().pendingFrames, quint64(0));
+    QCOMPARE(recorder.statistics().discardedFrames, quint64(2));
+    QCOMPARE(recorder.state(), RecordingState::Recording);
+
+    QVERIFY(recorder.stopAndWait());
+}
+
+void MediaTest::recorderBoundsPendingFrameCount()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AudioRecorder recorder(AudioRecorder::MaxPendingBytes, 1);
+    RecordingSettings settings {directory.path(), QStringLiteral("frame_queue_limit"), {0}, 48000};
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+
+    const QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    QVERIFY(recorder.enqueueFrame(payload));
+    QCOMPARE(recorder.statistics().pendingFrames, quint64(1));
+    QVERIFY(!recorder.enqueueFrame(payload));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Error, 3000);
+    QCOMPARE(recorder.statistics().pendingFrames, quint64(0));
+    QCOMPARE(recorder.statistics().pendingBytes, quint64(0));
+}
+
+void MediaTest::recordsGainMetadataInManifest()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    GainConfiguration initialGain;
+    initialGain.shifts[0] = 1;
+    initialGain.automatic[1] = true;
+    RecordingSettings settings {directory.path(), QStringLiteral("gain_metadata"), {0, 1}, 48000};
+    settings.gainApplied = true;
+    settings.initialGainConfiguration = initialGain;
+
+    MultiChannelWavWriter writer;
+    QString error;
+    QVERIFY2(writer.open(settings, &error), qPrintable(error));
+    QVERIFY2(writer.appendFrame(QByteArray(AudioFrameDecoder::FramePayloadBytes, char(0)), &error), qPrintable(error));
+    GainConfiguration finalGain = initialGain;
+    finalGain.shifts[0] = 3;
+    finalGain.automatic[1] = false;
+    QVERIFY2(writer.updateFinalGainConfiguration(finalGain, &error), qPrintable(error));
+    QVERIFY2(writer.close(QStringLiteral("user"), &error), qPrintable(error));
+
+    QFile manifest(writer.summary().manifestPath);
+    QVERIFY(manifest.open(QIODevice::ReadOnly));
+    const QJsonObject root = QJsonDocument::fromJson(manifest.readAll()).object();
+    QCOMPARE(root.value(QStringLiteral("gainApplied")).toBool(), true);
+    const QJsonObject gain = root.value(QStringLiteral("gain")).toObject();
+    const QJsonObject initial = gain.value(QStringLiteral("initial")).toObject();
+    const QJsonObject final = gain.value(QStringLiteral("final")).toObject();
+    QCOMPARE(initial.value(QStringLiteral("shifts")).toArray().size(), GainConfiguration::ChannelCount);
+    QCOMPARE(initial.value(QStringLiteral("shifts")).toArray().at(0).toInt(), 1);
+    QCOMPARE(initial.value(QStringLiteral("automatic")).toArray().at(1).toBool(), true);
+    QCOMPARE(final.value(QStringLiteral("shifts")).toArray().at(0).toInt(), 3);
+    QCOMPARE(final.value(QStringLiteral("automatic")).toArray().at(1).toBool(), false);
+    QCOMPARE(final.value(QStringLiteral("upperPeakRatio")).toDouble(), finalGain.upperPeakRatio);
+    QCOMPARE(final.value(QStringLiteral("releaseHoldMs")).toInt(), finalGain.releaseHoldMs);
+}
+
 void MediaTest::rejectsInvalidAndRepeatedRecorderStarts()
 {
     QTemporaryDir directory;
@@ -651,13 +1510,13 @@ void MediaTest::preservesFormatFailureAfterQueuedFramesAndStop()
     QVERIFY(recorder.startRecording(settings));
     QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
 
-    QVERIFY(recorder.enqueueFrame(QByteArray(10, char(0))));
+    QVERIFY(!recorder.enqueueFrame(QByteArray(10, char(0))));
     QVERIFY(recorder.enqueueFrame(QByteArray(AudioFrameDecoder::FramePayloadBytes, char(0))));
     recorder.stopRecording(QStringLiteral("user"));
 
-    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Error, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Idle, 3000);
     const RecordingStatistics statistics = recorder.statistics();
-    QCOMPARE(statistics.inputFrames, quint64(0));
+    QCOMPARE(statistics.inputFrames, quint64(1));
     QCOMPARE(statistics.discardedFrames, quint64(1));
     QVERIFY(statistics.error.contains(QStringLiteral("38400")));
     QVERIFY(QFileInfo::exists(statistics.outputPath));
@@ -665,7 +1524,7 @@ void MediaTest::preservesFormatFailureAfterQueuedFramesAndStop()
     QFile manifest(statistics.outputPath);
     QVERIFY(manifest.open(QIODevice::ReadOnly));
     const QJsonObject root = QJsonDocument::fromJson(manifest.readAll()).object();
-    QCOMPARE(root.value(QStringLiteral("stopReason")).toString(), QStringLiteral("format-error"));
+    QCOMPARE(root.value(QStringLiteral("stopReason")).toString(), QStringLiteral("user"));
 }
 
 void MediaTest::preservesAsynchronousStartFailureAfterImmediateStop()

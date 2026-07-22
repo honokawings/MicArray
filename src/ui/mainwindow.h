@@ -62,6 +62,7 @@ private slots:
     void renderPendingAudioFrame();
     void updateAudioSettingsFromUi();
     void updateHealthSnapshot();
+    void enqueueAudioFrame(const HostFrame &frame);
     void dispatchNextAudioFrame();
     void dispatchNextVideoFrame();
     void togglePresentationMode();
@@ -76,6 +77,8 @@ private slots:
     void chooseRecordingDirectory();
     void updateRecordingState(RecordingState state);
     void updateRecordingStatistics(const RecordingStatistics &statistics);
+    void saveGainProfile();
+    void loadGainProfile();
 
 private:
     void buildUi();
@@ -103,6 +106,7 @@ private:
     QVector<int> selectedRecordingChannels() const;
     void setRecordingConfigurationEnabled(bool enabled);
     void updateRecordingStartEnabled();
+    void persistGainConfiguration();
 
     AppSettings m_settings;
     Logger m_logger;
@@ -113,13 +117,13 @@ private:
     VideoDecoder *m_videoDecoder = nullptr;
     AudioProcessor *m_audioProcessor = nullptr;
     QElapsedTimer m_connectionTimer;
-    ControlValues m_controlValues;
     int m_videoDecodedFrames = 0;
     qint64 m_audioBytesReceived = 0;
     quint64 m_audioDroppedFrames = 0;
     quint64 m_videoDroppedFrames = 0;
     int m_audioOutputChannel = 0;
     int m_audioAverageWindowFrames = 100;
+    GainConfiguration m_gainConfiguration;
     QTimer m_videoRenderTimer;
     QTimer m_audioRenderTimer;
     QImage m_pendingVideoImage;
@@ -134,9 +138,10 @@ private:
     HealthLevel m_lastHealthLevel = HealthLevel::Disconnected;
     QTimer m_healthTimer;
     QElapsedTimer m_sessionTimer;
-    MediaFrameQueue m_audioFrameQueue {8};
+    static constexpr int MaxAudioFramesInFlight = 16;
+    MediaFrameQueue m_audioFrameQueue {32};
     MediaFrameQueue m_videoFrameQueue {1};
-    bool m_audioProcessing = false;
+    int m_audioFramesInFlight = 0;
     bool m_videoProcessing = false;
     QVector<qint16> m_lastSentControlValues;
     bool m_hasLastSentControl = false;

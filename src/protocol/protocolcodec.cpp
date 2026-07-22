@@ -46,10 +46,16 @@ QString hexPreview(const QByteArray &bytes)
 
 int expectedIncomingTailSize(quint16 rawType)
 {
-    return rawType == static_cast<quint16>(FrameType::Video) ? 1 : 2;
+    Q_UNUSED(rawType);
+    return 2;
 }
 
-bool hasExpectedIncomingTail(const QByteArray &buffer, qsizetype offset, quint16 rawType)
+void appendI16(QByteArray &buffer, qint16 value)
+{
+    appendU16(buffer, static_cast<quint16>(value));
+}
+
+bool hasValidIncomingTail(const QByteArray &buffer, qsizetype offset, quint16 rawType)
 {
     if (rawType == static_cast<quint16>(FrameType::Video)) {
         return static_cast<uchar>(buffer.at(offset)) == 0x0a;
@@ -90,9 +96,11 @@ QByteArray ProtocolCodec::encodeControl(const ControlValues &values)
     appendU16(frame, HostHeader);
     appendU16(frame, static_cast<quint16>(FrameType::Control));
     appendU32(frame, 0x16);
-    for (int i = 0; i < ControlValues::ChannelCount; ++i) {
-        appendU16(frame, static_cast<quint16>(values.channelValue(i)));
+    for (qint16 value : values.values()) {
+        appendI16(frame, value);
     }
+    appendI16(frame, 0);
+    appendI16(frame, 0);
     appendU16(frame, HostTail);
     return frame;
 }
@@ -165,9 +173,12 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
         }
 
         const qsizetype tailOffset = MediaHeaderSize + payloadLength;
-        if (!hasExpectedIncomingTail(m_buffer, tailOffset, rawType)) {
+        if (!hasValidIncomingTail(m_buffer, tailOffset, rawType)) {
             const quint16 tail = readTailForDiagnostics(m_buffer, tailOffset);
             const quint16 expectedTail = expectedTailForDiagnostics(rawType);
+            const QString expectedTailText = rawType == static_cast<quint16>(FrameType::Video)
+                ? QStringLiteral("0A ??")
+                : QStringLiteral("0x%1").arg(expectedTail, 4, 16, QLatin1Char('0'));
             const qsizetype contextStart = std::max<qsizetype>(0, tailOffset - 8);
             const qsizetype contextLength = std::min<qsizetype>(m_buffer.size() - contextStart, 18);
             ParseError error;
@@ -180,9 +191,9 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
             error.expectedTail = expectedTail;
             error.headerPreview = m_buffer.left(MediaHeaderSize);
             error.tailContext = m_buffer.mid(contextStart, contextLength);
-            error.message = QStringLiteral("Invalid frame tail 0x%1, expected 0x%2; type=0x%3, payloadLength=%4, tailOffset=%5, bufferSize=%6, head16=%7, tailContext=%8")
+            error.message = QStringLiteral("Invalid frame tail 0x%1, expected %2; type=0x%3, payloadLength=%4, tailOffset=%5, bufferSize=%6, head16=%7, tailContext=%8")
                                 .arg(tail, 4, 16, QLatin1Char('0'))
-                                .arg(expectedTail, 4, 16, QLatin1Char('0'))
+                                .arg(expectedTailText)
                                 .arg(rawType, 4, 16, QLatin1Char('0'))
                                 .arg(payloadLength)
                                 .arg(tailOffset)
@@ -203,6 +214,7 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
         frame.timestampSeconds = readU32(m_buffer, 8);
         frame.timestampMicros = readU32(m_buffer, 12);
         frame.payload = m_buffer.mid(MediaHeaderSize, payloadLength);
+        frame.rawFrame = m_buffer.left(frameSize);
         frame.postTailPreview = m_buffer.mid(frameSize, DebugPostTailPreviewSize);
         frame.postTailPreviewComplete = frame.postTailPreview.size() == DebugPostTailPreviewSize;
         result.frames.append(frame);

@@ -2,6 +2,7 @@
 #include "app/logger.h"
 #include "diagnostics/diagnosticexporter.h"
 #include "diagnostics/alertcoalescer.h"
+#include "media/channelgainprocessor.h"
 #include "monitoring/healthmonitor.h"
 
 #include <QSettings>
@@ -13,6 +14,8 @@
 #include <QJsonObject>
 #include <QtTest>
 
+#include <functional>
+
 using namespace MicArray;
 
 class AppTest : public QObject
@@ -22,7 +25,16 @@ class AppTest : public QObject
 private slots:
     void invalidSettingsFallBackToSafeDefaults();
     void persistsNamedControlPresets();
+    void migratesLegacyEightChannelControlPresets();
     void rejectsInvalidControlPresets();
+    void gainConfigurationDefaultsToValidValues();
+    void persistsGainConfigurationAcrossSettingsInstances();
+    void persistsScientificNotationGainConfigurationAfterColdStart();
+    void rejectsInvalidGainConfigurationWithoutReplacingStoredValue();
+    void rejectsCorruptedGainConfigurationValueTypes();
+    void loadsCanonicalIniStringGainConfigurationAfterColdStart();
+    void rejectsNonCanonicalIniStringGainConfigurationAfterColdStart();
+    void restoresGainConfigurationAfterSyncFailure();
     void healthMonitorClassifiesFreshnessAndCalculatesRates();
     void loggerRotatesAndRetainsBoundedFiles();
     void alertCoalescerSuppressesRepeatedEventsWithinOneSecond();
@@ -68,7 +80,7 @@ void AppTest::persistsNamedControlPresets()
     AppSettings settings(path);
     ControlPreset preset;
     preset.name = QStringLiteral("演示场景");
-    preset.values = {1, 2, 3, 4, 5, 6, 0, 0};
+    preset.values = {1, 2, 3, 4, 5, 6};
 
     QVERIFY(settings.saveControlPreset(preset));
     QCOMPARE(settings.controlPresets().size(), 1);
@@ -82,18 +94,313 @@ void AppTest::persistsNamedControlPresets()
     QVERIFY(settings.controlPresets().isEmpty());
 }
 
+void AppTest::migratesLegacyEightChannelControlPresets()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.beginWriteArray(QStringLiteral("controlPresets"));
+        raw.setArrayIndex(0);
+        raw.setValue(QStringLiteral("name"), QStringLiteral("legacy"));
+        raw.setValue(QStringLiteral("values"), QVariantList {1, 2, 3, 4, 5, 6, 7, 8});
+        raw.setArrayIndex(1);
+        raw.setValue(QStringLiteral("name"), QStringLiteral("invalid-five"));
+        raw.setValue(QStringLiteral("values"), QVariantList {1, 2, 3, 4, 5});
+        raw.setArrayIndex(2);
+        raw.setValue(QStringLiteral("name"), QStringLiteral("invalid-seven"));
+        raw.setValue(QStringLiteral("values"), QVariantList {1, 2, 3, 4, 5, 6, 7});
+        raw.endArray();
+    }
+
+    AppSettings settings(path);
+    const QList<ControlPreset> presets = settings.controlPresets();
+    QCOMPARE(presets.size(), 1);
+    QCOMPARE(presets.first().name, QStringLiteral("legacy"));
+    QCOMPARE(presets.first().values, QVector<qint16>({1, 2, 3, 4, 5, 6}));
+}
+
 void AppTest::rejectsInvalidControlPresets()
 {
     QTemporaryDir directory;
     AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
     ControlPreset emptyName;
-    emptyName.values = {1, 2, 3, 4, 5, 6, 0, 0};
+    emptyName.values = {1, 2, 3, 4, 5, 6};
     QVERIFY(!settings.saveControlPreset(emptyName));
 
     ControlPreset wrongSize;
     wrongSize.name = QStringLiteral("bad");
     wrongSize.values = {1, 2};
     QVERIFY(!settings.saveControlPreset(wrongSize));
+
+    wrongSize.values = {1, 2, 3, 4, 5, 6, 7, 8};
+    QVERIFY(!settings.saveControlPreset(wrongSize));
+}
+
+void AppTest::gainConfigurationDefaultsToValidValues()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    ChannelGainProcessor processor;
+    QString error;
+
+    QVERIFY2(processor.setConfiguration(settings.gainConfiguration(), &error), qPrintable(error));
+}
+
+void AppTest::persistsGainConfigurationAcrossSettingsInstances()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    GainConfiguration configuration;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        configuration.shifts[channel] = channel % 17 - 8;
+        configuration.automatic[channel] = channel % 2 == 1;
+    }
+    configuration.upperPeakRatio = 0.77;
+    configuration.lowerPeakRatio = 0.31;
+    configuration.releaseHoldMs = 740;
+    configuration.releaseStepMs = 190;
+
+    {
+        AppSettings settings(path);
+        QString error;
+        QVERIFY2(settings.saveGainConfiguration(configuration, &error), qPrintable(error));
+    }
+
+    AppSettings reloaded(path);
+    QCOMPARE(reloaded.gainConfiguration(), configuration);
+}
+
+void AppTest::persistsScientificNotationGainConfigurationAfterColdStart()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    GainConfiguration configuration;
+    configuration.upperPeakRatio = 1e-6;
+    configuration.lowerPeakRatio = 0.0;
+
+    {
+        AppSettings settings(path);
+        QString error;
+        QVERIFY2(settings.saveGainConfiguration(configuration, &error), qPrintable(error));
+    }
+
+    AppSettings reloaded(path);
+    QCOMPARE(reloaded.gainConfiguration(), configuration);
+}
+
+void AppTest::rejectsInvalidGainConfigurationWithoutReplacingStoredValue()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    GainConfiguration baseline;
+    baseline.shifts[9] = -5;
+    baseline.automatic[9] = true;
+    QVERIFY(settings.saveGainConfiguration(baseline));
+
+    QList<QPair<GainConfiguration, QString>> invalidConfigurations;
+    GainConfiguration invalid = baseline;
+    invalid.shifts[0] = 9;
+    invalidConfigurations.append({invalid, QStringLiteral("shift")});
+    invalid = baseline;
+    invalid.upperPeakRatio = 0.0;
+    invalidConfigurations.append({invalid, QStringLiteral("upper")});
+    invalid = baseline;
+    invalid.releaseHoldMs = 0;
+    invalidConfigurations.append({invalid, QStringLiteral("hold")});
+
+    for (const auto &[candidate, errorFragment] : invalidConfigurations) {
+        QString error;
+        QVERIFY(!settings.saveGainConfiguration(candidate, &error));
+        QVERIFY2(error.contains(errorFragment, Qt::CaseInsensitive), qPrintable(error));
+        QCOMPARE(settings.gainConfiguration(), baseline);
+    }
+}
+
+void AppTest::rejectsCorruptedGainConfigurationValueTypes()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    const GainConfiguration defaults;
+    GainConfiguration valid = defaults;
+    valid.shifts[0] = 1;
+    valid.automatic[0] = true;
+    valid.upperPeakRatio = 0.75;
+    const auto writeValidConfiguration = [&path, &valid]() {
+        AppSettings settings(path);
+        QString error;
+        QVERIFY2(settings.saveGainConfiguration(valid, &error), qPrintable(error));
+    };
+
+    struct Corruption {
+        QString name;
+        std::function<void(QSettings &)> apply;
+    };
+    const QList<Corruption> corruptions {
+        {QStringLiteral("boolean shift"), [](QSettings &raw) {
+             QVariantList shifts = raw.value(QStringLiteral("gainConfiguration/shifts")).toList();
+             shifts[0] = true;
+             raw.setValue(QStringLiteral("gainConfiguration/shifts"), shifts);
+         }},
+        {QStringLiteral("floating shift"), [](QSettings &raw) {
+             QVariantList shifts = raw.value(QStringLiteral("gainConfiguration/shifts")).toList();
+             shifts[0] = 1.5;
+             raw.setValue(QStringLiteral("gainConfiguration/shifts"), shifts);
+         }},
+        {QStringLiteral("invalid string shift"), [](QSettings &raw) {
+             QVariantList shifts = raw.value(QStringLiteral("gainConfiguration/shifts")).toList();
+             shifts[0] = QStringLiteral("1x");
+             raw.setValue(QStringLiteral("gainConfiguration/shifts"), shifts);
+         }},
+        {QStringLiteral("boolean ratio"), [](QSettings &raw) {
+             raw.setValue(QStringLiteral("gainConfiguration/upperPeakRatio"), true);
+         }},
+        {QStringLiteral("invalid string ratio"), [](QSettings &raw) {
+             raw.setValue(QStringLiteral("gainConfiguration/lowerPeakRatio"), QStringLiteral("0.35x"));
+         }},
+        {QStringLiteral("floating hold"), [](QSettings &raw) {
+             raw.setValue(QStringLiteral("gainConfiguration/releaseHoldMs"), 500.0);
+         }},
+        {QStringLiteral("string step"), [](QSettings &raw) {
+             raw.setValue(QStringLiteral("gainConfiguration/releaseStepMs"), QStringLiteral("250x"));
+         }},
+    };
+
+    for (const Corruption &corruption : corruptions) {
+        {
+            writeValidConfiguration();
+        }
+        {
+            QSettings raw(path, QSettings::IniFormat);
+            corruption.apply(raw);
+            raw.sync();
+            QCOMPARE(raw.status(), QSettings::NoError);
+        }
+        AppSettings settings(path);
+        QVERIFY2(settings.gainConfiguration() == defaults, qPrintable(corruption.name));
+    }
+}
+
+void AppTest::loadsCanonicalIniStringGainConfigurationAfterColdStart()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    GainConfiguration expected;
+    expected.shifts[0] = -3;
+    expected.automatic[0] = true;
+    expected.upperPeakRatio = 1e-6;
+    expected.lowerPeakRatio = 0.0;
+    expected.releaseHoldMs = 500;
+    expected.releaseStepMs = 250;
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        QVariantList shifts;
+        QVariantList automatic;
+        for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+            shifts.append(channel == 0 ? QStringLiteral("-3") : QStringLiteral("0"));
+            automatic.append(channel == 0);
+        }
+        raw.setValue(QStringLiteral("gainConfiguration/shifts"), shifts);
+        raw.setValue(QStringLiteral("gainConfiguration/automatic"), automatic);
+        raw.setValue(QStringLiteral("gainConfiguration/upperPeakRatio"), QStringLiteral("1e-06"));
+        raw.setValue(QStringLiteral("gainConfiguration/lowerPeakRatio"), QStringLiteral("0"));
+        raw.setValue(QStringLiteral("gainConfiguration/releaseHoldMs"), QStringLiteral("500"));
+        raw.setValue(QStringLiteral("gainConfiguration/releaseStepMs"), QStringLiteral("250"));
+        raw.sync();
+        QCOMPARE(raw.status(), QSettings::NoError);
+    }
+
+    AppSettings reloaded(path);
+    QCOMPARE(reloaded.gainConfiguration(), expected);
+}
+
+void AppTest::rejectsNonCanonicalIniStringGainConfigurationAfterColdStart()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    const GainConfiguration defaults;
+    const QList<QPair<QString, QVariant>> corruptions {
+        {QStringLiteral("gainConfiguration/shifts"), QVariantList(GainConfiguration::ChannelCount, QStringLiteral("01"))},
+        {QStringLiteral("gainConfiguration/releaseHoldMs"), QStringLiteral("1.0")},
+        {QStringLiteral("gainConfiguration/releaseStepMs"), QStringLiteral(" 250")},
+        {QStringLiteral("gainConfiguration/upperPeakRatio"), QStringLiteral("NaN")},
+        {QStringLiteral("gainConfiguration/lowerPeakRatio"), QStringLiteral("Inf")},
+    };
+
+    for (const auto &[key, value] : corruptions) {
+        {
+            AppSettings settings(path);
+            QVERIFY(settings.saveGainConfiguration(GainConfiguration()));
+        }
+        {
+            QSettings raw(path, QSettings::IniFormat);
+            raw.setValue(key, value);
+            raw.sync();
+            QCOMPARE(raw.status(), QSettings::NoError);
+        }
+        AppSettings reloaded(path);
+        QCOMPARE(reloaded.gainConfiguration(), defaults);
+    }
+}
+
+void AppTest::restoresGainConfigurationAfterSyncFailure()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString activeDirectory = directory.filePath(QStringLiteral("active"));
+    const QString movedDirectory = directory.filePath(QStringLiteral("moved"));
+    QVERIFY(QDir().mkpath(activeDirectory));
+    const QString path = QDir(activeDirectory).filePath(QStringLiteral("settings.ini"));
+    GainConfiguration original;
+    original.shifts[3] = -2;
+    original.automatic[3] = true;
+    {
+        AppSettings writer(path);
+        QVERIFY(writer.saveGainConfiguration(original));
+    }
+
+    {
+        AppSettings settings(path);
+        QCOMPARE(settings.gainConfiguration(), original);
+        GainConfiguration replacement = original;
+        replacement.shifts[3] = 4;
+        replacement.automatic[3] = false;
+        QVERIFY(QDir(directory.path()).rename(QStringLiteral("active"), QStringLiteral("moved")));
+
+        QString error;
+        QFile blockingEntry(activeDirectory);
+        QVERIFY(blockingEntry.open(QIODevice::WriteOnly));
+        blockingEntry.close();
+        QVERIFY(!settings.saveGainConfiguration(replacement, &error));
+        QVERIFY(error.contains(QStringLiteral("sync"), Qt::CaseInsensitive));
+        QVERIFY(!error.contains(QStringLiteral("rollback"), Qt::CaseInsensitive));
+        QCOMPARE(settings.gainConfiguration(), original);
+        QVERIFY(blockingEntry.remove());
+        QVERIFY(QDir(directory.path()).rename(QStringLiteral("moved"), QStringLiteral("active")));
+
+        ConnectionSettings pendingConnection = settings.connection();
+        pendingConnection.host = QStringLiteral("192.168.2.99");
+        pendingConnection.port = 9977;
+        pendingConnection.autoReconnect = false;
+        settings.saveConnection(pendingConnection);
+        QVERIFY2(settings.saveGainConfiguration(replacement, &error), qPrintable(error));
+        QCOMPARE(settings.gainConfiguration(), replacement);
+    }
+
+    AppSettings reloaded(path);
+    QCOMPARE(reloaded.gainConfiguration().shifts.at(3), 4);
+    QCOMPARE(reloaded.gainConfiguration().automatic.at(3), false);
+    QCOMPARE(reloaded.connection().host, QStringLiteral("192.168.2.99"));
+    QCOMPARE(reloaded.connection().port, quint16(9977));
+    QCOMPARE(reloaded.connection().autoReconnect, false);
 }
 
 void AppTest::healthMonitorClassifiesFreshnessAndCalculatesRates()

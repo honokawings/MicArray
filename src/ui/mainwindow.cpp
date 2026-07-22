@@ -1,6 +1,7 @@
 #include "ui/mainwindow.h"
 
 #include "ui/displayformat.h"
+#include "media/gainprofilestore.h"
 
 #include <QAbstractAnimation>
 #include <QApplication>
@@ -73,6 +74,8 @@ MainWindow::MainWindow(QWidget *parent)
 {
     qRegisterMetaType<AudioSettings>("AudioSettings");
     qRegisterMetaType<DecodedAudioFrame>("MicArray::DecodedAudioFrame");
+    qRegisterMetaType<GainConfiguration>("MicArray::GainConfiguration");
+    qRegisterMetaType<GainSnapshot>("MicArray::GainSnapshot");
 
     m_audioProcessor = new AudioProcessor;
     m_videoDecoder = new VideoDecoder;
@@ -88,6 +91,7 @@ MainWindow::MainWindow(QWidget *parent)
     buildUi();
     loadSettings();
     connectSignals();
+    setProperty("audioFramesInFlight", 0);
     m_videoRenderTimer.setInterval(33);
     m_audioRenderTimer.setInterval(33);
     connect(&m_videoRenderTimer, &QTimer::timeout, this, &MainWindow::renderPendingVideoFrame);
@@ -108,6 +112,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    persistGainConfiguration();
     m_audioRecorder.stopAndWait();
     m_healthTimer.stop();
     m_videoRenderTimer.stop();
@@ -207,10 +212,7 @@ QWidget *MainWindow::buildMonitorPage()
         m_controlSpins[i]->setObjectName(QStringLiteral("controlSpin_%1").arg(i));
         m_controlSpins[i]->setRange(-32768, 32767);
         m_controlSpins[i]->setSuffix(QStringLiteral(" int16"));
-        if (m_controlValues.isReserved(i)) {
-            m_controlSpins[i]->setEnabled(false);
-        }
-        controlLayout->addRow(QStringLiteral("接口 %1%2").arg(i).arg(m_controlValues.isReserved(i) ? QStringLiteral(" 预留") : QString()), m_controlSpins[i]);
+        controlLayout->addRow(QStringLiteral("接口 %1").arg(i), m_controlSpins[i]);
     }
     m_lockControlCheck = new QCheckBox(QStringLiteral("锁定控制"), controlGroup);
     m_sendControlButton = new QPushButton(QStringLiteral("发送控制"), controlGroup);
@@ -584,6 +586,60 @@ void MainWindow::connectSignals()
         m_outputChannelSpin->setValue(channel);
         appendAlert(LogLevel::Info, QStringLiteral("监听通道已切换为 CH%1").arg(channel));
     });
+    connect(m_dashboardHeatmap,
+            &ArrayHeatmapWidget::channelAutomaticChanged,
+            this,
+            [this](int channel, bool automatic) {
+                if (channel < 0 || channel >= GainConfiguration::ChannelCount) {
+                    return;
+                }
+                m_gainConfiguration.automatic[channel] = automatic;
+                QMetaObject::invokeMethod(m_audioProcessor,
+                                          [processor = m_audioProcessor, channel, automatic]() {
+                                              processor->setChannelAutomatic(channel, automatic);
+                                          },
+                                          Qt::QueuedConnection);
+                persistGainConfiguration();
+            });
+    connect(m_dashboardHeatmap,
+            &ArrayHeatmapWidget::channelShiftChanged,
+            this,
+            [this](int channel, int shift) {
+                if (channel < 0 || channel >= GainConfiguration::ChannelCount) {
+                    return;
+                }
+                m_gainConfiguration.shifts[channel] = shift;
+                m_gainConfiguration.automatic[channel] = false;
+                QMetaObject::invokeMethod(m_audioProcessor,
+                                          [processor = m_audioProcessor, channel, shift]() {
+                                              processor->setChannelShift(channel, shift);
+                                          },
+                                          Qt::QueuedConnection);
+                persistGainConfiguration();
+            });
+    connect(m_dashboardHeatmap,
+            &ArrayHeatmapWidget::setAllAutomaticRequested,
+            this,
+            [this](bool automatic) {
+                m_gainConfiguration.automatic.fill(automatic);
+                QMetaObject::invokeMethod(m_audioProcessor,
+                                          [processor = m_audioProcessor, automatic]() {
+                                              processor->setAllAutomatic(automatic);
+                                          },
+                                          Qt::QueuedConnection);
+                persistGainConfiguration();
+            });
+    connect(m_dashboardHeatmap, &ArrayHeatmapWidget::resetRequested, this, [this]() {
+        m_gainConfiguration = GainConfiguration {};
+        QMetaObject::invokeMethod(m_audioProcessor,
+                                  [processor = m_audioProcessor]() {
+                                      processor->resetGain();
+                                  },
+                                  Qt::QueuedConnection);
+        persistGainConfiguration();
+    });
+    connect(m_dashboardHeatmap, &ArrayHeatmapWidget::saveRequested, this, &MainWindow::saveGainProfile);
+    connect(m_dashboardHeatmap, &ArrayHeatmapWidget::loadRequested, this, &MainWindow::loadGainProfile);
     connect(m_lockControlCheck, &QCheckBox::toggled, this, [this](bool locked) {
         setControlsEnabled(!locked && m_client.state() == DeviceState::Connected);
     });
@@ -605,15 +661,7 @@ void MainWindow::connectSignals()
     connect(&m_client, &DeviceClient::errorMessage, &m_logger, &Logger::error);
     connect(&m_client, &DeviceClient::parseErrorReceived, this, &MainWindow::updateDebugError);
     connect(&m_client, &DeviceClient::frameReceived, this, &MainWindow::updateDebugFrame);
-    connect(&m_client, &DeviceClient::audioFrameReceived, this, [this](const HostFrame &frame) {
-        if (m_audioRecorder.state() == RecordingState::Recording) {
-            m_audioRecorder.enqueueFrame(frame.payload);
-        }
-        if (m_audioFrameQueue.push(frame)) {
-            ++m_audioDroppedFrames;
-        }
-        dispatchNextAudioFrame();
-    });
+    connect(&m_client, &DeviceClient::audioFrameReceived, this, &MainWindow::enqueueAudioFrame);
     connect(&m_client, &DeviceClient::videoFrameReceived, this, [this](const HostFrame &frame) {
         if (m_videoFrameQueue.push(frame)) {
             ++m_videoDroppedFrames;
@@ -629,6 +677,25 @@ void MainWindow::connectSignals()
     connect(m_audioProcessor, &AudioProcessor::arrayFrameDecoded, this, [this](const DecodedAudioFrame &frame) {
         showArrayFrame(frame);
     }, Qt::QueuedConnection);
+    connect(m_audioProcessor,
+            &AudioProcessor::adjustedFrameReady,
+            this,
+            [this](const QByteArray &payload,
+                   quint32,
+                   quint32,
+                   const GainSnapshot &snapshot) {
+                const bool gainStateChanged = m_gainConfiguration.shifts != snapshot.shifts
+                    || m_gainConfiguration.automatic != snapshot.automatic;
+                m_gainConfiguration.shifts = snapshot.shifts;
+                m_gainConfiguration.automatic = snapshot.automatic;
+                if (gainStateChanged) {
+                    m_dashboardHeatmap->setGainSnapshot(snapshot);
+                }
+                if (m_audioRecorder.state() == RecordingState::Recording) {
+                    m_audioRecorder.enqueueFrame(payload, m_gainConfiguration);
+                }
+            },
+            Qt::QueuedConnection);
     connect(m_audioProcessor, &AudioProcessor::audioWarning, &m_logger, [this](const QString &message) {
         m_logger.warning(QStringLiteral("audio"), message);
     }, Qt::QueuedConnection);
@@ -636,7 +703,10 @@ void MainWindow::connectSignals()
         if (!valid) {
             ++m_audioDroppedFrames;
         }
-        m_audioProcessing = false;
+        if (m_audioFramesInFlight > 0) {
+            --m_audioFramesInFlight;
+        }
+        setProperty("audioFramesInFlight", m_audioFramesInFlight);
         dispatchNextAudioFrame();
     }, Qt::QueuedConnection);
     connect(m_videoDecoder, &VideoDecoder::frameProcessed, this, [this](bool valid) {
@@ -682,6 +752,14 @@ void MainWindow::loadSettings()
                               "configure",
                               Qt::QueuedConnection,
                               Q_ARG(AudioSettings, audio));
+    m_gainConfiguration = m_settings.gainConfiguration();
+    m_dashboardHeatmap->setGainConfiguration(m_gainConfiguration);
+    const GainConfiguration gainConfiguration = m_gainConfiguration;
+    QMetaObject::invokeMethod(m_audioProcessor,
+                              [processor = m_audioProcessor, gainConfiguration]() {
+                                  processor->setGainConfiguration(gainConfiguration);
+                              },
+                              Qt::QueuedConnection);
 
     const VideoSettings video = m_settings.video();
     const int index = m_videoFormatCombo->findData(video.format);
@@ -778,7 +856,6 @@ void MainWindow::updateConnectionState(DeviceState state)
         m_videoDroppedFrames += static_cast<quint64>(m_videoFrameQueue.size());
         m_audioFrameQueue.clear();
         m_videoFrameQueue.clear();
-        m_audioProcessing = false;
         m_videoProcessing = false;
     }
     setControlsEnabled(state == DeviceState::Connected && !m_lockControlCheck->isChecked());
@@ -800,6 +877,8 @@ void MainWindow::startRecording()
                             .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz")));
     settings.channels = channels;
     settings.sampleRate = static_cast<int>(m_sampleRateSpin->value() * 1000.0);
+    settings.gainApplied = true;
+    settings.initialGainConfiguration = m_gainConfiguration;
     m_recordingErrorLabel->clear();
     m_audioRecorder.startRecording(settings);
 }
@@ -818,6 +897,69 @@ void MainWindow::chooseRecordingDirectory()
     if (!directory.isEmpty()) {
         m_recordingDirectoryEdit->setText(directory);
         updateRecordingStartEnabled();
+    }
+}
+
+void MainWindow::saveGainProfile()
+{
+    QString path = QFileDialog::getSaveFileName(this,
+                                                QStringLiteral("保存增益配置"),
+                                                QDir::home().filePath(QStringLiteral("MicArray_gain.json")),
+                                                QStringLiteral("JSON 配置 (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    if (!path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
+        path += QStringLiteral(".json");
+    }
+    GainProfileStore store;
+    QString error;
+    if (!store.save(path, m_gainConfiguration, &error)) {
+        m_logger.error(QStringLiteral("gain"), error);
+        QMessageBox::critical(this, QStringLiteral("保存失败"), error);
+        return;
+    }
+    persistGainConfiguration();
+    m_logger.info(QStringLiteral("gain"),
+                  QStringLiteral("增益配置已保存: %1").arg(QDir::toNativeSeparators(path)));
+}
+
+void MainWindow::loadGainProfile()
+{
+    const QString path = QFileDialog::getOpenFileName(this,
+                                                      QStringLiteral("载入增益配置"),
+                                                      QDir::homePath(),
+                                                      QStringLiteral("JSON 配置 (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    GainProfileStore store;
+    QString error;
+    const std::optional<GainConfiguration> loaded = store.load(path, &error);
+    if (!loaded.has_value()) {
+        m_logger.error(QStringLiteral("gain"), error);
+        QMessageBox::critical(this, QStringLiteral("载入失败"), error);
+        return;
+    }
+    m_gainConfiguration = *loaded;
+    m_dashboardHeatmap->setGainConfiguration(m_gainConfiguration);
+    const GainConfiguration configuration = m_gainConfiguration;
+    QMetaObject::invokeMethod(m_audioProcessor,
+                              [processor = m_audioProcessor, configuration]() {
+                                  processor->setGainConfiguration(configuration);
+                              },
+                              Qt::QueuedConnection);
+    persistGainConfiguration();
+    m_logger.info(QStringLiteral("gain"),
+                  QStringLiteral("增益配置已载入: %1").arg(QDir::toNativeSeparators(path)));
+}
+
+void MainWindow::persistGainConfiguration()
+{
+    QString error;
+    if (!m_settings.saveGainConfiguration(m_gainConfiguration, &error)) {
+        m_logger.error(QStringLiteral("gain"),
+                       QStringLiteral("无法保存最近增益配置: %1").arg(error));
     }
 }
 
@@ -846,11 +988,12 @@ void MainWindow::updateRecordingStatistics(const RecordingStatistics &statistics
         ? static_cast<double>(statistics.dataBytes) * 1000.0 / static_cast<double>(statistics.elapsedMs)
         : 0.0;
     m_recordingStatisticsLabel->setText(
-        QStringLiteral("时长: %1\n已写: %2\n写入速率: %3\n待写队列: %4\n已写帧: %5\n未写帧: %6\n清单: %7")
+        QStringLiteral("时长: %1\n已写: %2\n写入速率: %3\n待写队列: %4 / %5 帧\n已写帧: %6\n未写帧: %7\n清单: %8")
             .arg(duration)
             .arg(formatByteSize(statistics.dataBytes))
             .arg(formatByteRate(bytesPerSecond))
             .arg(formatByteSize(statistics.pendingBytes))
+            .arg(statistics.pendingFrames)
             .arg(statistics.inputFrames)
             .arg(statistics.discardedFrames)
             .arg(statistics.outputPath.isEmpty() ? QStringLiteral("-") : QDir::toNativeSeparators(statistics.outputPath)));
@@ -917,9 +1060,6 @@ void MainWindow::updateAudioLevel(double peakLevel, qint64 bytesReceived, quint3
 void MainWindow::showArrayFrame(const DecodedAudioFrame &frame)
 {
     m_audioOutputChannel = frame.outputChannel;
-    if (m_dashboardHeatmap != nullptr && frame.valid) {
-        m_dashboardHeatmap->setAmplitudes(frame.normalizedAmplitudes, frame.outputChannel);
-    }
     m_pendingAudioFrame = frame;
     m_hasPendingAudioFrame = true;
 }
@@ -947,10 +1087,16 @@ void MainWindow::renderPendingAudioFrame()
         return;
     }
 
-    if (m_waveformWidget != nullptr && m_pendingAudioFrame.valid) {
+    if (m_dashboardHeatmap != nullptr && m_dashboardHeatmap->isVisible() && m_pendingAudioFrame.valid) {
+        m_dashboardHeatmap->setAmplitudes(m_pendingAudioFrame.normalizedAmplitudes,
+                                          m_pendingAudioFrame.outputChannel);
+    }
+    if (m_waveformWidget != nullptr && m_waveformWidget->isVisible() && m_pendingAudioFrame.valid) {
         m_waveformWidget->appendPcm16(m_pendingAudioFrame.outputPcm16);
     }
-    updateCalibrationGrid(m_pendingAudioFrame);
+    if (m_calibrationStatsLabel != nullptr && m_calibrationStatsLabel->isVisible()) {
+        updateCalibrationGrid(m_pendingAudioFrame);
+    }
     m_hasPendingAudioFrame = false;
 }
 
@@ -1077,24 +1223,32 @@ ControlValues MainWindow::collectControlValues() const
 void MainWindow::setControlsEnabled(bool enabled)
 {
     for (int i = 0; i < ControlValues::ChannelCount; ++i) {
-        m_controlSpins[i]->setEnabled(enabled && !m_controlValues.isReserved(i));
+        m_controlSpins[i]->setEnabled(enabled);
     }
     m_sendControlButton->setEnabled(enabled);
 }
 
+void MainWindow::enqueueAudioFrame(const HostFrame &frame)
+{
+    if (m_audioFrameQueue.push(frame)) {
+        ++m_audioDroppedFrames;
+    }
+    dispatchNextAudioFrame();
+}
+
 void MainWindow::dispatchNextAudioFrame()
 {
-    if (m_audioProcessing || m_audioFrameQueue.isEmpty()) {
-        return;
+    while (m_audioFramesInFlight < MaxAudioFramesInFlight && !m_audioFrameQueue.isEmpty()) {
+        const HostFrame frame = m_audioFrameQueue.takeNext();
+        ++m_audioFramesInFlight;
+        setProperty("audioFramesInFlight", m_audioFramesInFlight);
+        QMetaObject::invokeMethod(m_audioProcessor,
+                                  "processArrayFrame",
+                                  Qt::QueuedConnection,
+                                  Q_ARG(QByteArray, frame.payload),
+                                  Q_ARG(quint32, frame.timestampSeconds),
+                                  Q_ARG(quint32, frame.timestampMicros));
     }
-    const HostFrame frame = m_audioFrameQueue.takeNext();
-    m_audioProcessing = true;
-    QMetaObject::invokeMethod(m_audioProcessor,
-                              "processArrayFrame",
-                              Qt::QueuedConnection,
-                              Q_ARG(QByteArray, frame.payload),
-                              Q_ARG(quint32, frame.timestampSeconds),
-                              Q_ARG(quint32, frame.timestampMicros));
 }
 
 void MainWindow::dispatchNextVideoFrame()
@@ -1122,7 +1276,7 @@ void MainWindow::updateHealthSnapshot()
     inputs.parseErrors = m_client.parseErrorCount();
     inputs.backpressureActive = m_client.receiveBackpressureActive();
     inputs.pendingProtocolBytes = m_client.pendingProtocolBytes();
-    inputs.audioQueueDepth = m_audioFrameQueue.size() + (m_audioProcessing ? 1 : 0);
+    inputs.audioQueueDepth = m_audioFrameQueue.size() + m_audioFramesInFlight;
     inputs.audioDroppedFrames = m_audioDroppedFrames;
     inputs.videoDroppedFrames = m_videoDroppedFrames;
     m_healthSnapshot = m_healthMonitor.update(inputs, m_sessionTimer.elapsed());

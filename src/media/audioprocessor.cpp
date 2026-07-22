@@ -10,6 +10,8 @@ namespace MicArray {
 AudioProcessor::AudioProcessor(QObject *parent)
     : QObject(parent)
 {
+    qRegisterMetaType<GainConfiguration>("MicArray::GainConfiguration");
+    qRegisterMetaType<GainSnapshot>("MicArray::GainSnapshot");
     configure(AudioSettings {});
 }
 
@@ -66,7 +68,22 @@ void AudioProcessor::processPcmFrame(const QByteArray &payload, quint32 timestam
 void AudioProcessor::processArrayFrame(const QByteArray &payload, quint32 timestampSeconds, quint32 timestampMicros)
 {
     m_bytesReceived += payload.size();
-    const DecodedAudioFrame frame = m_decoder.decode(payload, timestampSeconds, timestampMicros);
+    const GainProcessResult adjusted = m_gainProcessor.process(payload, m_format.sampleRate());
+    if (!adjusted.valid) {
+        ++m_droppedFrames;
+        emit audioWarning(adjusted.error);
+        emit frameProcessed(false);
+        return;
+    }
+
+    emit adjustedFrameReady(adjusted.payload,
+                            timestampSeconds,
+                            timestampMicros,
+                            adjusted.snapshot);
+
+    const DecodedAudioFrame frame = m_decoder.decode(adjusted.payload,
+                                                     timestampSeconds,
+                                                     timestampMicros);
     if (!frame.valid) {
         ++m_droppedFrames;
         emit audioWarning(frame.error);
@@ -87,6 +104,53 @@ void AudioProcessor::processArrayFrame(const QByteArray &payload, quint32 timest
     emit arrayFrameDecoded(frame);
     emit levelChanged(m_peakLevel, m_bytesReceived, timestampSeconds, timestampMicros);
     emit frameProcessed(true);
+}
+
+void AudioProcessor::setGainConfiguration(const GainConfiguration &configuration)
+{
+    QString error;
+    if (!m_gainProcessor.setConfiguration(configuration, &error)) {
+        emit audioWarning(QStringLiteral("Invalid gain configuration: %1").arg(error));
+    }
+}
+
+void AudioProcessor::setChannelShift(int channel, int shift)
+{
+    GainConfiguration configuration = m_gainProcessor.configuration();
+    if (channel < 0 || channel >= GainConfiguration::ChannelCount
+        || shift < GainConfiguration::MinimumShift
+        || shift > GainConfiguration::MaximumShift) {
+        emit audioWarning(QStringLiteral("Invalid gain shift request: channel=%1 shift=%2")
+                              .arg(channel)
+                              .arg(shift));
+        return;
+    }
+    configuration.shifts[channel] = shift;
+    configuration.automatic[channel] = false;
+    setGainConfiguration(configuration);
+}
+
+void AudioProcessor::setChannelAutomatic(int channel, bool automatic)
+{
+    if (channel < 0 || channel >= GainConfiguration::ChannelCount) {
+        emit audioWarning(QStringLiteral("Invalid automatic gain channel: %1").arg(channel));
+        return;
+    }
+    GainConfiguration configuration = m_gainProcessor.configuration();
+    configuration.automatic[channel] = automatic;
+    setGainConfiguration(configuration);
+}
+
+void AudioProcessor::setAllAutomatic(bool automatic)
+{
+    GainConfiguration configuration = m_gainProcessor.configuration();
+    configuration.automatic.fill(automatic);
+    setGainConfiguration(configuration);
+}
+
+void AudioProcessor::resetGain()
+{
+    setGainConfiguration(GainConfiguration {});
 }
 
 } // namespace MicArray

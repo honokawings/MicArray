@@ -75,7 +75,7 @@ UI 支持有线、无线和自定义 IP/端口。
 功能：
 
 - 编码上位机心跳帧。
-- 编码上位机 8 路控制帧。
+- 编码上位机控制帧：业务层提供 6 路控制值，线协议末尾两个 `int16` 保留字段固定填零。
 - 流式解析设备上传的音频帧和视频帧。
 - 支持 TCP 半包、粘包、错位帧头恢复。
 - 只要帧头、payload 长度和帧尾完整合法，即使帧类型不是当前业务支持类型，也会保留为结构化帧供调试页显示。
@@ -98,9 +98,10 @@ UI 支持有线、无线和自定义 IP/端口。
 - 帧类型：小端，例如 `0xee11` 在帧内为 `11 ee`。
 - payload 长度：小端 32 bit，例如 `192` 在帧内为 `c0 00 00 00`。
 - 时间戳字段：小端 32 bit。
-- 控制帧 8 路 `int16` 控制值：小端。
+- 控制帧 8 个 `int16` 线字段：小端；接口 0-5 来自业务层，字段 6-7 固定为零。
 - 音频帧、心跳帧、控制帧帧尾语义值：`0x0d0a`，帧内字节为 `0a 0d`。
-- 视频帧帧尾为单字节 `0a`。
+- 视频帧总长度为 `16 + payloadLength + 2`；帧尾第一个字节固定为 `0a`，第二个字节可为任意 `0x00~0xff` 值但必须存在。解析器仅校验第一个字节，收到完整两个尾字节后才提交帧。
+- 视频帧诊断和 `rawFrame` 保留两个实际尾字节，帧尾后预览从第二个尾字节之后开始；视频尾错误期望值显示为 `0A ??`。音频、心跳和控制帧仍严格要求 `0a 0d`，例如音频 `0a 00` 会被拒绝。
 - 当帧尾不匹配时，协议日志会显示实际读到的无效帧尾值和期望值。
 
 ### 音频解码与校准
@@ -111,18 +112,27 @@ UI 支持有线、无线和自定义 IP/端口。
 - `src/media/audioframedecoder.cpp`
 - `src/media/audioprocessor.h`
 - `src/media/audioprocessor.cpp`
+- `src/media/channelgainprocessor.h`
+- `src/media/channelgainprocessor.cpp`
+- `src/media/gainprofilestore.h`
+- `src/media/gainprofilestore.cpp`
 
 功能：
 
 - 将 38400 字节 payload 解析为 200 个采样点、每点 48 通道样本。
 - 支持选择 0-47 任一通道作为监听输出。
 - 将选中通道的 200 个采样点转换为 `S16LE / mono` 供 `QAudioSink` 播放。
+- 每个通道具有独立的 `-8..+8 bit` 移位增益；右移用于衰减，左移使用 64-bit 中间值并饱和到 `qint32`，记录各通道累计削顶次数。
+- 每通道可独立启用连续自动增益：输出峰值高于 80% 时同帧快速衰减；低于 35% 持续 500 ms 后开始放大，之后每 250 ms 最多增加 1 bit，静音也可逐步放大到 `+8 bit`。
+- 自动增益通道发生手动滑条操作时立即切换为手动模式；通道之间的增益状态和计时互不影响。
+- 增益处理后的同一份 38400 字节 payload 同时用于幅值统计、监听播放和音频录制，避免显示、播放与文件数据不一致。
+- 增益配置可保存为严格校验的 JSON，包含 48 路 shift、48 路自动模式和 AGC 参数；写入使用 `QSaveFile` 原子替换，最近配置由 `QSettings` 恢复。
 - 统计每通道瞬时幅值。
 - 按可配置帧数窗口计算每通道平均幅值。
 - 以最高平均幅值为基准做归一化，用于阵列校准热力图。
 - 记录最大平均幅值通道、最小平均幅值通道和输出通道。
-- `AudioProcessor` 运行在独立音频处理线程，音频 payload 解码、平均幅值统计、监听通道 PCM 转换和可选播放不占用 UI 线程。
-- UI 只接收处理后的 `DecodedAudioFrame`，并通过定时刷新节流更新波形和阵列热力图，避免高频音频帧导致界面事件队列拥塞。
+- `AudioProcessor` 运行在独立音频处理线程，音频 payload 解码、平均幅值统计、监听通道 PCM 转换和可选播放不占用 UI 线程。UI 侧允许最多 16 帧连续投递到音频线程，并保留 32 帧有界等待队列，音频处理不再逐帧等待 UI 完成回调。
+- UI 只缓存最新的 `DecodedAudioFrame`，波形、阵列热力图和校准网格统一由 33 ms 定时器刷新；页面不可见时跳过对应控件绘制，避免 240 FPS 音频输入触发高频样式计算和绘制。
 
 ### 多通道音频录制
 
@@ -136,12 +146,12 @@ UI 支持有线、无线和自定义 IP/端口。
 功能与文件约定：
 
 - 可从 48 路阵列中任意选择一个或多个通道，按物理通道编号升序写入单个多通道 WAV 文件。
-- 录制直接使用协议层确认完整的原始音频 payload，不依赖播放通道、音频播放是否启用或 UI 波形刷新。
+- 录制只接收 `AudioProcessor` 确认并完成增益处理后的完整音频 payload，不依赖播放通道、音频播放是否启用或 UI 波形刷新；在音频处理队列入口被主动丢弃的帧不会进入录音。
 - WAV 使用 `WAVE_FORMAT_EXTENSIBLE`，每通道为 32-bit 容器、24-bit 有效位，采样率使用开始录制时的音频设置。
 - 每个音频协议帧的 200 个采样点作为不可拆分单元写入；文件接近 RIFF 32-bit 大小上限时自动从完整帧边界分段，后续文件使用 `_part002.wav` 等后缀。
-- 同目录生成 JSON 清单，记录录制通道与 WAV 通道位置映射、分段文件、样本帧数、数据量、有效性和停止原因。
+- 同目录生成 JSON 清单，记录录制通道与 WAV 通道位置映射、分段文件、样本帧数、数据量、有效性、停止原因，以及 `gainApplied`、开始/结束时的 48 路增益与 AGC 参数。
 - 录制文件与清单均采用不覆盖策略；同名目标已存在时开始录制失败，避免覆盖现场数据。
-- `AudioRecorder` 在专用工作线程串行写盘，UI 线程只执行有界入队；待写队列上限为 `64 MiB`，溢出或写盘失败会进入错误状态并停止接受后续帧。
+- `AudioRecorder` 在专用工作线程串行写盘，UI 线程只执行有界入队；非 38400 字节 payload 在排队前同步拒绝。待写队列同时限制为 `64 MiB` 和 2048 帧，任一上限触发或写盘失败都会进入错误状态并停止接受后续帧。
 - 用户停止、设备断线和应用退出都会按顺序完成已接受帧、更新 WAV 头和 JSON 清单；异常或无效分段会在清单中明确标记。
 
 ### 控制层
@@ -153,9 +163,8 @@ UI 支持有线、无线和自定义 IP/端口。
 
 功能：
 
-- 管理 8 路 `qint16` 控制值。
-- 通道 0-5 为有效控制通道。
-- 通道 6-7 为预留通道，UI 默认禁用。
+- 管理 6 路 `qint16` 有效控制值，UI 不显示接口 6、7。
+- 协议编码器在 6 路业务值后追加两个零值，保持设备要求的 8 字段、26 字节控制帧兼容。
 - 控制帧发送前由 UI 收集当前控制值，再交给协议层编码。
 
 ### 设备通信层
@@ -221,14 +230,15 @@ Connecting -> Error
 
 当前页面：
 
-- `音视频融合`：连接、控制、媒体设置、视频预览、音频电平、诊断和日志。
+- `音视频融合`：连接、6 路控制、媒体设置、视频预览、音频电平、阵列幅值与增益、诊断和日志。
 - 实时监控页的视频预览下方显示当前播放通道的滚动音频波形，用于快速确认选中通道是否有信号、是否削顶或静音。
+- `音视频融合 -> 阵列幅值` 以 6x8 顺序显示 48 个通道；每个通道左侧是增益后归一化幅值，右侧是竖向移位滑条和独立自动增益复选框。工具栏提供全部自动、全部手动、复位、保存和载入。
 - `音频录制`：以 6x8 通道矩阵选择一个或多个通道，支持全选、清空、反选和同步当前监听通道，显示录制状态、时长、写入量、速率、待写队列、帧数、丢弃帧和清单路径。
 - `高级帧调试`：显示最近解析帧的元信息、前 16 字节、尾 16 字节和帧尾之后的实际 16 字节；跨 TCP chunk 时等待后续数据补齐，连接清理时以“不完整”标记未满 16 字节的后续预览。页面支持自定义历史保留帧数，并用分段动效展示帧头、类型、长度、时间戳、payload 和帧尾；原始字节预览和历史记录使用等宽字体，便于对齐查看。
 - 帧调试页包含“解析异常诊断”，当帧尾、长度或帧结构异常时显示帧类型、payload 长度、计算帧尾偏移、缓冲区大小、实际帧尾、期望帧尾、头 16 字节和帧尾附近上下文。
 - 实时诊断区域显示协议链路累计 `received/parsed/discarded/buffered` 指标；正常稳定链路下 parsed 应持续接近 received，discarded 不应持续增长，buffered 应只在半包期间短暂波动。
 - 实时诊断区域显示接收背压状态和待协议线程确认的字节数；背压短时触发表示应用正在自我保护，长期保持启用则说明协议解析或后续处理吞吐不足，需要降低设备帧率或继续优化处理链路。
-- `Array Calibration`：显示 6x8 阵列热力图，通道从左到右、从上到下编号 0-47。
+- `阵列校准`：显示 6x8 阵列热力图，通道从左到右、从上到下编号 0-47。
 
 字节统计显示规则：
 
@@ -238,6 +248,7 @@ Connecting -> Error
 阵列校准显示规则：
 
 - 每个阵元显示通道编号和归一化百分比。
+- 阵列幅值使用已经应用各通道移位增益的数据；通道文本同时显示当前 bit 值和自动/手动模式。
 - 归一化基准为当前平均窗口内最高平均幅值。
 - 颜色从低幅值冷色到高幅值暖色映射。
 - 平均窗口单位为帧，可在 UI 中配置。
@@ -250,7 +261,9 @@ Connecting -> Error
 - 连接配置和媒体配置会写入 `QSettings`。
 - 输出通道变化后立即影响后续监听输出。
 - 平均窗口变化后立即影响后续校准热力图。
-- 视频预览、音频波形和阵列热力图采用 UI 线程定时渲染，当前周期内多次到达的数据会合并为最新状态，降低高吞吐接收时的界面卡顿风险。
+- 单通道增益和自动模式变更通过 queued functor 投递到音频线程；AGC 只在状态实际变化时刷新 48 路增益控件。
+- 增益复位、JSON 保存/载入和最近配置恢复均为完整 48 路操作；载入失败时保持当前配置不变。
+- 视频预览、音频波形、阵列热力图和校准网格采用 UI 线程定时渲染，当前周期内多次到达的数据会合并为最新状态；热力图幅值颜色使用调色板更新，只有选中/峰值边框变化时才重设样式表。
 - 网络接收、协议解析、音频处理、视频解码和 UI 绘图分别由不同线程/职责承担，UI 不直接执行 TCP 读取、流式拆包或媒体解码。
 - 录制期间锁定通道选择、采样率、保存目录和恢复默认设置，防止运行中改变 WAV 文件结构；监听通道仍可独立切换。
 - 未连接、未选择录制通道或保存目录不可写时禁用开始录制；设备断线会自动停止当前录制并保留已成功写入的数据。
@@ -352,6 +365,7 @@ python tools\mock_device_server.py --self-test
 - `tools/assets/mock_video_1920x1080.jpg` 是随模拟服务端提供的 `1920x1080` 工业测试图，包含彩色条、灰阶、网格和分辨率标识，用于观察上位机的视频解码、缩放和显示。
 - `tools/generate_mock_video_pattern.ps1` 用于重新生成该测试图；日常运行不需要执行该脚本。
 - 服务端从 `mock_device_server.py` 所在目录相对定位并一次性读取该资源，将其作为不透明字节缓存和发送，因此启动位置不影响资源查找。
+- 模拟服务端的视频帧在 payload 后追加 `0A 00`；接收端接受首字节为 `0A` 的任意完整双字节视频帧尾。
 - 连接模拟服务端后，实时监控页应显示视频分辨率 `1920x1080`，预览保持原始宽高比。
 - Python 模拟服务端不解析或验证 JPEG 编码内容；JPEG 是否可解码由 Qt 上位机的 `QImage::loadFromData` 在接收端确认。
 
@@ -443,15 +457,18 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-21 | 音频播放缺陷修复 | 音频、UI、测试、文档 | 修复进入“音视频融合”页面后音频播放异常：阵列热力图原先绕过 33 ms 渲染定时器，以约 240 FPS 对 48 个控件重复设置动态样式，且音频线程每处理一帧都等待 UI 回调后才接收下一帧。现将可视化严格限制到渲染节拍、隐藏页面跳过绘制、热力图颜色改为低开销调色板更新，并采用最多 16 帧在途和 32 帧有界等待的连续音频投递机制。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check` |
+| 2026-07-21 | 48 路增益与录音链路增强 | 音频、录音、UI、配置、控制、测试、文档 | 新增 48 路 `-8..+8 bit` 独立移位增益、每通道连续 AGC、6x8 竖向滑条 HMI、全自动/手动/复位和 JSON 保存载入；幅值、播放和单文件多通道 WAV 统一使用增益后数据，清单记录起止增益，录音队列增加字节与帧双上限；业务控制接口缩减为 6 路，线协议末两字段固定填零；模拟服务端二进制容量单位统一显示为 MiB。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
+| 2026-07-21 | 协议修正与审查修复 | 协议、设备通信、测试工具、测试、文档 | 视频帧尾改为完整双字节：首字节固定 `0A`，第二字节可为任意值但必须存在；帧总长改为 `16 + payloadLength + 2`，原始帧与帧尾后预览按双字节偏移计算。音频、心跳和控制帧仍严格使用 `0A 0D`，新增测试确认音频 `0A 00` 被拒绝。此前的单字节视频尾规则已被本规则取代。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --target test_protocol`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug -R test_protocol --output-on-failure`、`git diff --check` |
 | 2026-07-13 | UI、录制与诊断增强 | UI、协议、媒体、测试、文档 | “交互驾驶舱”更名为“音视频融合”；操作统计改用自适应字节单位；高级帧调试历史增加帧尾后实际 16 字节及不完整标记；新增可任意选择 1-48 路通道的单文件多通道 WAV 异步录制、完整帧分段、JSON 清单、不覆盖保护、断线停止和录制状态诊断。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test` |
-| 2026-07-13 | 模拟视频自检与文档修订 | tools、测试、文档 | 模拟服务端将 `1920x1080` 工业测试图作为脚本相对路径的不透明字节资源加载；自检确认缓存 payload 非空、与配置资源一致、完整写入视频帧且视频帧尾为单字节 `0A`。JPEG 解码有效性由 Qt 上位机确认，不在 Python 服务端解析。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools\mock_device_server.py --self-test`、从其他当前工作目录运行自检、`python -m py_compile tools\mock_device_server.py tests\tools\test_mock_device_server.py`、`cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md docs/superpowers/specs/2026-07-12-mock-server-1080p-test-pattern-design.md docs/superpowers/plans/2026-07-12-mock-server-1080p-test-pattern.md` |
+| 2026-07-13 | 模拟视频自检与文档修订 | tools、测试、文档 | 模拟服务端将 `1920x1080` 工业测试图作为脚本相对路径的不透明字节资源加载；当时自检确认缓存 payload 非空、与配置资源一致、完整写入视频帧且视频帧尾为单字节 `0A`。JPEG 解码有效性由 Qt 上位机确认，不在 Python 服务端解析；该单字节规则已于 2026-07-21 被双字节规则取代。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools\mock_device_server.py --self-test`、从其他当前工作目录运行自检、`python -m py_compile tools\mock_device_server.py tests\tools\test_mock_device_server.py`、`cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md docs/superpowers/specs/2026-07-12-mock-server-1080p-test-pattern-design.md docs/superpowers/plans/2026-07-12-mock-server-1080p-test-pattern.md` |
 | 2026-07-09 | 压测能力增强 | tools、测试、文档 | `mock_device_server.py` 新增 `normal/sustained/burst` 压测用法说明与 `tx/average/peak/blocked/max_send/bursts/overruns` 指标解释；内置自检补充 burst/no-video 与限速校验；新增基于 `socket.socketpair()` 的自动化集成测试。 | `python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`python -m py_compile tools/mock_device_server.py tests/tools/test_mock_device_server.py`、`git diff --check -- tools/mock_device_server.py tests/tools/test_mock_device_server.py doc/Readme.md` |
 | 2026-07-09 | 稳定性增强 | 设备通信、协议线程、UI、测试、文档 | 新增网络到协议线程的 ACK 背压机制：`NetworkWorker` 统计已投递但未确认的待解析字节，超过 `4 MB` 暂停读取，降到 `2 MB` 以下恢复；`ProtocolWorker` 每个 chunk 解析完成后回 ACK；UI 诊断显示背压状态和待解析队列字节数。 | `cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |
 | 2026-07-08 | 稳定性增强 | 设备通信、测试、文档 | `NetworkWorker` 为 `QTcpSocket` 配置 `8 MB` 读缓冲上限并上报配置日志，避免高吞吐异常时应用侧接收缓冲无界增长；`DeviceClient` 断开请求改为同步投递到网络线程执行，提高析构和手动断开的确定性。 | `cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |
 | 2026-07-08 | 诊断增强 | 协议、设备通信、UI、测试、文档 | `ProtocolCodec` 增加单次解析指标，`ProtocolWorker` 汇总累计 appended/parsed/discarded/buffered 数据，`DeviceClient` 暴露协议链路计数，实时诊断区域显示接收、已解析、丢弃和协议缓冲残留字节，便于现场判断 TCP 吞吐和协议错位问题。 | `cmake --build ... --target test_protocol`、`ctest --test-dir ... -R protocol --output-on-failure`、`cmake --build ... --target test_device`、`ctest --test-dir ... -R device --output-on-failure` |
 | 2026-07-08 | 媒体/UI 线程重构 | 音频、视频、UI、文档 | 将 `AudioProcessor` 与 `VideoDecoder` 分别迁移到独立工作线程；主界面改为缓存最新音频/视频处理结果，并通过 33 ms 定时器节流刷新视频预览、音频波形和阵列校准热力图，降低媒体解码和高频绘图阻塞 UI/接收链路的风险。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure` |
 | 2026-07-08 | 架构重构 | 设备通信、协议、测试、文档 | 新增 `NetworkWorker` 与 `ProtocolWorker`，将 `QTcpSocket` 接收/心跳/重连迁移到网络线程，将 `ProtocolCodec` 流式解析迁移到协议线程；`DeviceClient` 改为 UI 门面并通过 queued signal 分发帧和诊断，降低 UI/媒体处理阻塞 TCP 接收的风险。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure` |
-| 2026-07-06 | 协议修正 | 协议、UI、测试工具、文档 | 视频帧接收尾部改为单字节 `0A` 判定；音频帧、心跳帧和控制帧仍按 `0A 0D` 判定；帧调试页和模拟服务端同步按帧类型显示/生成不同帧尾。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure`、`python tools\mock_device_server.py --self-test` |
+| 2026-07-06 | 协议修正 | 协议、UI、测试工具、文档 | 视频帧接收尾部当时改为单字节 `0A` 判定；音频帧、心跳帧和控制帧仍按 `0A 0D` 判定；帧调试页和模拟服务端同步按帧类型显示/生成不同帧尾。该单字节视频规则已于 2026-07-21 被双字节规则取代。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure`、`python tools\mock_device_server.py --self-test` |
 | 2026-07-06 | 缺陷修复 | 音频、UI | 修复当前播放通道波形显示近似静止的问题：PCM16 转换改为适配 24-bit 量级样本，波形控件按当前显示窗口峰值自适应缩放。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure` |
 | 2026-07-06 | 测试工具更新 | tools、文档 | 模拟服务端音频 payload 改为有意义的有符号正弦复合音频信号，支持播放通道波形和音频电平测试；默认音频帧率调整为 240 FPS，对齐 200 采样点/帧下的 48 kHz 节奏。 | `python tools\mock_device_server.py --self-test`、`python -m py_compile tools\mock_device_server.py` |
 | 2026-07-06 | 诊断/UI 更新 | 协议、设备通信、UI | 帧调试页新增解析异常诊断，显示帧类型、payload 长度、尾偏移、缓冲区大小、实际/期望帧尾、头 16 字节和尾部上下文；实时监控页在视频下方新增当前播放通道滚动音频波形。 | `cmake --build ...`、`ctest --test-dir ... --output-on-failure` |

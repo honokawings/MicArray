@@ -51,6 +51,15 @@ class VideoPayloadTests(unittest.TestCase):
             path.write_bytes(payload)
             self.assertEqual(self.mod.load_video_payload(path), payload)
 
+    def test_packed_video_frame_uses_two_byte_wildcard_tail(self):
+        payload = b"\xaa\xbb"
+
+        frame = self.mod.pack_media_frame(self.mod.TYPE_VIDEO, payload)
+
+        self.assertEqual(len(frame), self.mod.MEDIA_HEADER_LEN + len(payload) + 2)
+        self.assertEqual(frame[self.mod.MEDIA_HEADER_LEN:-2], payload)
+        self.assertEqual(frame[-2:], b"\x0a\x00")
+
 
 class ArgumentValidationTests(unittest.TestCase):
     def setUp(self):

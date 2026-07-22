@@ -26,6 +26,7 @@ struct HostFrame {
     quint32 timestampSeconds = 0;
     quint32 timestampMicros = 0;
     QByteArray payload;
+    QByteArray rawFrame;
     QByteArray postTailPreview;
     bool postTailPreviewComplete = false;
 };

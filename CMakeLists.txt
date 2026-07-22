@@ -20,6 +20,8 @@ set(MICARRAY_SOURCES
     src/media/audioframedecoder.cpp
     src/media/audioprocessor.cpp
     src/media/audiorecorder.cpp
+    src/media/channelgainprocessor.cpp
+    src/media/gainprofilestore.cpp
     src/media/mediaframequeue.cpp
     src/media/multichannelwavwriter.cpp
     src/media/videodecoder.cpp
@@ -45,6 +47,8 @@ set(MICARRAY_HEADERS
     src/media/audioframedecoder.h
     src/media/audioprocessor.h
     src/media/audiorecorder.h
+    src/media/channelgainprocessor.h
+    src/media/gainprofilestore.h
     src/media/mediaframequeue.h
     src/media/multichannelwavwriter.h
     src/media/videodecoder.h

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 
 namespace MicArray {
 namespace {
@@ -46,7 +47,8 @@ public:
         });
     }
 
-    void append(const QByteArray &payload)
+    void append(const QByteArray &payload,
+                const std::optional<GainConfiguration> &gainConfiguration)
     {
         const quint64 inputBytes = static_cast<quint64>(payload.size());
         if (!m_acceptingFrames || m_writer == nullptr) {
@@ -57,11 +59,10 @@ public:
         }
 
         QString error;
-        if (payload.size() != AudioFrameDecoder::FramePayloadBytes) {
-            error = QStringLiteral("Expected 38400-byte audio payload, got %1 bytes").arg(payload.size());
+        if (!m_writer->appendFrame(payload, &error)) {
             m_acceptingFrames = false;
             QString closeError;
-            m_writer->close(QStringLiteral("format-error"), &closeError);
+            m_writer->close(QStringLiteral("io-error"), &closeError);
             if (!closeError.isEmpty() && !error.contains(closeError)) {
                 error += QStringLiteral("; %1").arg(closeError);
             }
@@ -71,10 +72,11 @@ public:
             });
             return;
         }
-        if (!m_writer->appendFrame(payload, &error)) {
+        if (gainConfiguration.has_value()
+            && !m_writer->updateFinalGainConfiguration(*gainConfiguration, &error)) {
             m_acceptingFrames = false;
             QString closeError;
-            m_writer->close(QStringLiteral("io-error"), &closeError);
+            m_writer->close(QStringLiteral("gain-metadata-error"), &closeError);
             if (!closeError.isEmpty() && !error.contains(closeError)) {
                 error += QStringLiteral("; %1").arg(closeError);
             }
@@ -156,13 +158,21 @@ QString recordingStateName(RecordingState state)
 }
 
 AudioRecorder::AudioRecorder(QObject *parent)
-    : AudioRecorder(MaxPendingBytes, parent)
+    : AudioRecorder(MaxPendingBytes, MaxPendingFrames, parent)
 {
 }
 
 AudioRecorder::AudioRecorder(quint64 maxPendingBytes, QObject *parent)
+    : AudioRecorder(maxPendingBytes, MaxPendingFrames, parent)
+{
+}
+
+AudioRecorder::AudioRecorder(quint64 maxPendingBytes,
+                             quint64 maxPendingFrames,
+                             QObject *parent)
     : QObject(parent)
     , m_maxPendingBytes(std::max<quint64>(1, maxPendingBytes))
+    , m_maxPendingFrames(std::max<quint64>(1, maxPendingFrames))
 {
     qRegisterMetaType<RecordingState>("MicArray::RecordingState");
     qRegisterMetaType<RecordingStatistics>("MicArray::RecordingStatistics");
@@ -195,6 +205,7 @@ bool AudioRecorder::startRecording(const RecordingSettings &settings)
     }
 
     m_pendingBytes = 0;
+    m_pendingFrames = 0;
     m_statistics = {};
     m_terminalFailure = false;
     m_recordingTimer.start();
@@ -210,11 +221,44 @@ bool AudioRecorder::startRecording(const RecordingSettings &settings)
 
 bool AudioRecorder::enqueueFrame(const QByteArray &payload)
 {
+    return enqueueFrameInternal(payload, nullptr);
+}
+
+bool AudioRecorder::enqueueFrame(const QByteArray &payload,
+                                 const GainConfiguration &gainConfiguration)
+{
+    return enqueueFrameInternal(payload, &gainConfiguration);
+}
+
+bool AudioRecorder::enqueueFrameInternal(const QByteArray &payload,
+                                         const GainConfiguration *gainConfiguration)
+{
     if (m_state != RecordingState::Recording) {
         return false;
     }
+    if (payload.size() != AudioFrameDecoder::FramePayloadBytes) {
+        m_statistics.error = QStringLiteral("Expected 38400-byte audio payload, got %1 bytes")
+                                 .arg(payload.size());
+        ++m_statistics.discardedFrames;
+        emit recordingError(m_statistics.error);
+        emit statisticsChanged(m_statistics);
+        return false;
+    }
+    if (gainConfiguration != nullptr) {
+        QString validationError;
+        if (!GainConfiguration::validate(*gainConfiguration, &validationError)) {
+            m_statistics.error = QStringLiteral("Invalid recording gain configuration: %1")
+                                     .arg(validationError);
+            emit recordingError(m_statistics.error);
+            emit statisticsChanged(m_statistics);
+            return false;
+        }
+    }
     const quint64 payloadBytes = static_cast<quint64>(payload.size());
-    if (payloadBytes > m_maxPendingBytes - std::min(m_pendingBytes, m_maxPendingBytes)) {
+    const bool byteLimitExceeded = payloadBytes > m_maxPendingBytes
+        - std::min(m_pendingBytes, m_maxPendingBytes);
+    const bool frameLimitExceeded = m_pendingFrames >= m_maxPendingFrames;
+    if (byteLimitExceeded || frameLimitExceeded) {
         m_statistics.error = QStringLiteral("Recording queue overflow; recording stopped before dropping a frame");
         m_terminalFailure = true;
         emit recordingError(m_statistics.error);
@@ -228,10 +272,15 @@ bool AudioRecorder::enqueueFrame(const QByteArray &payload)
     }
 
     m_pendingBytes += payloadBytes;
+    ++m_pendingFrames;
     m_statistics.pendingBytes = m_pendingBytes;
+    m_statistics.pendingFrames = m_pendingFrames;
+    const std::optional<GainConfiguration> queuedGain = gainConfiguration != nullptr
+        ? std::optional<GainConfiguration>(*gainConfiguration)
+        : std::nullopt;
     QMetaObject::invokeMethod(m_worker,
-                              [worker = m_worker, payload]() {
-                                  worker->append(payload);
+                              [worker = m_worker, payload, queuedGain]() {
+                                  worker->append(payload, queuedGain);
                               },
                               Qt::QueuedConnection);
     return true;
@@ -279,6 +328,7 @@ bool AudioRecorder::stopAndWait(int timeoutMs)
         return false;
     }
     m_pendingBytes = 0;
+    m_pendingFrames = 0;
     handleStopped(stopState->outcome.success,
                   stopState->outcome.reason,
                   stopState->outcome.error,
@@ -319,7 +369,7 @@ void AudioRecorder::handleStarted(bool success, const QString &error, const Reco
 
 void AudioRecorder::handleFrameConsumed(quint64 inputBytes, const RecordingSummary &summary)
 {
-    m_pendingBytes = inputBytes >= m_pendingBytes ? 0 : m_pendingBytes - inputBytes;
+    releasePendingFrame(inputBytes);
     if (m_state == RecordingState::Idle) {
         return;
     }
@@ -334,7 +384,7 @@ void AudioRecorder::handleFrameFailed(quint64 inputBytes,
                                       const QString &error,
                                       const RecordingSummary &summary)
 {
-    m_pendingBytes = inputBytes >= m_pendingBytes ? 0 : m_pendingBytes - inputBytes;
+    releasePendingFrame(inputBytes);
     m_terminalFailure = true;
     m_statistics.error = error;
     updateSummary(summary, true);
@@ -345,9 +395,10 @@ void AudioRecorder::handleFrameFailed(quint64 inputBytes,
 
 void AudioRecorder::handleFrameDiscarded(quint64 inputBytes)
 {
-    m_pendingBytes = inputBytes >= m_pendingBytes ? 0 : m_pendingBytes - inputBytes;
+    releasePendingFrame(inputBytes);
     ++m_statistics.discardedFrames;
     m_statistics.pendingBytes = m_pendingBytes;
+    m_statistics.pendingFrames = m_pendingFrames;
     emit statisticsChanged(m_statistics);
 }
 
@@ -357,6 +408,7 @@ void AudioRecorder::handleStopped(bool success,
                                   const RecordingSummary &summary)
 {
     m_pendingBytes = 0;
+    m_pendingFrames = 0;
     updateSummary(summary, true);
     if (m_terminalFailure || !success || reason == QStringLiteral("queue-overflow")) {
         if (!error.isEmpty()) {
@@ -382,9 +434,20 @@ void AudioRecorder::updateSummary(const RecordingSummary &summary, bool forceEmi
     m_statistics.dataBytes = summary.dataBytes;
     m_statistics.fileBytes = summary.fileBytes;
     m_statistics.pendingBytes = m_pendingBytes;
+    m_statistics.pendingFrames = m_pendingFrames;
     if (forceEmit) {
         emit statisticsChanged(m_statistics);
     }
+}
+
+void AudioRecorder::releasePendingFrame(quint64 inputBytes)
+{
+    m_pendingBytes = inputBytes >= m_pendingBytes ? 0 : m_pendingBytes - inputBytes;
+    if (m_pendingFrames > 0) {
+        --m_pendingFrames;
+    }
+    m_statistics.pendingBytes = m_pendingBytes;
+    m_statistics.pendingFrames = m_pendingFrames;
 }
 
 } // namespace MicArray

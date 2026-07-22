@@ -30,6 +30,24 @@ void appendU32(QByteArray &buffer, quint32 value)
     buffer.append(bytes, 4);
 }
 
+QJsonObject gainConfigurationToJson(const GainConfiguration &configuration)
+{
+    QJsonArray shifts;
+    QJsonArray automatic;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        shifts.append(configuration.shifts.at(channel));
+        automatic.append(configuration.automatic.at(channel));
+    }
+    return QJsonObject {
+        {QStringLiteral("shifts"), shifts},
+        {QStringLiteral("automatic"), automatic},
+        {QStringLiteral("upperPeakRatio"), configuration.upperPeakRatio},
+        {QStringLiteral("lowerPeakRatio"), configuration.lowerPeakRatio},
+        {QStringLiteral("releaseHoldMs"), configuration.releaseHoldMs},
+        {QStringLiteral("releaseStepMs"), configuration.releaseStepMs},
+    };
+}
+
 } // namespace
 
 MultiChannelWavWriter::MultiChannelWavWriter(quint64 segmentDataLimit,
@@ -80,6 +98,7 @@ bool MultiChannelWavWriter::open(const RecordingSettings &settingsValue, QString
     }
 
     m_settings = settings;
+    m_finalGainConfiguration = settings.initialGainConfiguration;
     m_summary = {};
     m_segmentDataSizes.clear();
     m_invalidSegmentPaths.clear();
@@ -165,6 +184,29 @@ bool MultiChannelWavWriter::appendFrame(const QByteArray &payload, QString *erro
     return true;
 }
 
+bool MultiChannelWavWriter::updateFinalGainConfiguration(const GainConfiguration &configuration,
+                                                         QString *errorMessage)
+{
+    if (!m_open || m_failed) {
+        setError(errorMessage, QStringLiteral("No recording file is open"));
+        return false;
+    }
+    if (!m_settings.gainApplied) {
+        setError(errorMessage, QStringLiteral("Gain metadata is not enabled for this recording"));
+        return false;
+    }
+    QString validationError;
+    if (!GainConfiguration::validate(configuration, &validationError)) {
+        setError(errorMessage, QStringLiteral("Invalid final gain configuration: %1").arg(validationError));
+        return false;
+    }
+    m_finalGainConfiguration = configuration;
+    if (errorMessage != nullptr) {
+        errorMessage->clear();
+    }
+    return true;
+}
+
 bool MultiChannelWavWriter::close(const QString &stopReason, QString *errorMessage)
 {
     if (!m_open) {
@@ -223,6 +265,14 @@ bool MultiChannelWavWriter::validateSettings(RecordingSettings *settings, QStrin
     if (settings->channels.isEmpty()) {
         setError(errorMessage, QStringLiteral("At least one recording channel must be selected"));
         return false;
+    }
+    if (settings->gainApplied) {
+        QString validationError;
+        if (!GainConfiguration::validate(settings->initialGainConfiguration, &validationError)) {
+            setError(errorMessage,
+                     QStringLiteral("Invalid initial gain configuration: %1").arg(validationError));
+            return false;
+        }
     }
     for (int index = 0; index < settings->channels.size(); ++index) {
         const int channel = settings->channels.at(index);
@@ -355,7 +405,7 @@ bool MultiChannelWavWriter::writeManifest(QString *errorMessage)
         });
     }
 
-    const QJsonObject root {
+    QJsonObject root {
         {QStringLiteral("schemaVersion"), 1},
         {QStringLiteral("baseName"), m_settings.baseName},
         {QStringLiteral("channels"), channels},
@@ -369,7 +419,14 @@ bool MultiChannelWavWriter::writeManifest(QString *errorMessage)
         {QStringLiteral("dataBytes"), static_cast<double>(m_summary.dataBytes)},
         {QStringLiteral("stopReason"), m_summary.stopReason},
         {QStringLiteral("segments"), segments},
+        {QStringLiteral("gainApplied"), m_settings.gainApplied},
     };
+    if (m_settings.gainApplied) {
+        root.insert(QStringLiteral("gain"), QJsonObject {
+            {QStringLiteral("initial"), gainConfigurationToJson(m_settings.initialGainConfiguration)},
+            {QStringLiteral("final"), gainConfigurationToJson(m_finalGainConfiguration)},
+        });
+    }
 
     if (!m_manifestReserved) {
         setError(errorMessage, QStringLiteral("Recording manifest is not reserved: %1").arg(m_summary.manifestPath));

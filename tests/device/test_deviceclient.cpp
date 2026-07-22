@@ -61,7 +61,7 @@ void DeviceClientTest::emitsFramesFromServerData()
     QVERIFY(socket != nullptr);
 
     const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
-    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a");
+    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a00");
     socket->write(audio + video);
     QVERIFY(socket->waitForBytesWritten(1000));
 

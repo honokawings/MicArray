@@ -21,10 +21,4 @@ void ControlValues::reset()
     m_values.fill(0);
 }
 
-bool ControlValues::isReserved(int channel) const
-{
-    Q_ASSERT(channel >= 0 && channel < ChannelCount);
-    return channel >= ActiveChannelCount;
-}
-
 } // namespace MicArray

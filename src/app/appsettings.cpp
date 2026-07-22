@@ -1,27 +1,185 @@
 #include "app/appsettings.h"
 
+#include "control/controlvalues.h"
+
 #include <QSettings>
+#include <QRegularExpression>
+#include <QFileInfo>
 #include <QVariantList>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace MicArray {
+
+namespace {
+
+bool parseCanonicalInteger(const QString &text, int *result)
+{
+    static const QRegularExpression pattern(QStringLiteral("^(?:0|-?[1-9][0-9]*)$"));
+    if (!pattern.match(text).hasMatch()) {
+        return false;
+    }
+    bool ok = false;
+    const qint64 integer = text.toLongLong(&ok, 10);
+    if (!ok || integer < std::numeric_limits<int>::min() || integer > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    *result = static_cast<int>(integer);
+    return true;
+}
+
+bool parseCanonicalFiniteNumber(const QString &text, double *result)
+{
+    static const QRegularExpression pattern(
+        QStringLiteral("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$"));
+    if (!pattern.match(text).hasMatch()) {
+        return false;
+    }
+    bool ok = false;
+    const double number = text.toDouble(&ok);
+    if (!ok || !std::isfinite(number)) {
+        return false;
+    }
+    *result = number;
+    return true;
+}
+
+bool readIntegerSetting(const QVariant &value, int *result)
+{
+    qint64 integer = 0;
+    switch (value.typeId()) {
+    case QMetaType::Int:
+        integer = value.toInt();
+        break;
+    case QMetaType::UInt:
+        integer = value.toUInt();
+        break;
+    case QMetaType::LongLong:
+        integer = value.toLongLong();
+        break;
+    case QMetaType::ULongLong: {
+        const qulonglong unsignedInteger = value.toULongLong();
+        if (unsignedInteger > static_cast<qulonglong>(std::numeric_limits<int>::max())) {
+            return false;
+        }
+        integer = static_cast<qint64>(unsignedInteger);
+        break;
+    }
+    case QMetaType::QString:
+        return parseCanonicalInteger(value.toString(), result);
+    default:
+        return false;
+    }
+    if (integer < std::numeric_limits<int>::min() || integer > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    *result = static_cast<int>(integer);
+    return true;
+}
+
+bool readFiniteNumberSetting(const QVariant &value, double *result)
+{
+    switch (value.typeId()) {
+    case QMetaType::Int:
+    case QMetaType::UInt:
+    case QMetaType::LongLong:
+    case QMetaType::ULongLong:
+    case QMetaType::Float:
+    case QMetaType::Double:
+        break;
+    case QMetaType::QString:
+        return parseCanonicalFiniteNumber(value.toString(), result);
+    default:
+        return false;
+    }
+    const double number = value.toDouble();
+    if (!std::isfinite(number)) {
+        return false;
+    }
+    *result = number;
+    return true;
+}
+
+QString gainConfigurationSyncError(QSettings::Status status)
+{
+    switch (status) {
+    case QSettings::AccessError:
+        return QStringLiteral("Cannot sync gain configuration: access error");
+    case QSettings::FormatError:
+        return QStringLiteral("Cannot sync gain configuration: format error");
+    case QSettings::NoError:
+        break;
+    }
+    return QStringLiteral("Cannot sync gain configuration: unknown error");
+}
+
+} // namespace
 
 AppSettings::AppSettings(QObject *parent)
     : QObject(parent)
     , m_settings(std::make_unique<QSettings>())
 {
+    captureSettingsBackendIdentity();
     initializeSchema();
 }
 
 AppSettings::AppSettings(const QString &fileName, QObject *parent)
     : QObject(parent)
-    , m_settings(std::make_unique<QSettings>(fileName, QSettings::IniFormat))
+    , m_settingsBackend(SettingsBackend::IniFile)
+    , m_settingsFileName(QFileInfo(fileName).absoluteFilePath())
+    , m_settings(createSettingsBackend())
 {
+    captureSettingsBackendIdentity();
     initializeSchema();
 }
 
 AppSettings::~AppSettings() = default;
+
+std::unique_ptr<QSettings> AppSettings::createSettingsBackend() const
+{
+    if (m_settingsBackend == SettingsBackend::IniFile) {
+        auto settings = std::make_unique<QSettings>(m_settingsFileName, QSettings::IniFormat);
+        settings->setFallbacksEnabled(m_fallbacksEnabled);
+        settings->setAtomicSyncRequired(m_atomicSyncRequired);
+        return settings;
+    }
+    auto settings = std::make_unique<QSettings>(static_cast<QSettings::Format>(m_settingsFormat),
+                                                static_cast<QSettings::Scope>(m_settingsScope),
+                                                m_settingsOrganization,
+                                                m_settingsApplication);
+    settings->setFallbacksEnabled(m_fallbacksEnabled);
+    settings->setAtomicSyncRequired(m_atomicSyncRequired);
+    return settings;
+}
+
+void AppSettings::captureSettingsBackendIdentity()
+{
+    m_settingsFormat = static_cast<int>(m_settings->format());
+    m_settingsScope = static_cast<int>(m_settings->scope());
+    m_settingsOrganization = m_settings->organizationName();
+    m_settingsApplication = m_settings->applicationName();
+    m_fallbacksEnabled = m_settings->fallbacksEnabled();
+    m_atomicSyncRequired = m_settings->isAtomicSyncRequired();
+}
+
+void AppSettings::resetSettingsBackend()
+{
+    QList<QPair<QString, QVariant>> values;
+    m_settings->setFallbacksEnabled(false);
+    const QStringList keys = m_settings->allKeys();
+    values.reserve(keys.size());
+    for (const QString &key : keys) {
+        values.append({key, m_settings->value(key)});
+    }
+    m_settings->setFallbacksEnabled(m_fallbacksEnabled);
+
+    m_settings = createSettingsBackend();
+    for (const auto &[key, value] : values) {
+        m_settings->setValue(key, value);
+    }
+}
 
 void AppSettings::initializeSchema()
 {
@@ -64,6 +222,56 @@ VideoSettings AppSettings::video() const
     return value;
 }
 
+GainConfiguration AppSettings::gainConfiguration() const
+{
+    const GainConfiguration defaults;
+    const QString group = QStringLiteral("gainConfiguration/");
+    const QString shiftsKey = group + QStringLiteral("shifts");
+    const QString automaticKey = group + QStringLiteral("automatic");
+    const QString upperPeakRatioKey = group + QStringLiteral("upperPeakRatio");
+    const QString lowerPeakRatioKey = group + QStringLiteral("lowerPeakRatio");
+    const QString releaseHoldMsKey = group + QStringLiteral("releaseHoldMs");
+    const QString releaseStepMsKey = group + QStringLiteral("releaseStepMs");
+    if (!m_settings->contains(shiftsKey)
+        && !m_settings->contains(automaticKey)
+        && !m_settings->contains(upperPeakRatioKey)
+        && !m_settings->contains(lowerPeakRatioKey)
+        && !m_settings->contains(releaseHoldMsKey)
+        && !m_settings->contains(releaseStepMsKey)) {
+        return defaults;
+    }
+
+    const QVariant shiftsValue = m_settings->value(shiftsKey);
+    const QVariant automaticValue = m_settings->value(automaticKey);
+    if (shiftsValue.typeId() != QMetaType::QVariantList
+        || automaticValue.typeId() != QMetaType::QVariantList) {
+        return defaults;
+    }
+    const QVariantList shifts = shiftsValue.toList();
+    const QVariantList automatic = automaticValue.toList();
+    if (shifts.size() != GainConfiguration::ChannelCount
+        || automatic.size() != GainConfiguration::ChannelCount) {
+        return defaults;
+    }
+
+    GainConfiguration candidate;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        if (!readIntegerSetting(shifts.at(channel), &candidate.shifts[channel])
+            || automatic.at(channel).typeId() != QMetaType::Bool) {
+            return defaults;
+        }
+        candidate.automatic[channel] = automatic.at(channel).toBool();
+    }
+    if (!readFiniteNumberSetting(m_settings->value(upperPeakRatioKey), &candidate.upperPeakRatio)
+        || !readFiniteNumberSetting(m_settings->value(lowerPeakRatioKey), &candidate.lowerPeakRatio)
+        || !readIntegerSetting(m_settings->value(releaseHoldMsKey), &candidate.releaseHoldMs)
+        || !readIntegerSetting(m_settings->value(releaseStepMsKey), &candidate.releaseStepMs)) {
+        return defaults;
+    }
+
+    return GainConfiguration::validate(candidate) ? candidate : defaults;
+}
+
 void AppSettings::saveConnection(const ConnectionSettings &settingsValue)
 {
     ConnectionSettings value = settingsValue;
@@ -99,6 +307,67 @@ void AppSettings::saveVideo(const VideoSettings &settingsValue)
     m_settings->setValue(QStringLiteral("video/format"), format == QStringLiteral("JPEG") ? QStringLiteral("JPG") : format);
 }
 
+bool AppSettings::saveGainConfiguration(const GainConfiguration &configuration, QString *error)
+{
+    QString validationError;
+    if (!GainConfiguration::validate(configuration, &validationError)) {
+        if (error) {
+            *error = validationError;
+        }
+        return false;
+    }
+
+    if (m_settings->status() != QSettings::NoError) {
+        resetSettingsBackend();
+    }
+
+    struct OriginalValue {
+        QString key;
+        bool exists = false;
+        QVariant value;
+    };
+    const QList<OriginalValue> originalValues {
+        {QStringLiteral("gainConfiguration/shifts"), m_settings->contains(QStringLiteral("gainConfiguration/shifts")), m_settings->value(QStringLiteral("gainConfiguration/shifts"))},
+        {QStringLiteral("gainConfiguration/automatic"), m_settings->contains(QStringLiteral("gainConfiguration/automatic")), m_settings->value(QStringLiteral("gainConfiguration/automatic"))},
+        {QStringLiteral("gainConfiguration/upperPeakRatio"), m_settings->contains(QStringLiteral("gainConfiguration/upperPeakRatio")), m_settings->value(QStringLiteral("gainConfiguration/upperPeakRatio"))},
+        {QStringLiteral("gainConfiguration/lowerPeakRatio"), m_settings->contains(QStringLiteral("gainConfiguration/lowerPeakRatio")), m_settings->value(QStringLiteral("gainConfiguration/lowerPeakRatio"))},
+        {QStringLiteral("gainConfiguration/releaseHoldMs"), m_settings->contains(QStringLiteral("gainConfiguration/releaseHoldMs")), m_settings->value(QStringLiteral("gainConfiguration/releaseHoldMs"))},
+        {QStringLiteral("gainConfiguration/releaseStepMs"), m_settings->contains(QStringLiteral("gainConfiguration/releaseStepMs")), m_settings->value(QStringLiteral("gainConfiguration/releaseStepMs"))},
+    };
+
+    QVariantList shifts;
+    QVariantList automatic;
+    for (int channel = 0; channel < GainConfiguration::ChannelCount; ++channel) {
+        shifts.append(configuration.shifts.at(channel));
+        automatic.append(configuration.automatic.at(channel));
+    }
+    m_settings->setValue(QStringLiteral("gainConfiguration/shifts"), shifts);
+    m_settings->setValue(QStringLiteral("gainConfiguration/automatic"), automatic);
+    m_settings->setValue(QStringLiteral("gainConfiguration/upperPeakRatio"), configuration.upperPeakRatio);
+    m_settings->setValue(QStringLiteral("gainConfiguration/lowerPeakRatio"), configuration.lowerPeakRatio);
+    m_settings->setValue(QStringLiteral("gainConfiguration/releaseHoldMs"), configuration.releaseHoldMs);
+    m_settings->setValue(QStringLiteral("gainConfiguration/releaseStepMs"), configuration.releaseStepMs);
+    m_settings->sync();
+    if (m_settings->status() != QSettings::NoError) {
+        const QSettings::Status status = m_settings->status();
+        for (const OriginalValue &original : originalValues) {
+            if (original.exists) {
+                m_settings->setValue(original.key, original.value);
+            } else {
+                m_settings->remove(original.key);
+            }
+        }
+        if (error) {
+            *error = gainConfigurationSyncError(status);
+        }
+        return false;
+    }
+    if (error) {
+        error->clear();
+    }
+    return true;
+}
+
 QList<ControlPreset> AppSettings::controlPresets() const
 {
     QList<ControlPreset> presets;
@@ -111,7 +380,10 @@ QList<ControlPreset> AppSettings::controlPresets() const
         for (const QVariant &stored : storedValues) {
             preset.values.append(static_cast<qint16>(stored.toInt()));
         }
-        if (!preset.name.isEmpty() && preset.values.size() == 8) {
+        if (preset.values.size() == 8) {
+            preset.values.resize(ControlValues::ChannelCount);
+        }
+        if (!preset.name.isEmpty() && preset.values.size() == ControlValues::ChannelCount) {
             presets.append(preset);
         }
     }
@@ -123,7 +395,7 @@ bool AppSettings::saveControlPreset(const ControlPreset &presetValue)
 {
     ControlPreset preset = presetValue;
     preset.name = preset.name.trimmed();
-    if (preset.name.isEmpty() || preset.name.size() > 32 || preset.values.size() != 8) {
+    if (preset.name.isEmpty() || preset.name.size() > 32 || preset.values.size() != ControlValues::ChannelCount) {
         return false;
     }
 

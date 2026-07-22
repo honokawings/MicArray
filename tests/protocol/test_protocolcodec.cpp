@@ -14,6 +14,11 @@ private slots:
     void encodesControlFrame();
     void parsesAudioFrame();
     void parsesVideoFrame();
+    void acceptsAnySecondVideoTailByte();
+    void waitsForSecondVideoTailByte();
+    void rejectsInvalidFirstVideoTailByte();
+    void rejectsAudioTailWithVideoWildcardSecondByte();
+    void videoPostTailStartsAfterWildcardByte();
     void buffersPartialFrame();
     void parsesStickyFrames();
     void keepsStructurallyValidUnknownTypeForDebug();
@@ -40,14 +45,14 @@ void ProtocolCodecTest::encodesControlFrame()
     values.setChannelValue(3, -400);
     values.setChannelValue(4, 500);
     values.setChannelValue(5, -600);
-    values.setChannelValue(6, 0);
-    values.setChannelValue(7, 32767);
 
     const QByteArray frame = ProtocolCodec::encodeControl(values);
 
-    QCOMPARE(frame.size(), 26);
+    QCOMPARE(ControlValues::ChannelCount, 6);
+    QCOMPARE(frame.size(), ProtocolCodec::ControlFrameSize);
     QCOMPARE(frame.mid(0, 8).toHex(' '), QByteArray("7e 7e 11 cc 16 00 00 00"));
-    QCOMPARE(frame.mid(8, 16).toHex(' '), QByteArray("01 00 fe ff 2c 01 70 fe f4 01 a8 fd 00 00 ff 7f"));
+    QCOMPARE(frame.mid(8, 12).toHex(' '), QByteArray("01 00 fe ff 2c 01 70 fe f4 01 a8 fd"));
+    QCOMPARE(frame.mid(20, 4), QByteArray(4, '\0'));
     QCOMPARE(frame.mid(24, 2).toHex(' '), QByteArray("0a 0d"));
 }
 
@@ -70,7 +75,7 @@ void ProtocolCodecTest::parsesAudioFrame()
 void ProtocolCodecTest::parsesVideoFrame()
 {
     ProtocolCodec codec;
-    QByteArray frame = QByteArray::fromHex("7e7e22ee03000000ddccbbaa07000000ffeedd0a");
+    QByteArray frame = QByteArray::fromHex("7e7e22ee03000000ddccbbaa07000000ffeedd0a00");
 
     const ParseResult result = codec.parseIncoming(frame);
 
@@ -78,6 +83,79 @@ void ProtocolCodecTest::parsesVideoFrame()
     QCOMPARE(result.errors.size(), 0);
     QCOMPARE(result.frames.first().type, FrameType::Video);
     QCOMPARE(result.frames.first().payload, QByteArray::fromHex("ffeedd"));
+}
+
+void ProtocolCodecTest::acceptsAnySecondVideoTailByte()
+{
+    const QList<QByteArray> frames = {
+        QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a00"),
+        QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0aff"),
+    };
+
+    for (const QByteArray &frame : frames) {
+        ProtocolCodec codec;
+        const ParseResult result = codec.parseIncoming(frame);
+
+        QCOMPARE(result.frames.size(), 1);
+        QCOMPARE(result.errors.size(), 0);
+        QCOMPARE(result.bytesParsed, qsizetype(20));
+        QCOMPARE(result.frameSizes, QList<qsizetype>({20}));
+        QCOMPARE(result.frames.first().rawFrame, frame);
+    }
+}
+
+void ProtocolCodecTest::waitsForSecondVideoTailByte()
+{
+    ProtocolCodec codec;
+    const QByteArray incomplete = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a");
+
+    const ParseResult result = codec.parseIncoming(incomplete);
+
+    QCOMPARE(result.frames.size(), 0);
+    QCOMPARE(result.errors.size(), 0);
+    QCOMPARE(result.bytesParsed, qsizetype(0));
+}
+
+void ProtocolCodecTest::rejectsInvalidFirstVideoTailByte()
+{
+    ProtocolCodec codec;
+    const QByteArray frame = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb7f00");
+
+    const ParseResult result = codec.parseIncoming(frame);
+
+    QCOMPARE(result.frames.size(), 0);
+    QVERIFY(!result.errors.isEmpty());
+    QCOMPARE(result.errors.first().code, ParseErrorCode::InvalidTail);
+    QCOMPARE(result.errors.first().actualTail, 0x007f);
+    QVERIFY(result.errors.first().message.contains(QStringLiteral("expected 0A ??")));
+}
+
+void ProtocolCodecTest::rejectsAudioTailWithVideoWildcardSecondByte()
+{
+    ProtocolCodec codec;
+    const QByteArray frame = QByteArray::fromHex("7e7e11ee020000000200000002000000aabb0a00");
+
+    const ParseResult result = codec.parseIncoming(frame);
+
+    QCOMPARE(result.frames.size(), 0);
+    QVERIFY(!result.errors.isEmpty());
+    QCOMPARE(result.errors.first().code, ParseErrorCode::InvalidTail);
+    QCOMPARE(result.errors.first().actualTail, 0x000a);
+    QCOMPARE(result.errors.first().expectedTail, ProtocolCodec::HostTail);
+}
+
+void ProtocolCodecTest::videoPostTailStartsAfterWildcardByte()
+{
+    ProtocolCodec codec;
+    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0aff");
+    const QByteArray afterTail = QByteArray::fromHex("00112233445566778899aabbccddeeff");
+
+    const ParseResult result = codec.parseIncoming(video + afterTail);
+
+    QCOMPARE(result.frames.size(), 1);
+    QCOMPARE(result.debugFrames.size(), 1);
+    QCOMPARE(result.debugFrames.first().postTailPreview, afterTail);
+    QVERIFY(result.debugFrames.first().postTailPreviewComplete);
 }
 
 void ProtocolCodecTest::buffersPartialFrame()
@@ -98,7 +176,7 @@ void ProtocolCodecTest::parsesStickyFrames()
 {
     ProtocolCodec codec;
     const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
-    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a");
+    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a00");
 
     const ParseResult result = codec.parseIncoming(audio + video);
 
@@ -141,7 +219,7 @@ void ProtocolCodecTest::reportsInvalidTailAndRecovers()
 {
     ProtocolCodec codec;
     const QByteArray bad = QByteArray::fromHex("7e7e11ee01000000010000000100000001ffff");
-    const QByteArray good = QByteArray::fromHex("7e7e22ee010000000200000002000000020a");
+    const QByteArray good = QByteArray::fromHex("7e7e22ee010000000200000002000000020a00");
 
     const ParseResult result = codec.parseIncoming(bad + good);
 
@@ -163,7 +241,7 @@ void ProtocolCodecTest::reportsParseMetrics()
     ProtocolCodec codec;
     const QByteArray garbage = QByteArray::fromHex("0001");
     const QByteArray audio = QByteArray::fromHex("7e7e11ee010000000100000001000000010a0d");
-    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a");
+    const QByteArray video = QByteArray::fromHex("7e7e22ee020000000200000002000000aabb0a00");
     const QByteArray partial = QByteArray::fromHex("7e7e11ee010000000300000004000000");
 
     const ParseResult result = codec.parseIncoming(garbage + audio + video + partial);

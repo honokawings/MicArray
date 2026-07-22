@@ -31,7 +31,7 @@ BYTES_PER_SAMPLE_POINT = AUDIO_CHANNELS * BYTES_PER_CHANNEL
 AUDIO_PAYLOAD_LEN = SAMPLES_PER_AUDIO_FRAME * BYTES_PER_SAMPLE_POINT
 MEDIA_HEADER_LEN = 16
 MEDIA_TAIL_LEN = 2
-VIDEO_TAIL_LEN = 1
+VIDEO_TAIL_LEN = 2
 
 BLOCKED_SEND_THRESHOLD_SECONDS = 0.010
 BITS_PER_MEGABIT = 1_000_000
@@ -193,7 +193,7 @@ def format_periodic_stats(stats: ClientStats, now: float) -> str:
 
     return (
         "[stats] interval={:.2f}s tx={:.2f} Mb/s audio={:.2f} fps video={:.2f} fps "
-        "sent={:.2f} MB blocked={:.1f} ms"
+        "sent={:.2f} MiB blocked={:.1f} ms"
     ).format(
         interval_seconds,
         interval_mbps,
@@ -210,9 +210,9 @@ def format_session_summary(stats: ClientStats, now: float) -> str:
     sent_mib = stats.sent_bytes / 1024 / 1024
 
     return (
-        "[summary] duration={:.2f}s sent={:.2f} MB avg={:.2f} Mb/s peak={:.2f} Mb/s "
+        "[summary] duration={:.2f}s sent={:.2f} MiB avg={:.2f} Mb/s peak={:.2f} Mb/s "
         "audio_frames={} video_frames={} blocked={}/{} max_send={:.1f} ms "
-        "bursts={} burst_bytes={:.2f} MB overruns={}"
+        "bursts={} burst_bytes={:.2f} MiB overruns={}"
     ).format(
         duration,
         sent_mib,
@@ -246,7 +246,7 @@ def pack_media_frame(frame_type: int, payload: bytes) -> bytes:
         + payload
     )
     if frame_type == TYPE_VIDEO:
-        return frame + b"\x0a"
+        return frame + b"\x0a\x00"
     return frame + struct.pack("<H", TAIL)
 
 
@@ -671,7 +671,7 @@ def self_test() -> int:
 
     video_frame = pack_media_frame(TYPE_VIDEO, JPEG_PAYLOAD)
     assert video_frame[MEDIA_HEADER_LEN:-VIDEO_TAIL_LEN] == JPEG_PAYLOAD
-    assert video_frame[-1:] == b"\x0a", video_frame[-4:].hex(" ")
+    assert video_frame[-2:] == b"\x0a\x00", video_frame[-4:].hex(" ")
     assert video_frame[-2:] != bytes.fromhex("0a 0d"), video_frame[-4:].hex(" ")
 
     control = (
@@ -757,7 +757,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration", type=finite_float, default=0.0, help="test duration in seconds")
     parser.add_argument("--target-mbps", type=finite_float, default=0.0, help="target throughput in Mbps")
     parser.add_argument("--stats-interval", type=finite_float, default=1.0, help="stats interval in seconds")
-    parser.add_argument("--burst-size-mb", type=finite_float, default=32.0, help="burst size in MB")
+    parser.add_argument("--burst-size-mb", type=finite_float, default=32.0, help="burst size in MiB")
     parser.add_argument("--burst-interval", type=finite_float, default=1.0, help="burst interval in seconds")
     parser.add_argument("--no-video", action="store_true", help="disable video frame sending")
     parser.add_argument(

@@ -11,6 +11,8 @@
 #include <functional>
 #include <memory>
 
+#include "media/channelgainprocessor.h"
+
 namespace MicArray {
 
 struct RecordingSettings {
@@ -18,6 +20,8 @@ struct RecordingSettings {
     QString baseName;
     QVector<int> channels;
     int sampleRate = 48000;
+    bool gainApplied = false;
+    GainConfiguration initialGainConfiguration;
 };
 
 struct RecordingSummary {
@@ -45,6 +49,8 @@ public:
 
     bool open(const RecordingSettings &settings, QString *errorMessage = nullptr);
     bool appendFrame(const QByteArray &payload, QString *errorMessage = nullptr);
+    bool updateFinalGainConfiguration(const GainConfiguration &configuration,
+                                      QString *errorMessage = nullptr);
     bool close(const QString &stopReason, QString *errorMessage = nullptr);
 
     bool isOpen() const { return m_open; }
@@ -68,6 +74,7 @@ private:
     quint64 m_segmentDataLimit = DefaultSegmentDataLimit;
     RecordingSettings m_settings;
     RecordingSummary m_summary;
+    GainConfiguration m_finalGainConfiguration;
     FileFactory m_fileFactory;
     FileRemover m_fileRemover;
     std::unique_ptr<QFile> m_file;
