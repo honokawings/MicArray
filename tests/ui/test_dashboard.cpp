@@ -1,4 +1,6 @@
 #include "ui/arrayheatmapwidget.h"
+#include "ui/audioanalysispage.h"
+#include "ui/directionphotowidget.h"
 #include "ui/displayformat.h"
 #include "ui/trendchartwidget.h"
 #include "ui/videopreviewwidget.h"
@@ -23,6 +25,9 @@ class DashboardTest : public QObject
 
 private slots:
     void initTestCase();
+    void audioAnalysisPageProvidesOfflineControls();
+    void directionPhotoWidgetMapsDirectionsIntoImageRect();
+    void enteringAudioAnalysisDisablesOnlyRealtimePlayback();
     void clickingHeatmapCellSelectsChannel();
     void heatmapTracksPeakAndSelectedChannels();
     void heatmapProvidesFortyEightGainControls();
@@ -50,6 +55,78 @@ void DashboardTest::initTestCase()
     QStandardPaths::setTestModeEnabled(true);
     QCoreApplication::setOrganizationName(QStringLiteral("MicArrayTests"));
     QCoreApplication::setApplicationName(QStringLiteral("MicArrayDashboardTests"));
+}
+
+void DashboardTest::audioAnalysisPageProvidesOfflineControls()
+{
+    AppSettings settings;
+    AudioAnalysisPage page(&settings);
+    page.resize(1200, 700);
+    page.show();
+
+    auto *open = page.findChild<QPushButton *>(QStringLiteral("analysisOpenWaveButton"));
+    auto *play = page.findChild<QPushButton *>(QStringLiteral("analysisPlayButton"));
+    auto *channel = page.findChild<QComboBox *>(QStringLiteral("analysisOutputChannelCombo"));
+    auto *locator = page.findChild<QComboBox *>(QStringLiteral("analysisLocatorCombo"));
+    auto *photo = page.findChild<DirectionPhotoWidget *>(QStringLiteral("directionPhotoWidget"));
+    auto *horizontalFov = page.findChild<QDoubleSpinBox *>(QStringLiteral("cameraHorizontalFovSpin"));
+
+    QVERIFY(open != nullptr);
+    QVERIFY(play != nullptr);
+    QVERIFY(channel != nullptr);
+    QVERIFY(locator != nullptr);
+    QVERIFY(photo != nullptr);
+    QVERIFY(horizontalFov != nullptr);
+    QCOMPARE(channel->count(), 48);
+    QVERIFY(locator->findData(QStringLiteral("gcc-phat-tdoa")) >= 0);
+    QVERIFY(!play->isEnabled());
+}
+
+void DashboardTest::directionPhotoWidgetMapsDirectionsIntoImageRect()
+{
+    DirectionPhotoWidget widget;
+    widget.resize(640, 480);
+    widget.setImage(QImage(1600, 900, QImage::Format_RGB32));
+    CameraViewSettings camera;
+    camera.horizontalFovDegrees = 90.0;
+    camera.verticalFovDegrees = 60.0;
+    widget.setCameraView(camera);
+
+    SoundSourceDirection direction;
+    direction.confidence = 0.9;
+    widget.setDirections({direction});
+
+    const QRectF imageRect = widget.imageRect();
+    QCOMPARE(qRound(imageRect.width()), 640);
+    QCOMPARE(qRound(imageRect.height()), 360);
+    QCOMPARE(qRound(imageRect.top()), 60);
+    const QVector<QPointF> points = widget.markerPoints();
+    QCOMPARE(points.size(), 1);
+    QVERIFY(QLineF(points.first(), imageRect.center()).length() < 1.0);
+}
+
+void DashboardTest::enteringAudioAnalysisDisablesOnlyRealtimePlayback()
+{
+    MainWindow window;
+    window.show();
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *analysisPage = window.findChild<AudioAnalysisPage *>(QStringLiteral("audioAnalysisPage"));
+    auto *playback = window.findChild<QCheckBox *>(QStringLiteral("audioPlaybackCheck"));
+    auto *outputChannel = window.findChild<QSpinBox *>(QStringLiteral("outputChannelSpin"));
+    QVERIFY(tabs != nullptr);
+    QVERIFY(analysisPage != nullptr);
+    QVERIFY(playback != nullptr);
+    QVERIFY(outputChannel != nullptr);
+
+    playback->setChecked(true);
+    QVERIFY(playback->isChecked());
+    tabs->setCurrentWidget(analysisPage);
+    QCoreApplication::processEvents();
+
+    QVERIFY(!playback->isChecked());
+    QVERIFY(outputChannel->isEnabled());
+    tabs->setCurrentIndex(0);
+    QVERIFY(!playback->isChecked());
 }
 
 void DashboardTest::clickingHeatmapCellSelectsChannel()
@@ -323,7 +400,7 @@ void DashboardTest::recordingPageProvidesChannelSelectionAndCommands()
              1);
     QVERIFY(channels.at(17)->isChecked());
 
-    auto *sampleRate = window.findChild<QDoubleSpinBox *>();
+    auto *sampleRate = window.findChild<QDoubleSpinBox *>(QStringLiteral("sampleRateSpin"));
     QVERIFY(sampleRate != nullptr);
     QVERIFY(QMetaObject::invokeMethod(&window,
                                       "updateRecordingState",

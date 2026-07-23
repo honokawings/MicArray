@@ -154,6 +154,30 @@ UI 支持有线、无线和自定义 IP/端口。
 - `AudioRecorder` 在专用工作线程串行写盘，UI 线程只执行有界入队；非 38400 字节 payload 在排队前同步拒绝。待写队列同时限制为 `64 MiB` 和 2048 帧，任一上限触发或写盘失败都会进入错误状态并停止接受后续帧。
 - 用户停止、设备断线和应用退出都会按顺序完成已接受帧、更新 WAV 头和 JSON 清单；异常或无效分段会在清单中明确标记。
 
+### 离线音频分析与声源定位
+
+路径：
+
+- `src/analysis/`
+- `src/ui/audioanalysispage.*`
+- `src/ui/directionphotowidget.*`
+
+“音频分析”页可打开录制生成的多通道 WAV，选择任一通道进行离线播放，并按播放位置约每 `50 ms` 更新一次定位结果；暂停后拖动时间轴也会在选定位置重新分析。WAV 读取支持 PCM 与 WAVE_FORMAT_EXTENSIBLE 中的 PCM 子格式，以及 16/24/32 bit 整数样本。非 48 通道文件仍可单通道播放，但会明确禁用阵列定位。
+
+默认定位器为 GCC-PHAT 时延估计加鲁棒最小二乘方向求解：
+
+- 麦克风阵列为 6 行 × 8 列、相邻间距 `0.05 m`，坐标原点位于阵列中心。
+- 坐标系采用 `+X` 向右、`+Y` 向上、`+Z` 向前。
+- 方位角 `0°` 指向正前方，向右为正；俯仰角向上为正，仅求解阵列正面半球。
+- 当前输出一个主声源方向，结果接口使用向量，为后续多声源算法保留扩展能力。
+- 分析窗口、更新周期、声速、平滑系数和置信度阈值均可配置并持久化。
+
+定位算法采用源码级插件接口。自定义算法实现 `src/analysis/isoundsourcelocator.h` 中的 `ISoundSourceLocator`，提供稳定的算法 ID、说明、`configure()` 和 `locate()`；随后在 `registerBuiltInSoundSourceLocators()` 或项目自定义注册入口向 `SoundSourceLocatorRegistry` 注册工厂，即可出现在算法选择框中。接口接收阵列几何、采样率和多通道浮点窗口，不依赖 UI，也不承诺动态库 ABI。
+
+定位方向可叠加到用户选择的静态照片。照片使用针孔相机投影，可配置画面中心方位角、中心俯仰角、水平/垂直视场角和滚转角；视场内显示十字标记，视场外但仍位于正面半球的方向显示边缘箭头。照片保持原始宽高比，不参与算法计算。
+
+离线 WAV 读取、播放和定位运行在独立 `OfflineAudioAnalysisThread`。切换进入“音频分析”页会关闭“音视频融合”页的实时选中通道播放，但不会断开设备、停止视频、控制、增益或录音；离开分析页会停止离线播放，也不会自动恢复实时通道播放。
+
 ### 控制层
 
 路径：
@@ -457,6 +481,7 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-23 | 离线分析与声源定位 | 分析、音频、UI、配置、测试、文档 | 新增独立线程的多通道 WAV 读取与单通道播放、6×8/5 cm 阵列 GCC-PHAT 声源定位、可扩展源码级定位器接口，以及按自定义相机视角在静态照片上动态标记方向；进入分析页仅关闭实时通道播放。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-21 | 音频播放缺陷修复 | 音频、UI、测试、文档 | 修复进入“音视频融合”页面后音频播放异常：阵列热力图原先绕过 33 ms 渲染定时器，以约 240 FPS 对 48 个控件重复设置动态样式，且音频线程每处理一帧都等待 UI 回调后才接收下一帧。现将可视化严格限制到渲染节拍、隐藏页面跳过绘制、热力图颜色改为低开销调色板更新，并采用最多 16 帧在途和 32 帧有界等待的连续音频投递机制。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check` |
 | 2026-07-21 | 48 路增益与录音链路增强 | 音频、录音、UI、配置、控制、测试、文档 | 新增 48 路 `-8..+8 bit` 独立移位增益、每通道连续 AGC、6x8 竖向滑条 HMI、全自动/手动/复位和 JSON 保存载入；幅值、播放和单文件多通道 WAV 统一使用增益后数据，清单记录起止增益，录音队列增加字节与帧双上限；业务控制接口缩减为 6 路，线协议末两字段固定填零；模拟服务端二进制容量单位统一显示为 MiB。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-21 | 协议修正与审查修复 | 协议、设备通信、测试工具、测试、文档 | 视频帧尾改为完整双字节：首字节固定 `0A`，第二字节可为任意值但必须存在；帧总长改为 `16 + payloadLength + 2`，原始帧与帧尾后预览按双字节偏移计算。音频、心跳和控制帧仍严格使用 `0A 0D`，新增测试确认音频 `0A 00` 被拒绝。此前的单字节视频尾规则已被本规则取代。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --target test_protocol`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug -R test_protocol --output-on-failure`、`git diff --check` |

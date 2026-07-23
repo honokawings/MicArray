@@ -15,6 +15,7 @@
 #include <QtTest>
 
 #include <functional>
+#include <limits>
 
 using namespace MicArray;
 
@@ -35,6 +36,8 @@ private slots:
     void loadsCanonicalIniStringGainConfigurationAfterColdStart();
     void rejectsNonCanonicalIniStringGainConfigurationAfterColdStart();
     void restoresGainConfigurationAfterSyncFailure();
+    void persistsAudioAnalysisSettings();
+    void invalidAudioAnalysisFieldsFallBackIndependently();
     void healthMonitorClassifiesFreshnessAndCalculatesRates();
     void loggerRotatesAndRetainsBoundedFiles();
     void alertCoalescerSuppressesRepeatedEventsWithinOneSecond();
@@ -401,6 +404,80 @@ void AppTest::restoresGainConfigurationAfterSyncFailure()
     QCOMPARE(reloaded.connection().host, QStringLiteral("192.168.2.99"));
     QCOMPARE(reloaded.connection().port, quint16(9977));
     QCOMPARE(reloaded.connection().autoReconnect, false);
+}
+
+void AppTest::persistsAudioAnalysisSettings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    AudioAnalysisSettings expected;
+    expected.lastWavePath = QStringLiteral("D:/capture.wav");
+    expected.lastPhotoPath = QStringLiteral("D:/view.png");
+    expected.outputChannel = 17;
+    expected.volume = 0.6;
+    expected.locatorId = QStringLiteral("gcc-phat-tdoa");
+    expected.windowSamples = 4096;
+    expected.updateIntervalMs = 100;
+    expected.soundSpeedMetersPerSecond = 344.0;
+    expected.smoothingFactor = 0.25;
+    expected.confidenceThreshold = 0.55;
+    expected.camera.centerAzimuthDegrees = 10.0;
+    expected.camera.centerElevationDegrees = -5.0;
+    expected.camera.horizontalFovDegrees = 100.0;
+    expected.camera.verticalFovDegrees = 70.0;
+    expected.camera.rollDegrees = 2.0;
+    {
+        AppSettings settings(path);
+        settings.saveAudioAnalysis(expected);
+    }
+
+    AppSettings reloaded(path);
+    QCOMPARE(reloaded.audioAnalysis(), expected);
+}
+
+void AppTest::invalidAudioAnalysisFieldsFallBackIndependently()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("audioAnalysis/lastWavePath"), QStringLiteral("D:/valid.wav"));
+        raw.setValue(QStringLiteral("audioAnalysis/outputChannel"), 48);
+        raw.setValue(QStringLiteral("audioAnalysis/volume"),
+                     std::numeric_limits<double>::quiet_NaN());
+        raw.setValue(QStringLiteral("audioAnalysis/locatorId"), QStringLiteral("   "));
+        raw.setValue(QStringLiteral("audioAnalysis/windowSamples"), 1000);
+        raw.setValue(QStringLiteral("audioAnalysis/updateIntervalMs"), 1);
+        raw.setValue(QStringLiteral("audioAnalysis/soundSpeedMetersPerSecond"),
+                     std::numeric_limits<double>::infinity());
+        raw.setValue(QStringLiteral("audioAnalysis/smoothingFactor"), -1.0);
+        raw.setValue(QStringLiteral("audioAnalysis/confidenceThreshold"), 2.0);
+        raw.setValue(QStringLiteral("audioAnalysis/cameraCenterAzimuthDegrees"), 12.0);
+        raw.setValue(QStringLiteral("audioAnalysis/cameraCenterElevationDegrees"), -4.0);
+        raw.setValue(QStringLiteral("audioAnalysis/cameraHorizontalFovDegrees"), 180.0);
+        raw.setValue(QStringLiteral("audioAnalysis/cameraVerticalFovDegrees"), 75.0);
+        raw.setValue(QStringLiteral("audioAnalysis/cameraRollDegrees"), 1.0);
+    }
+
+    const AudioAnalysisSettings defaults;
+    AppSettings settings(path);
+    const AudioAnalysisSettings actual = settings.audioAnalysis();
+    QCOMPARE(actual.lastWavePath, QStringLiteral("D:/valid.wav"));
+    QCOMPARE(actual.outputChannel, defaults.outputChannel);
+    QCOMPARE(actual.volume, defaults.volume);
+    QCOMPARE(actual.locatorId, defaults.locatorId);
+    QCOMPARE(actual.windowSamples, defaults.windowSamples);
+    QCOMPARE(actual.updateIntervalMs, defaults.updateIntervalMs);
+    QCOMPARE(actual.soundSpeedMetersPerSecond, defaults.soundSpeedMetersPerSecond);
+    QCOMPARE(actual.smoothingFactor, defaults.smoothingFactor);
+    QCOMPARE(actual.confidenceThreshold, defaults.confidenceThreshold);
+    QCOMPARE(actual.camera.centerAzimuthDegrees, 12.0);
+    QCOMPARE(actual.camera.centerElevationDegrees, -4.0);
+    QCOMPARE(actual.camera.horizontalFovDegrees, defaults.camera.horizontalFovDegrees);
+    QCOMPARE(actual.camera.verticalFovDegrees, 75.0);
+    QCOMPARE(actual.camera.rollDegrees, 1.0);
 }
 
 void AppTest::healthMonitorClassifiesFreshnessAndCalculatesRates()

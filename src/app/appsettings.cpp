@@ -115,6 +115,71 @@ QString gainConfigurationSyncError(QSettings::Status status)
     return QStringLiteral("Cannot sync gain configuration: unknown error");
 }
 
+bool isPowerOfTwo(int value)
+{
+    return value > 0 && (value & (value - 1)) == 0;
+}
+
+AudioAnalysisSettings sanitizeAudioAnalysisSettings(AudioAnalysisSettings value)
+{
+    const AudioAnalysisSettings defaults;
+    if (value.outputChannel < 0 || value.outputChannel >= 48) {
+        value.outputChannel = defaults.outputChannel;
+    }
+    if (!std::isfinite(value.volume) || value.volume < 0.0 || value.volume > 1.0) {
+        value.volume = defaults.volume;
+    }
+    value.locatorId = value.locatorId.trimmed();
+    if (value.locatorId.isEmpty()) {
+        value.locatorId = defaults.locatorId;
+    }
+    if (value.windowSamples < 512 || value.windowSamples > 8192
+        || !isPowerOfTwo(value.windowSamples)) {
+        value.windowSamples = defaults.windowSamples;
+    }
+    if (value.updateIntervalMs < 20 || value.updateIntervalMs > 1000) {
+        value.updateIntervalMs = defaults.updateIntervalMs;
+    }
+    if (!std::isfinite(value.soundSpeedMetersPerSecond)
+        || value.soundSpeedMetersPerSecond < 300.0
+        || value.soundSpeedMetersPerSecond > 380.0) {
+        value.soundSpeedMetersPerSecond = defaults.soundSpeedMetersPerSecond;
+    }
+    if (!std::isfinite(value.smoothingFactor)
+        || value.smoothingFactor < 0.0 || value.smoothingFactor > 1.0) {
+        value.smoothingFactor = defaults.smoothingFactor;
+    }
+    if (!std::isfinite(value.confidenceThreshold)
+        || value.confidenceThreshold < 0.0 || value.confidenceThreshold > 1.0) {
+        value.confidenceThreshold = defaults.confidenceThreshold;
+    }
+    if (!std::isfinite(value.camera.centerAzimuthDegrees)
+        || value.camera.centerAzimuthDegrees < -180.0
+        || value.camera.centerAzimuthDegrees > 180.0) {
+        value.camera.centerAzimuthDegrees = defaults.camera.centerAzimuthDegrees;
+    }
+    if (!std::isfinite(value.camera.centerElevationDegrees)
+        || value.camera.centerElevationDegrees < -90.0
+        || value.camera.centerElevationDegrees > 90.0) {
+        value.camera.centerElevationDegrees = defaults.camera.centerElevationDegrees;
+    }
+    if (!std::isfinite(value.camera.horizontalFovDegrees)
+        || value.camera.horizontalFovDegrees <= 1.0
+        || value.camera.horizontalFovDegrees >= 179.0) {
+        value.camera.horizontalFovDegrees = defaults.camera.horizontalFovDegrees;
+    }
+    if (!std::isfinite(value.camera.verticalFovDegrees)
+        || value.camera.verticalFovDegrees <= 1.0
+        || value.camera.verticalFovDegrees >= 179.0) {
+        value.camera.verticalFovDegrees = defaults.camera.verticalFovDegrees;
+    }
+    if (!std::isfinite(value.camera.rollDegrees)
+        || value.camera.rollDegrees < -180.0 || value.camera.rollDegrees > 180.0) {
+        value.camera.rollDegrees = defaults.camera.rollDegrees;
+    }
+    return value;
+}
+
 } // namespace
 
 AppSettings::AppSettings(QObject *parent)
@@ -222,6 +287,86 @@ VideoSettings AppSettings::video() const
     return value;
 }
 
+AudioAnalysisSettings AppSettings::audioAnalysis() const
+{
+    const AudioAnalysisSettings defaults;
+    AudioAnalysisSettings value;
+    value.lastWavePath = m_settings->value(QStringLiteral("audioAnalysis/lastWavePath"),
+                                           defaults.lastWavePath).toString();
+    value.lastPhotoPath = m_settings->value(QStringLiteral("audioAnalysis/lastPhotoPath"),
+                                            defaults.lastPhotoPath).toString();
+    if (!readIntegerSetting(m_settings->value(QStringLiteral("audioAnalysis/outputChannel"),
+                                               defaults.outputChannel),
+                            &value.outputChannel)) {
+        value.outputChannel = defaults.outputChannel;
+    }
+    if (!readFiniteNumberSetting(m_settings->value(QStringLiteral("audioAnalysis/volume"),
+                                                    defaults.volume),
+                                 &value.volume)) {
+        value.volume = defaults.volume;
+    }
+    value.locatorId = m_settings->value(QStringLiteral("audioAnalysis/locatorId"),
+                                        defaults.locatorId).toString();
+    if (!readIntegerSetting(m_settings->value(QStringLiteral("audioAnalysis/windowSamples"),
+                                               defaults.windowSamples),
+                            &value.windowSamples)) {
+        value.windowSamples = defaults.windowSamples;
+    }
+    if (!readIntegerSetting(m_settings->value(QStringLiteral("audioAnalysis/updateIntervalMs"),
+                                               defaults.updateIntervalMs),
+                            &value.updateIntervalMs)) {
+        value.updateIntervalMs = defaults.updateIntervalMs;
+    }
+    if (!readFiniteNumberSetting(
+            m_settings->value(QStringLiteral("audioAnalysis/soundSpeedMetersPerSecond"),
+                              defaults.soundSpeedMetersPerSecond),
+            &value.soundSpeedMetersPerSecond)) {
+        value.soundSpeedMetersPerSecond = defaults.soundSpeedMetersPerSecond;
+    }
+    if (!readFiniteNumberSetting(m_settings->value(QStringLiteral("audioAnalysis/smoothingFactor"),
+                                                    defaults.smoothingFactor),
+                                 &value.smoothingFactor)) {
+        value.smoothingFactor = defaults.smoothingFactor;
+    }
+    if (!readFiniteNumberSetting(
+            m_settings->value(QStringLiteral("audioAnalysis/confidenceThreshold"),
+                              defaults.confidenceThreshold),
+            &value.confidenceThreshold)) {
+        value.confidenceThreshold = defaults.confidenceThreshold;
+    }
+    if (!readFiniteNumberSetting(
+            m_settings->value(QStringLiteral("audioAnalysis/cameraCenterAzimuthDegrees"),
+                              defaults.camera.centerAzimuthDegrees),
+            &value.camera.centerAzimuthDegrees)) {
+        value.camera.centerAzimuthDegrees = defaults.camera.centerAzimuthDegrees;
+    }
+    if (!readFiniteNumberSetting(
+            m_settings->value(QStringLiteral("audioAnalysis/cameraCenterElevationDegrees"),
+                              defaults.camera.centerElevationDegrees),
+            &value.camera.centerElevationDegrees)) {
+        value.camera.centerElevationDegrees = defaults.camera.centerElevationDegrees;
+    }
+    if (!readFiniteNumberSetting(
+            m_settings->value(QStringLiteral("audioAnalysis/cameraHorizontalFovDegrees"),
+                              defaults.camera.horizontalFovDegrees),
+            &value.camera.horizontalFovDegrees)) {
+        value.camera.horizontalFovDegrees = defaults.camera.horizontalFovDegrees;
+    }
+    if (!readFiniteNumberSetting(
+            m_settings->value(QStringLiteral("audioAnalysis/cameraVerticalFovDegrees"),
+                              defaults.camera.verticalFovDegrees),
+            &value.camera.verticalFovDegrees)) {
+        value.camera.verticalFovDegrees = defaults.camera.verticalFovDegrees;
+    }
+    if (!readFiniteNumberSetting(
+            m_settings->value(QStringLiteral("audioAnalysis/cameraRollDegrees"),
+                              defaults.camera.rollDegrees),
+            &value.camera.rollDegrees)) {
+        value.camera.rollDegrees = defaults.camera.rollDegrees;
+    }
+    return sanitizeAudioAnalysisSettings(value);
+}
+
 GainConfiguration AppSettings::gainConfiguration() const
 {
     const GainConfiguration defaults;
@@ -305,6 +450,34 @@ void AppSettings::saveVideo(const VideoSettings &settingsValue)
 {
     const QString format = settingsValue.format.toUpper();
     m_settings->setValue(QStringLiteral("video/format"), format == QStringLiteral("JPEG") ? QStringLiteral("JPG") : format);
+}
+
+void AppSettings::saveAudioAnalysis(const AudioAnalysisSettings &settingsValue)
+{
+    const AudioAnalysisSettings value = sanitizeAudioAnalysisSettings(settingsValue);
+    m_settings->setValue(QStringLiteral("audioAnalysis/lastWavePath"), value.lastWavePath);
+    m_settings->setValue(QStringLiteral("audioAnalysis/lastPhotoPath"), value.lastPhotoPath);
+    m_settings->setValue(QStringLiteral("audioAnalysis/outputChannel"), value.outputChannel);
+    m_settings->setValue(QStringLiteral("audioAnalysis/volume"), value.volume);
+    m_settings->setValue(QStringLiteral("audioAnalysis/locatorId"), value.locatorId);
+    m_settings->setValue(QStringLiteral("audioAnalysis/windowSamples"), value.windowSamples);
+    m_settings->setValue(QStringLiteral("audioAnalysis/updateIntervalMs"), value.updateIntervalMs);
+    m_settings->setValue(QStringLiteral("audioAnalysis/soundSpeedMetersPerSecond"),
+                         value.soundSpeedMetersPerSecond);
+    m_settings->setValue(QStringLiteral("audioAnalysis/smoothingFactor"), value.smoothingFactor);
+    m_settings->setValue(QStringLiteral("audioAnalysis/confidenceThreshold"),
+                         value.confidenceThreshold);
+    m_settings->setValue(QStringLiteral("audioAnalysis/cameraCenterAzimuthDegrees"),
+                         value.camera.centerAzimuthDegrees);
+    m_settings->setValue(QStringLiteral("audioAnalysis/cameraCenterElevationDegrees"),
+                         value.camera.centerElevationDegrees);
+    m_settings->setValue(QStringLiteral("audioAnalysis/cameraHorizontalFovDegrees"),
+                         value.camera.horizontalFovDegrees);
+    m_settings->setValue(QStringLiteral("audioAnalysis/cameraVerticalFovDegrees"),
+                         value.camera.verticalFovDegrees);
+    m_settings->setValue(QStringLiteral("audioAnalysis/cameraRollDegrees"),
+                         value.camera.rollDegrees);
+    m_settings->sync();
 }
 
 bool AppSettings::saveGainConfiguration(const GainConfiguration &configuration, QString *error)

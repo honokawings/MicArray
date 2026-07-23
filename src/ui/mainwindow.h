@@ -32,6 +32,7 @@
 #include "media/videodecoder.h"
 #include "monitoring/healthmonitor.h"
 #include "ui/arrayheatmapwidget.h"
+#include "ui/audioanalysispage.h"
 #include "ui/audiowaveformwidget.h"
 #include "ui/trendchartwidget.h"
 #include "ui/videopreviewwidget.h"
@@ -199,6 +200,7 @@ private:
     QVector<QLabel *> m_arrayCells;
     QVector<QLabel *> m_debugSegmentLabels;
     QTabWidget *m_mainTabs = nullptr;
+    AudioAnalysisPage *m_audioAnalysisPage = nullptr;
     QPushButton *m_presentationButton = nullptr;
     QPushButton *m_exportDiagnosticsButton = nullptr;
     QLineEdit *m_recordingDirectoryEdit = nullptr;

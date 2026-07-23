@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis/localizationtypes.h"
 #include "media/channelgainprocessor.h"
 
 #include <QMetaType>
@@ -31,6 +32,22 @@ struct VideoSettings {
     QString format = QStringLiteral("JPG");
 };
 
+struct AudioAnalysisSettings {
+    QString lastWavePath;
+    QString lastPhotoPath;
+    int outputChannel = 0;
+    double volume = 1.0;
+    QString locatorId = QStringLiteral("gcc-phat-tdoa");
+    int windowSamples = 2048;
+    int updateIntervalMs = 50;
+    double soundSpeedMetersPerSecond = 343.0;
+    double smoothingFactor = 0.35;
+    double confidenceThreshold = 0.45;
+    CameraViewSettings camera;
+
+    bool operator==(const AudioAnalysisSettings &) const = default;
+};
+
 struct ControlPreset {
     QString name;
     QVector<qint16> values;
@@ -50,11 +67,13 @@ public:
     ConnectionSettings connection() const;
     AudioSettings audio() const;
     VideoSettings video() const;
+    AudioAnalysisSettings audioAnalysis() const;
     GainConfiguration gainConfiguration() const;
 
     void saveConnection(const ConnectionSettings &settings);
     void saveAudio(const AudioSettings &settings);
     void saveVideo(const VideoSettings &settings);
+    void saveAudioAnalysis(const AudioAnalysisSettings &settings);
     bool saveGainConfiguration(const GainConfiguration &configuration, QString *error = nullptr);
 
     QList<ControlPreset> controlPresets() const;
@@ -90,3 +109,4 @@ private:
 } // namespace MicArray
 
 Q_DECLARE_METATYPE(MicArray::AudioSettings)
+Q_DECLARE_METATYPE(MicArray::AudioAnalysisSettings)

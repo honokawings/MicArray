@@ -10,6 +10,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
 
 set(MICARRAY_SOURCES
+    src/analysis/arraygeometry.cpp
+    src/analysis/audioanalysisworker.cpp
+    src/analysis/directionprojection.cpp
+    src/analysis/gccphatlocator.cpp
+    src/analysis/radix2fft.cpp
+    src/analysis/soundsourcelocatorregistry.cpp
+    src/analysis/wavefilereader.cpp
     src/app/appsettings.cpp
     src/app/logger.cpp
     src/control/controlvalues.cpp
@@ -28,8 +35,10 @@ set(MICARRAY_SOURCES
     src/monitoring/healthmonitor.cpp
     src/protocol/protocolcodec.cpp
     src/protocol/protocolworker.cpp
-    src/ui/audiowaveformwidget.cpp
     src/ui/arrayheatmapwidget.cpp
+    src/ui/audioanalysispage.cpp
+    src/ui/audiowaveformwidget.cpp
+    src/ui/directionphotowidget.cpp
     src/ui/displayformat.cpp
     src/ui/mainwindow.cpp
     src/ui/trendchartwidget.cpp
@@ -37,6 +46,15 @@ set(MICARRAY_SOURCES
 )
 
 set(MICARRAY_HEADERS
+    src/analysis/arraygeometry.h
+    src/analysis/audioanalysisworker.h
+    src/analysis/directionprojection.h
+    src/analysis/gccphatlocator.h
+    src/analysis/isoundsourcelocator.h
+    src/analysis/localizationtypes.h
+    src/analysis/radix2fft.h
+    src/analysis/soundsourcelocatorregistry.h
+    src/analysis/wavefilereader.h
     src/app/appsettings.h
     src/app/logger.h
     src/control/controlvalues.h
@@ -55,8 +73,10 @@ set(MICARRAY_HEADERS
     src/monitoring/healthmonitor.h
     src/protocol/protocolcodec.h
     src/protocol/protocolworker.h
-    src/ui/audiowaveformwidget.h
     src/ui/arrayheatmapwidget.h
+    src/ui/audioanalysispage.h
+    src/ui/audiowaveformwidget.h
+    src/ui/directionphotowidget.h
     src/ui/displayformat.h
     src/ui/mainwindow.h
     src/ui/trendchartwidget.h
@@ -136,6 +156,13 @@ qt_add_executable(test_ui
 target_link_libraries(test_ui PRIVATE MicArrayCore Qt::Test Qt::Charts)
 add_test(NAME test_ui COMMAND test_ui)
 set_tests_properties(test_ui PROPERTIES ENVIRONMENT "PATH=${QT_BIN_DIR};$ENV{PATH}")
+
+qt_add_executable(test_analysis
+    tests/analysis/test_audioanalysis.cpp
+)
+target_link_libraries(test_analysis PRIVATE MicArrayCore Qt::Test Qt::Gui Qt::Multimedia)
+add_test(NAME test_analysis COMMAND test_analysis)
+set_tests_properties(test_analysis PROPERTIES ENVIRONMENT "PATH=${QT_BIN_DIR};$ENV{PATH}")
 
 install(TARGETS MicArray
     BUNDLE  DESTINATION .

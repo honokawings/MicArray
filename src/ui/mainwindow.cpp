@@ -112,6 +112,8 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    delete m_audioAnalysisPage;
+    m_audioAnalysisPage = nullptr;
     persistGainConfiguration();
     m_audioRecorder.stopAndWait();
     m_healthTimer.stop();
@@ -167,6 +169,8 @@ void MainWindow::buildUi()
     m_mainTabs->setObjectName(QStringLiteral("mainTabs"));
     m_mainTabs->addTab(buildMonitorPage(), QStringLiteral("音视频融合"));
     m_mainTabs->addTab(buildRecordingPage(), QStringLiteral("音频录制"));
+    m_audioAnalysisPage = new AudioAnalysisPage(&m_settings, m_mainTabs);
+    m_mainTabs->addTab(m_audioAnalysisPage, QStringLiteral("音频分析"));
     m_mainTabs->addTab(buildDebugPage(), QStringLiteral("高级帧调试"));
     m_mainTabs->addTab(buildCalibrationPage(), QStringLiteral("阵列校准"));
     root->addWidget(m_mainTabs, 1);
@@ -242,6 +246,7 @@ QWidget *MainWindow::buildMonitorPage()
     auto *settingsGroup = new QGroupBox(QStringLiteral("音视频设置"), left);
     auto *settingsLayout = new QFormLayout(settingsGroup);
     m_sampleRateSpin = new QDoubleSpinBox(settingsGroup);
+    m_sampleRateSpin->setObjectName(QStringLiteral("sampleRateSpin"));
     m_sampleRateSpin->setRange(8.0, 192.0);
     m_sampleRateSpin->setDecimals(0);
     m_sampleRateSpin->setSingleStep(1.0);
@@ -255,6 +260,7 @@ QWidget *MainWindow::buildMonitorPage()
     m_averageWindowSpin->setRange(1, 10000);
     m_averageWindowSpin->setSuffix(QStringLiteral(" 帧"));
     m_audioPlaybackCheck = new QCheckBox(QStringLiteral("启用选中通道播放"), settingsGroup);
+    m_audioPlaybackCheck->setObjectName(QStringLiteral("audioPlaybackCheck"));
     m_videoFormatCombo = new QComboBox(settingsGroup);
     m_videoFormatCombo->addItem(QStringLiteral("JPEG"), QStringLiteral("JPG"));
     m_resetSettingsButton = new QPushButton(QStringLiteral("恢复全部默认设置"), settingsGroup);
@@ -653,6 +659,13 @@ void MainWindow::connectSignals()
     connect(m_outputChannelSpin, &QSpinBox::valueChanged, this, &MainWindow::updateAudioSettingsFromUi);
     connect(m_averageWindowSpin, &QSpinBox::valueChanged, this, &MainWindow::updateAudioSettingsFromUi);
     connect(m_audioPlaybackCheck, &QCheckBox::toggled, this, &MainWindow::updateAudioSettingsFromUi);
+    connect(m_mainTabs, &QTabWidget::currentChanged, this, [this](int index) {
+        const bool analysisActive = m_mainTabs->widget(index) == m_audioAnalysisPage;
+        if (analysisActive && m_audioPlaybackCheck->isChecked()) {
+            m_audioPlaybackCheck->setChecked(false);
+        }
+        m_audioAnalysisPage->setActive(analysisActive);
+    });
 
     connect(&m_client, &DeviceClient::stateChanged, this, &MainWindow::updateConnectionState);
     connect(&m_client, &DeviceClient::statisticsChanged, this, &MainWindow::updateStatistics);
