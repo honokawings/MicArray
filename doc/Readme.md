@@ -178,6 +178,31 @@ UI 支持有线、无线和自定义 IP/端口。
 
 离线 WAV 读取、播放和定位运行在独立 `OfflineAudioAnalysisThread`。切换进入“音频分析”页会关闭“音视频融合”页的实时选中通道播放，但不会断开设备、停止视频、控制、增益或录音；离开分析页会停止离线播放，也不会自动恢复实时通道播放。
 
+### 实时声源定位与视频校准
+
+路径：
+
+- `src/analysis/livelocalizationworker.*`
+- `src/analysis/ispatialresponseprovider.h`
+- `src/analysis/cameraviewcalibrator.*`
+- `src/ui/livelocalizationpage.*`
+- `src/ui/livelocalizationview.*`
+
+“声源定位”页复用设备实时视频和增益后的 48 通道阵列音频。`LiveLocalizationWorker` 在独立 `LiveSourceLocalizationThread` 中连续累积 200 样本协议帧，默认以 2048 样本窗口、约 10 Hz 更新主声源方向；实时分析旁路使用独立的 32 帧有界队列，计算过载时丢弃旁路新帧，不阻塞现有音频播放、录音、视频解码或 UI。
+
+页面提供两种显示方式：
+
+- 纯标记：把 GCC-PHAT 主声源方位角、俯仰角和置信度投影为视频准星。
+- 真实空间响应热力图：按当前视频视角反投影约 64×36 个方向，使用 SRP-PHAT 理论阵元时延累加真实互相关响应，再以半透明色阶覆盖视频。
+
+空间响应采用可选源码级接口 `ISpatialResponseProvider`。只实现 `ISoundSourceLocator` 的自定义算法仍可用于纯标记；同时实现空间响应接口后即可启用真实热力图，不需要修改页面。
+
+实时视频视角参数与离线静态照片设置相互独立，但使用相同的 `CameraViewSettings`：中心方位角、中心俯仰角、水平视场角、垂直视场角和滚转角均可手动调整，修改后立即更新叠加并自动保存。
+
+四点自动校准要求用户依次把稳定声源放在视频中的四个分散位置并点击声源。每次点击会对最近约一秒的可靠定位结果进行单位方向加权平均；样本不足、置信度低、方向波动大或与已有点过近时拒绝记录。四点完成后通过受限多起点阻尼最小二乘拟合五个物理视角参数，显示点击点、预测点和 RMS 像素误差；拟合失败不会覆盖旧设置。归一化点击坐标和校准结果自动保存，下次启动自动载入，不因视频分辨率或宽高比变化提示重新校准。
+
+进入和离开“声源定位”页不会修改实时选中通道播放状态，也不会改变设备连接、视频、录音、增益或控制状态。
+
 ### 控制层
 
 路径：
@@ -481,6 +506,7 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-23 | 实时声源定位与视频校准 | 分析、音频、视频、UI、配置、测试、文档 | 新增独立线程的实时 48 通道声源定位页面，支持纯标记和真实 SRP-PHAT 热力图；复用实时视频并提供四点稳定声源采集，自动拟合且允许手动调整五个视频视角参数，校准结果本地持久化；页面切换保持实时播放及其他设备功能不变。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-23 | 离线分析与声源定位 | 分析、音频、UI、配置、测试、文档 | 新增独立线程的多通道 WAV 读取与单通道播放、6×8/5 cm 阵列 GCC-PHAT 声源定位、可扩展源码级定位器接口，以及按自定义相机视角在静态照片上动态标记方向；进入分析页仅关闭实时通道播放。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-21 | 音频播放缺陷修复 | 音频、UI、测试、文档 | 修复进入“音视频融合”页面后音频播放异常：阵列热力图原先绕过 33 ms 渲染定时器，以约 240 FPS 对 48 个控件重复设置动态样式，且音频线程每处理一帧都等待 UI 回调后才接收下一帧。现将可视化严格限制到渲染节拍、隐藏页面跳过绘制、热力图颜色改为低开销调色板更新，并采用最多 16 帧在途和 32 帧有界等待的连续音频投递机制。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check` |
 | 2026-07-21 | 48 路增益与录音链路增强 | 音频、录音、UI、配置、控制、测试、文档 | 新增 48 路 `-8..+8 bit` 独立移位增益、每通道连续 AGC、6x8 竖向滑条 HMI、全自动/手动/复位和 JSON 保存载入；幅值、播放和单文件多通道 WAV 统一使用增益后数据，清单记录起止增益，录音队列增加字节与帧双上限；业务控制接口缩减为 6 路，线协议末两字段固定填零；模拟服务端二进制容量单位统一显示为 MiB。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |

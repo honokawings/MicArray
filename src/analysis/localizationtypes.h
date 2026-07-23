@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMetaType>
+#include <QPointF>
 #include <QString>
 #include <QVector>
 
@@ -55,9 +56,55 @@ struct CameraViewSettings {
     bool operator==(const CameraViewSettings &) const = default;
 };
 
+struct ScanDirection {
+    double azimuthDegrees = 0.0;
+    double elevationDegrees = 0.0;
+
+    bool operator==(const ScanDirection &) const = default;
+};
+
+struct SpatialResponseGrid {
+    int columns = 0;
+    int rows = 0;
+    QVector<ScanDirection> directions;
+};
+
+struct SpatialResponseResult {
+    QVector<float> values;
+    double reliability = 0.0;
+};
+
+struct LiveLocalizationResult {
+    QVector<SoundSourceDirection> directions;
+    qint64 timestampMicroseconds = 0;
+    qint64 elapsedMilliseconds = 0;
+};
+
+struct LiveSpatialResponse {
+    int columns = 0;
+    int rows = 0;
+    QVector<float> normalizedValues;
+    qint64 timestampMicroseconds = 0;
+    quint64 generation = 0;
+    double reliability = 0.0;
+};
+
+struct VideoCalibrationSample {
+    ScanDirection direction;
+    QPointF normalizedVideoPoint;
+    double confidence = 0.0;
+    double angularDeviationDegrees = 0.0;
+
+    bool operator==(const VideoCalibrationSample &) const = default;
+};
+
 } // namespace MicArray
 
 Q_DECLARE_METATYPE(MicArray::LocatorConfiguration)
 Q_DECLARE_METATYPE(MicArray::MultiChannelAudioWindow)
 Q_DECLARE_METATYPE(MicArray::SoundSourceDirection)
 Q_DECLARE_METATYPE(QVector<MicArray::SoundSourceDirection>)
+Q_DECLARE_METATYPE(MicArray::SpatialResponseGrid)
+Q_DECLARE_METATYPE(MicArray::LiveLocalizationResult)
+Q_DECLARE_METATYPE(MicArray::LiveSpatialResponse)
+Q_DECLARE_METATYPE(MicArray::VideoCalibrationSample)

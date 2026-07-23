@@ -108,4 +108,39 @@ ProjectionResult projectDirection(const SoundSourceDirection &direction,
     return result;
 }
 
+ScanDirection unprojectVideoPoint(const QPointF &normalizedPoint,
+                                  const CameraViewSettings &camera)
+{
+    const double invalid = std::numeric_limits<double>::quiet_NaN();
+    if (!camera.isValid()
+        || !finite(normalizedPoint.x()) || !finite(normalizedPoint.y())) {
+        return {invalid, invalid};
+    }
+    const QVector3D forward = directionFromAngles(camera.centerAzimuthDegrees,
+                                                  camera.centerElevationDegrees).normalized();
+    QVector3D right = QVector3D::crossProduct(QVector3D(0.0f, 1.0f, 0.0f), forward);
+    if (right.lengthSquared() < 1.0e-12f) {
+        right = QVector3D(1.0f, 0.0f, 0.0f);
+    } else {
+        right.normalize();
+    }
+    const QVector3D up = QVector3D::crossProduct(forward, right).normalized();
+    const double roll = qDegreesToRadians(camera.rollDegrees);
+    const float cosine = static_cast<float>(std::cos(roll));
+    const float sine = static_cast<float>(std::sin(roll));
+    const QVector3D rolledRight = right * cosine + up * sine;
+    const QVector3D rolledUp = up * cosine - right * sine;
+    const double horizontalScale = 2.0
+        * std::tan(qDegreesToRadians(camera.horizontalFovDegrees) / 2.0);
+    const double verticalScale = 2.0
+        * std::tan(qDegreesToRadians(camera.verticalFovDegrees) / 2.0);
+    const double xc = (normalizedPoint.x() - 0.5) * horizontalScale;
+    const double yc = (0.5 - normalizedPoint.y()) * verticalScale;
+    const QVector3D direction =
+        (forward + rolledRight * static_cast<float>(xc)
+         + rolledUp * static_cast<float>(yc)).normalized();
+    const SoundSourceDirection angles = anglesFromDirection(direction);
+    return {angles.azimuthDegrees, angles.elevationDegrees};
+}
+
 } // namespace MicArray

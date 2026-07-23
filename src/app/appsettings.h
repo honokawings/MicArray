@@ -48,6 +48,24 @@ struct AudioAnalysisSettings {
     bool operator==(const AudioAnalysisSettings &) const = default;
 };
 
+struct LiveLocalizationSettings {
+    bool enabled = true;
+    QString locatorId = QStringLiteral("gcc-phat-tdoa");
+    QString displayMode = QStringLiteral("marker");
+    double heatmapOpacity = 0.45;
+    int windowSamples = 2048;
+    int updateIntervalMs = 100;
+    double soundSpeedMetersPerSecond = 343.0;
+    double smoothingFactor = 0.35;
+    double confidenceThreshold = 0.45;
+    CameraViewSettings camera;
+    QVector<VideoCalibrationSample> calibrationSamples;
+    double calibrationRmsPixels = 0.0;
+    int calibrationVersion = 1;
+
+    bool operator==(const LiveLocalizationSettings &) const = default;
+};
+
 struct ControlPreset {
     QString name;
     QVector<qint16> values;
@@ -68,12 +86,14 @@ public:
     AudioSettings audio() const;
     VideoSettings video() const;
     AudioAnalysisSettings audioAnalysis() const;
+    LiveLocalizationSettings liveLocalization() const;
     GainConfiguration gainConfiguration() const;
 
     void saveConnection(const ConnectionSettings &settings);
     void saveAudio(const AudioSettings &settings);
     void saveVideo(const VideoSettings &settings);
     void saveAudioAnalysis(const AudioAnalysisSettings &settings);
+    void saveLiveLocalization(const LiveLocalizationSettings &settings);
     bool saveGainConfiguration(const GainConfiguration &configuration, QString *error = nullptr);
 
     QList<ControlPreset> controlPresets() const;
@@ -110,3 +130,4 @@ private:
 
 Q_DECLARE_METATYPE(MicArray::AudioSettings)
 Q_DECLARE_METATYPE(MicArray::AudioAnalysisSettings)
+Q_DECLARE_METATYPE(MicArray::LiveLocalizationSettings)

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace MicArray {
 
@@ -176,6 +177,77 @@ AudioAnalysisSettings sanitizeAudioAnalysisSettings(AudioAnalysisSettings value)
     if (!std::isfinite(value.camera.rollDegrees)
         || value.camera.rollDegrees < -180.0 || value.camera.rollDegrees > 180.0) {
         value.camera.rollDegrees = defaults.camera.rollDegrees;
+    }
+    return value;
+}
+
+LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettings value)
+{
+    const LiveLocalizationSettings defaults;
+    value.locatorId = value.locatorId.trimmed();
+    if (value.locatorId.isEmpty()) {
+        value.locatorId = defaults.locatorId;
+    }
+    value.displayMode = value.displayMode.trimmed().toLower();
+    if (value.displayMode != QStringLiteral("marker")
+        && value.displayMode != QStringLiteral("heatmap")) {
+        value.displayMode = defaults.displayMode;
+    }
+    if (!std::isfinite(value.heatmapOpacity)
+        || value.heatmapOpacity < 0.0 || value.heatmapOpacity > 1.0) {
+        value.heatmapOpacity = defaults.heatmapOpacity;
+    }
+    if (value.windowSamples < 512 || value.windowSamples > 8192
+        || !isPowerOfTwo(value.windowSamples)) {
+        value.windowSamples = defaults.windowSamples;
+    }
+    if (value.updateIntervalMs < 20 || value.updateIntervalMs > 1000) {
+        value.updateIntervalMs = defaults.updateIntervalMs;
+    }
+    if (!std::isfinite(value.soundSpeedMetersPerSecond)
+        || value.soundSpeedMetersPerSecond < 300.0
+        || value.soundSpeedMetersPerSecond > 380.0) {
+        value.soundSpeedMetersPerSecond = defaults.soundSpeedMetersPerSecond;
+    }
+    if (!std::isfinite(value.smoothingFactor)
+        || value.smoothingFactor < 0.0 || value.smoothingFactor > 1.0) {
+        value.smoothingFactor = defaults.smoothingFactor;
+    }
+    if (!std::isfinite(value.confidenceThreshold)
+        || value.confidenceThreshold < 0.0 || value.confidenceThreshold > 1.0) {
+        value.confidenceThreshold = defaults.confidenceThreshold;
+    }
+    AudioAnalysisSettings cameraValidation;
+    cameraValidation.camera = value.camera;
+    value.camera = sanitizeAudioAnalysisSettings(cameraValidation).camera;
+    if (!std::isfinite(value.calibrationRmsPixels) || value.calibrationRmsPixels < 0.0) {
+        value.calibrationRmsPixels = defaults.calibrationRmsPixels;
+    }
+    bool calibrationValid = value.calibrationVersion == defaults.calibrationVersion
+        && (value.calibrationSamples.isEmpty() || value.calibrationSamples.size() == 4);
+    for (const VideoCalibrationSample &sample : std::as_const(value.calibrationSamples)) {
+        calibrationValid = calibrationValid
+            && std::isfinite(sample.direction.azimuthDegrees)
+            && sample.direction.azimuthDegrees >= -180.0
+            && sample.direction.azimuthDegrees <= 180.0
+            && std::isfinite(sample.direction.elevationDegrees)
+            && sample.direction.elevationDegrees >= -90.0
+            && sample.direction.elevationDegrees <= 90.0
+            && std::isfinite(sample.normalizedVideoPoint.x())
+            && sample.normalizedVideoPoint.x() >= 0.0
+            && sample.normalizedVideoPoint.x() <= 1.0
+            && std::isfinite(sample.normalizedVideoPoint.y())
+            && sample.normalizedVideoPoint.y() >= 0.0
+            && sample.normalizedVideoPoint.y() <= 1.0
+            && std::isfinite(sample.confidence)
+            && sample.confidence >= 0.0 && sample.confidence <= 1.0
+            && std::isfinite(sample.angularDeviationDegrees)
+            && sample.angularDeviationDegrees >= 0.0;
+    }
+    if (!calibrationValid) {
+        value.calibrationSamples.clear();
+        value.calibrationRmsPixels = defaults.calibrationRmsPixels;
+        value.calibrationVersion = defaults.calibrationVersion;
     }
     return value;
 }
@@ -367,6 +439,96 @@ AudioAnalysisSettings AppSettings::audioAnalysis() const
     return sanitizeAudioAnalysisSettings(value);
 }
 
+LiveLocalizationSettings AppSettings::liveLocalization() const
+{
+    const LiveLocalizationSettings defaults;
+    LiveLocalizationSettings value;
+    value.enabled = m_settings->value(QStringLiteral("liveLocalization/enabled"),
+                                      defaults.enabled).toBool();
+    value.locatorId = m_settings->value(QStringLiteral("liveLocalization/locatorId"),
+                                        defaults.locatorId).toString();
+    value.displayMode = m_settings->value(QStringLiteral("liveLocalization/displayMode"),
+                                          defaults.displayMode).toString();
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/heatmapOpacity"),
+                          defaults.heatmapOpacity),
+        &value.heatmapOpacity);
+    readIntegerSetting(m_settings->value(QStringLiteral("liveLocalization/windowSamples"),
+                                         defaults.windowSamples),
+                       &value.windowSamples);
+    readIntegerSetting(m_settings->value(QStringLiteral("liveLocalization/updateIntervalMs"),
+                                         defaults.updateIntervalMs),
+                       &value.updateIntervalMs);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/soundSpeedMetersPerSecond"),
+                          defaults.soundSpeedMetersPerSecond),
+        &value.soundSpeedMetersPerSecond);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/smoothingFactor"),
+                          defaults.smoothingFactor),
+        &value.smoothingFactor);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/confidenceThreshold"),
+                          defaults.confidenceThreshold),
+        &value.confidenceThreshold);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/cameraCenterAzimuthDegrees"),
+                          defaults.camera.centerAzimuthDegrees),
+        &value.camera.centerAzimuthDegrees);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/cameraCenterElevationDegrees"),
+                          defaults.camera.centerElevationDegrees),
+        &value.camera.centerElevationDegrees);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/cameraHorizontalFovDegrees"),
+                          defaults.camera.horizontalFovDegrees),
+        &value.camera.horizontalFovDegrees);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/cameraVerticalFovDegrees"),
+                          defaults.camera.verticalFovDegrees),
+        &value.camera.verticalFovDegrees);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/cameraRollDegrees"),
+                          defaults.camera.rollDegrees),
+        &value.camera.rollDegrees);
+    readFiniteNumberSetting(
+        m_settings->value(QStringLiteral("liveLocalization/calibrationRmsPixels"),
+                          defaults.calibrationRmsPixels),
+        &value.calibrationRmsPixels);
+    readIntegerSetting(
+        m_settings->value(QStringLiteral("liveLocalization/calibrationVersion"),
+                          defaults.calibrationVersion),
+        &value.calibrationVersion);
+    int calibrationCount = 0;
+    readIntegerSetting(
+        m_settings->value(QStringLiteral("liveLocalization/calibrationCount"), 0),
+        &calibrationCount);
+    if (calibrationCount == 4) {
+        value.calibrationSamples.reserve(4);
+        for (int index = 0; index < calibrationCount; ++index) {
+            const QString prefix = QStringLiteral("liveLocalization/calibration/%1/").arg(index);
+            VideoCalibrationSample sample;
+            readFiniteNumberSetting(m_settings->value(prefix + QStringLiteral("azimuth")),
+                                    &sample.direction.azimuthDegrees);
+            readFiniteNumberSetting(m_settings->value(prefix + QStringLiteral("elevation")),
+                                    &sample.direction.elevationDegrees);
+            double x = 0.0;
+            double y = 0.0;
+            readFiniteNumberSetting(m_settings->value(prefix + QStringLiteral("x")), &x);
+            readFiniteNumberSetting(m_settings->value(prefix + QStringLiteral("y")), &y);
+            sample.normalizedVideoPoint = {x, y};
+            readFiniteNumberSetting(m_settings->value(prefix + QStringLiteral("confidence")),
+                                    &sample.confidence);
+            readFiniteNumberSetting(m_settings->value(prefix + QStringLiteral("deviation")),
+                                    &sample.angularDeviationDegrees);
+            value.calibrationSamples.append(sample);
+        }
+    } else if (calibrationCount != 0) {
+        value.calibrationVersion = -1;
+    }
+    return sanitizeLiveLocalizationSettings(value);
+}
+
 GainConfiguration AppSettings::gainConfiguration() const
 {
     const GainConfiguration defaults;
@@ -477,6 +639,56 @@ void AppSettings::saveAudioAnalysis(const AudioAnalysisSettings &settingsValue)
                          value.camera.verticalFovDegrees);
     m_settings->setValue(QStringLiteral("audioAnalysis/cameraRollDegrees"),
                          value.camera.rollDegrees);
+    m_settings->sync();
+}
+
+void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsValue)
+{
+    const LiveLocalizationSettings value = sanitizeLiveLocalizationSettings(settingsValue);
+    const QString group = QStringLiteral("liveLocalization/");
+    m_settings->setValue(group + QStringLiteral("enabled"), value.enabled);
+    m_settings->setValue(group + QStringLiteral("locatorId"), value.locatorId);
+    m_settings->setValue(group + QStringLiteral("displayMode"), value.displayMode);
+    m_settings->setValue(group + QStringLiteral("heatmapOpacity"), value.heatmapOpacity);
+    m_settings->setValue(group + QStringLiteral("windowSamples"), value.windowSamples);
+    m_settings->setValue(group + QStringLiteral("updateIntervalMs"), value.updateIntervalMs);
+    m_settings->setValue(group + QStringLiteral("soundSpeedMetersPerSecond"),
+                         value.soundSpeedMetersPerSecond);
+    m_settings->setValue(group + QStringLiteral("smoothingFactor"), value.smoothingFactor);
+    m_settings->setValue(group + QStringLiteral("confidenceThreshold"),
+                         value.confidenceThreshold);
+    m_settings->setValue(group + QStringLiteral("cameraCenterAzimuthDegrees"),
+                         value.camera.centerAzimuthDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraCenterElevationDegrees"),
+                         value.camera.centerElevationDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraHorizontalFovDegrees"),
+                         value.camera.horizontalFovDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraVerticalFovDegrees"),
+                         value.camera.verticalFovDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraRollDegrees"),
+                         value.camera.rollDegrees);
+    m_settings->setValue(group + QStringLiteral("calibrationRmsPixels"),
+                         value.calibrationRmsPixels);
+    m_settings->setValue(group + QStringLiteral("calibrationVersion"),
+                         value.calibrationVersion);
+    m_settings->setValue(group + QStringLiteral("calibrationCount"),
+                         value.calibrationSamples.size());
+    m_settings->remove(group + QStringLiteral("calibration"));
+    for (int index = 0; index < value.calibrationSamples.size(); ++index) {
+        const QString prefix = group + QStringLiteral("calibration/%1/").arg(index);
+        const VideoCalibrationSample &sample = value.calibrationSamples.at(index);
+        m_settings->setValue(prefix + QStringLiteral("azimuth"),
+                             sample.direction.azimuthDegrees);
+        m_settings->setValue(prefix + QStringLiteral("elevation"),
+                             sample.direction.elevationDegrees);
+        m_settings->setValue(prefix + QStringLiteral("x"),
+                             sample.normalizedVideoPoint.x());
+        m_settings->setValue(prefix + QStringLiteral("y"),
+                             sample.normalizedVideoPoint.y());
+        m_settings->setValue(prefix + QStringLiteral("confidence"), sample.confidence);
+        m_settings->setValue(prefix + QStringLiteral("deviation"),
+                             sample.angularDeviationDegrees);
+    }
     m_settings->sync();
 }
 

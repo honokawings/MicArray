@@ -272,6 +272,118 @@ QVector<SoundSourceDirection> GccPhatLocator::locate(const MultiChannelAudioWind
     return {result};
 }
 
+SpatialResponseResult GccPhatLocator::evaluateSpatialResponse(
+    const MultiChannelAudioWindow &window,
+    const SpatialResponseGrid &grid)
+{
+    SpatialResponseResult result;
+    if (!m_configured
+        || grid.columns <= 0 || grid.rows <= 0
+        || grid.directions.size() != grid.columns * grid.rows
+        || window.sampleRate != m_configuration.sampleRate
+        || window.channels.size() != m_configuration.microphones.size()) {
+        return result;
+    }
+    const int sampleCount = m_configuration.windowSamples;
+    const int fftSize = sampleCount * 2;
+    QVector<QVector<std::complex<double>>> spectra;
+    spectra.reserve(window.channels.size());
+    double totalEnergy = 0.0;
+    for (const QVector<float> &channel : window.channels) {
+        if (channel.size() != sampleCount) {
+            return {};
+        }
+        double mean = std::accumulate(channel.cbegin(), channel.cend(), 0.0)
+            / sampleCount;
+        QVector<std::complex<double>> spectrum(fftSize);
+        double energy = 0.0;
+        for (int sample = 0; sample < sampleCount; ++sample) {
+            if (!std::isfinite(channel.at(sample))) {
+                return {};
+            }
+            const double centered = channel.at(sample) - mean;
+            const double hann = 0.5 - 0.5
+                * std::cos(2.0 * std::numbers::pi * sample / (sampleCount - 1));
+            const double value = centered * hann;
+            spectrum[sample] = {value, 0.0};
+            energy += value * value;
+        }
+        totalEnergy += energy / sampleCount;
+        if (!Radix2Fft::transform(&spectrum, false)) {
+            return {};
+        }
+        spectra.append(std::move(spectrum));
+    }
+    totalEnergy /= window.channels.size();
+    if (!std::isfinite(totalEnergy) || totalEnergy < 1.0e-10) {
+        return {};
+    }
+
+    QVector<QVector<std::complex<double>>> correlations;
+    correlations.reserve(m_pairs.size());
+    QVector<std::complex<double>> crossSpectrum(fftSize);
+    for (const Pair &pair : m_pairs) {
+        for (int bin = 0; bin < fftSize; ++bin) {
+            const std::complex<double> cross = spectra.at(pair.first).at(bin)
+                * std::conj(spectra.at(pair.second).at(bin));
+            const double magnitude = std::abs(cross);
+            crossSpectrum[bin] = magnitude > 1.0e-12
+                ? cross / magnitude : std::complex<double>(0.0, 0.0);
+        }
+        QVector<std::complex<double>> correlation = crossSpectrum;
+        if (!Radix2Fft::transform(&correlation, true)) {
+            return {};
+        }
+        correlations.append(std::move(correlation));
+    }
+
+    result.values.fill(0.0f, grid.directions.size());
+    for (int directionIndex = 0; directionIndex < grid.directions.size();
+         ++directionIndex) {
+        const ScanDirection &scan = grid.directions.at(directionIndex);
+        if (!std::isfinite(scan.azimuthDegrees)
+            || !std::isfinite(scan.elevationDegrees)) {
+            return {};
+        }
+        const QVector3D direction = directionFromAngles(scan.azimuthDegrees,
+                                                        scan.elevationDegrees);
+        if (direction.z() < 0.0f) {
+            continue;
+        }
+        double response = 0.0;
+        for (int pairIndex = 0; pairIndex < m_pairs.size(); ++pairIndex) {
+            const Pair &pair = m_pairs.at(pairIndex);
+            const double lag = (pair.dxMeters * direction.x()
+                                + pair.dyMeters * direction.y())
+                / m_configuration.soundSpeedMetersPerSecond
+                * m_configuration.sampleRate;
+            const int lower = static_cast<int>(std::floor(lag));
+            const double fraction = lag - lower;
+            const QVector<std::complex<double>> &correlation =
+                correlations.at(pairIndex);
+            const double interpolated =
+                correlationAtLag(correlation, lower) * (1.0 - fraction)
+                + correlationAtLag(correlation, lower + 1) * fraction;
+            response += std::max(0.0, interpolated);
+        }
+        result.values[directionIndex] = static_cast<float>(
+            response / std::max<qsizetype>(1, m_pairs.size()));
+    }
+    const auto peak = std::max_element(result.values.cbegin(), result.values.cend());
+    if (peak == result.values.cend() || *peak <= 1.0e-12f) {
+        result.values.clear();
+        return result;
+    }
+    const double mean = std::accumulate(result.values.cbegin(),
+                                        result.values.cend(), 0.0)
+        / result.values.size();
+    result.reliability = std::clamp(
+        (static_cast<double>(*peak) - mean)
+            / (static_cast<double>(*peak) + 1.0e-12),
+        0.0, 1.0);
+    return result;
+}
+
 void GccPhatLocator::rebuildPairs()
 {
     m_pairs.clear();

@@ -1,7 +1,10 @@
 #include "analysis/arraygeometry.h"
 #include "analysis/audioanalysisworker.h"
+#include "analysis/cameraviewcalibrator.h"
 #include "analysis/directionprojection.h"
 #include "analysis/gccphatlocator.h"
+#include "analysis/ispatialresponseprovider.h"
+#include "analysis/livelocalizationworker.h"
 #include "analysis/radix2fft.h"
 #include "analysis/soundsourcelocatorregistry.h"
 #include "analysis/wavefilereader.h"
@@ -220,6 +223,24 @@ QString createSyntheticPlaneWaveFile(const QString &directory,
     return QDir(directory).filePath(settings.baseName + QStringLiteral(".wav"));
 }
 
+QByteArray syntheticPayload(const MultiChannelAudioWindow &window, int frameIndex)
+{
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame; ++sample) {
+        const int sourceSample =
+            (frameIndex * AudioFrameDecoder::SamplesPerFrame + sample)
+            % window.channels.first().size();
+        for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+            const qint32 value = static_cast<qint32>(std::lround(
+                window.channels.at(channel).at(sourceSample) * 4'000'000.0f));
+            qToLittleEndian(value,
+                            reinterpret_cast<uchar *>(payload.data()
+                                + (sample * AudioFrameDecoder::ChannelCount + channel) * 4));
+        }
+    }
+    return payload;
+}
+
 } // namespace
 
 class AudioAnalysisTest : public QObject
@@ -238,15 +259,24 @@ private slots:
     void projectsDirectionIntoConfiguredCameraView();
     void appliesCameraOrientationAndRoll();
     void rejectsInvalidCameraAndDirectionBehindView();
+    void unprojectsVideoPointBackToDirection();
+    void fitsCameraViewFromFourDirectionPoints();
+    void rejectsDegenerateCameraCalibration();
     void transformsRadixTwoFftRoundTrip();
     void locatesSyntheticPlaneWaves();
     void rejectsSilentLocalizationWindow();
     void toleratesOneCorruptedMicrophone();
+    void producesSpatialResponsePeakAtSyntheticDirection();
+    void rejectsInvalidOrSilentSpatialResponse();
     void registersBuiltInLocator();
     void workerLoadsAndAnalyzesPausedFile();
     void workerRejectsStaleAnalysisRequest();
     void workerDisablesLocalizationForPartialRecording();
     void workerShutsDownCleanlyInDedicatedThread();
+    void liveWorkerAccumulatesRealtimeFrames();
+    void liveWorkerClearsAudioWhenInactive();
+    void liveWorkerRejectsStaleCalibrationHistory();
+    void liveWorkerShutsDownInDedicatedThread();
 };
 
 void AudioAnalysisTest::createsCenteredSixByEightGeometry()
@@ -465,6 +495,79 @@ void AudioAnalysisTest::rejectsInvalidCameraAndDirectionBehindView()
     QVERIFY(!behind.inView);
 }
 
+void AudioAnalysisTest::unprojectsVideoPointBackToDirection()
+{
+    CameraViewSettings camera;
+    camera.centerAzimuthDegrees = 18.0;
+    camera.centerElevationDegrees = -7.0;
+    camera.horizontalFovDegrees = 82.0;
+    camera.verticalFovDegrees = 56.0;
+    camera.rollDegrees = 5.0;
+    SoundSourceDirection source;
+    source.azimuthDegrees = 32.0;
+    source.elevationDegrees = 11.0;
+    const ProjectionResult projected = projectDirection(source, camera);
+    QVERIFY(projected.inView);
+
+    const ScanDirection restored = unprojectVideoPoint(projected.normalizedPoint, camera);
+    QVERIFY(std::abs(restored.azimuthDegrees - source.azimuthDegrees) < 1.0e-5);
+    QVERIFY(std::abs(restored.elevationDegrees - source.elevationDegrees) < 1.0e-5);
+}
+
+void AudioAnalysisTest::fitsCameraViewFromFourDirectionPoints()
+{
+    CameraViewSettings expected;
+    expected.centerAzimuthDegrees = 14.0;
+    expected.centerElevationDegrees = -6.0;
+    expected.horizontalFovDegrees = 84.0;
+    expected.verticalFovDegrees = 58.0;
+    expected.rollDegrees = 4.0;
+    QVector<VideoCalibrationSample> samples;
+    for (const ScanDirection direction : {
+             ScanDirection {-25.0, 12.0},
+             ScanDirection {35.0, 10.0},
+             ScanDirection {30.0, -20.0},
+             ScanDirection {-22.0, -18.0}}) {
+        SoundSourceDirection source;
+        source.azimuthDegrees = direction.azimuthDegrees;
+        source.elevationDegrees = direction.elevationDegrees;
+        const ProjectionResult projected = projectDirection(source, expected);
+        QVERIFY(projected.inView);
+        samples.append({direction, projected.normalizedPoint, 0.9, 1.0});
+    }
+
+    CameraViewSettings initial;
+    initial.centerAzimuthDegrees = 5.0;
+    initial.centerElevationDegrees = 2.0;
+    initial.horizontalFovDegrees = 95.0;
+    initial.verticalFovDegrees = 65.0;
+    const CameraViewFitResult fitted = fitCameraView(samples, initial, {1280, 720});
+    QVERIFY2(fitted.valid, qPrintable(fitted.error));
+    QVERIFY(fitted.rmsPixels < 1.0);
+    for (int index = 0; index < samples.size(); ++index) {
+        SoundSourceDirection source;
+        source.azimuthDegrees = samples.at(index).direction.azimuthDegrees;
+        source.elevationDegrees = samples.at(index).direction.elevationDegrees;
+        const ProjectionResult projected = projectDirection(source, fitted.camera);
+        QVERIFY(projected.inFront);
+        QVERIFY(QLineF(projected.normalizedPoint,
+                       samples.at(index).normalizedVideoPoint).length() < 1.0e-3);
+    }
+}
+
+void AudioAnalysisTest::rejectsDegenerateCameraCalibration()
+{
+    QVector<VideoCalibrationSample> samples(4);
+    for (int index = 0; index < samples.size(); ++index) {
+        samples[index].direction = {0.0, 0.0};
+        samples[index].normalizedVideoPoint = {0.5, 0.5};
+        samples[index].confidence = 0.9;
+    }
+    const CameraViewFitResult fitted = fitCameraView(samples, {}, {1280, 720});
+    QVERIFY(!fitted.valid);
+    QVERIFY(!fitted.error.isEmpty());
+}
+
 void AudioAnalysisTest::transformsRadixTwoFftRoundTrip()
 {
     QVector<std::complex<double>> values {
@@ -536,6 +639,64 @@ void AudioAnalysisTest::toleratesOneCorruptedMicrophone()
     QCOMPARE(results.size(), 1);
     QVERIFY(std::abs(results.first().azimuthDegrees - 20.0) < 6.0);
     QVERIFY(std::abs(results.first().elevationDegrees + 10.0) < 6.0);
+}
+
+void AudioAnalysisTest::producesSpatialResponsePeakAtSyntheticDirection()
+{
+    GccPhatLocator locator;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(locator.configure(configuration));
+    auto *provider = dynamic_cast<ISpatialResponseProvider *>(&locator);
+    QVERIFY(provider != nullptr);
+    SpatialResponseGrid grid;
+    grid.columns = 5;
+    grid.rows = 3;
+    for (double elevation : {-20.0, 10.0, 30.0}) {
+        for (double azimuth : {-50.0, -10.0, 25.0, 50.0, 70.0}) {
+            grid.directions.append({azimuth, elevation});
+        }
+    }
+    const SpatialResponseResult response = provider->evaluateSpatialResponse(
+        syntheticPlaneWave(25.0, 10.0), grid);
+    QCOMPARE(response.values.size(), 15);
+    const auto peak = std::max_element(response.values.cbegin(), response.values.cend());
+    QCOMPARE(std::distance(response.values.cbegin(), peak), qsizetype(7));
+    QVERIFY(response.reliability > 0.2);
+    for (float value : response.values) {
+        QVERIFY(std::isfinite(value));
+        QVERIFY(value >= 0.0f);
+    }
+}
+
+void AudioAnalysisTest::rejectsInvalidOrSilentSpatialResponse()
+{
+    GccPhatLocator locator;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(locator.configure(configuration));
+    auto *provider = dynamic_cast<ISpatialResponseProvider *>(&locator);
+    QVERIFY(provider != nullptr);
+    SpatialResponseGrid invalid;
+    invalid.columns = 2;
+    invalid.rows = 2;
+    invalid.directions = {{0.0, 0.0}};
+    QVERIFY(provider->evaluateSpatialResponse(syntheticPlaneWave(0.0, 0.0),
+                                              invalid).values.isEmpty());
+
+    MultiChannelAudioWindow silence;
+    silence.sampleRate = 48000;
+    silence.channels.resize(48);
+    for (QVector<float> &channel : silence.channels) {
+        channel.fill(0.0f, 2048);
+    }
+    SpatialResponseGrid grid;
+    grid.columns = 1;
+    grid.rows = 1;
+    grid.directions = {{0.0, 0.0}};
+    const SpatialResponseResult response = provider->evaluateSpatialResponse(silence, grid);
+    QVERIFY(response.values.isEmpty());
+    QCOMPARE(response.reliability, 0.0);
 }
 
 void AudioAnalysisTest::registersBuiltInLocator()
@@ -614,6 +775,93 @@ void AudioAnalysisTest::workerShutsDownCleanlyInDedicatedThread()
                                       Q_ARG(QString, path),
                                       Q_ARG(quint64, quint64(1))));
     QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 3000);
+    QVERIFY(QMetaObject::invokeMethod(worker, "shutdown", Qt::QueuedConnection));
+    QTRY_COMPARE_WITH_TIMEOUT(stopped.count(), 1, 3000);
+    thread.quit();
+    QVERIFY(thread.wait(3000));
+}
+
+void AudioAnalysisTest::liveWorkerAccumulatesRealtimeFrames()
+{
+    LiveLocalizationWorker worker;
+    LiveLocalizationSettings settings;
+    settings.updateIntervalMs = 20;
+    worker.configure(settings);
+    worker.setActive(true);
+    QSignalSpy located(&worker, &LiveLocalizationWorker::localizationReady);
+    const MultiChannelAudioWindow window = syntheticPlaneWave(22.0, -8.0);
+    for (int frame = 0; frame < 10; ++frame) {
+        worker.pushAdjustedFrame(syntheticPayload(window, frame), 0,
+                                 static_cast<quint32>(frame * 4167));
+    }
+    QCOMPARE(located.count(), 0);
+    worker.pushAdjustedFrame(syntheticPayload(window, 10), 0, 41670);
+    QCOMPARE(located.count(), 1);
+    const LiveLocalizationResult result =
+        qvariant_cast<LiveLocalizationResult>(located.first().at(0));
+    QCOMPARE(result.directions.size(), 1);
+    QVERIFY(std::abs(result.directions.first().azimuthDegrees - 22.0) < 6.0);
+    QVERIFY(std::abs(result.directions.first().elevationDegrees + 8.0) < 6.0);
+}
+
+void AudioAnalysisTest::liveWorkerClearsAudioWhenInactive()
+{
+    LiveLocalizationWorker worker;
+    LiveLocalizationSettings settings;
+    settings.updateIntervalMs = 20;
+    worker.configure(settings);
+    worker.setActive(true);
+    QSignalSpy located(&worker, &LiveLocalizationWorker::localizationReady);
+    QSignalSpy consumed(&worker, &LiveLocalizationWorker::audioFrameConsumed);
+    const MultiChannelAudioWindow window = syntheticPlaneWave(0.0, 0.0);
+    for (int frame = 0; frame < 10; ++frame) {
+        worker.pushAdjustedFrame(syntheticPayload(window, frame), 0,
+                                 static_cast<quint32>(frame * 4167));
+    }
+    worker.setActive(false);
+    worker.pushAdjustedFrame(syntheticPayload(window, 10), 0, 41670);
+    QCOMPARE(located.count(), 0);
+    QCOMPARE(consumed.count(), 11);
+    worker.setActive(true);
+    worker.pushAdjustedFrame(syntheticPayload(window, 11), 0, 45837);
+    QCOMPARE(located.count(), 0);
+    QCOMPARE(consumed.count(), 12);
+}
+
+void AudioAnalysisTest::liveWorkerRejectsStaleCalibrationHistory()
+{
+    LiveLocalizationWorker worker;
+    LiveLocalizationSettings settings;
+    settings.updateIntervalMs = 100;
+    worker.configure(settings);
+    worker.setActive(true);
+    QSignalSpy samples(&worker, &LiveLocalizationWorker::calibrationSampleReady);
+    const MultiChannelAudioWindow window = syntheticPlaneWave(15.0, 5.0);
+    for (int frame = 0; frame < 140; ++frame) {
+        const quint32 timestamp = static_cast<quint32>(frame * 4167);
+        worker.pushAdjustedFrame(syntheticPayload(window, frame), 0, timestamp);
+    }
+    const QByteArray silence(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int frame = 140; frame < 240; ++frame) {
+        const quint32 timestamp = static_cast<quint32>(frame * 4167);
+        worker.pushAdjustedFrame(silence, 0, timestamp);
+    }
+
+    worker.captureStableDirection(7);
+
+    QCOMPARE(samples.count(), 1);
+    QCOMPARE(samples.first().at(0).toULongLong(), quint64(7));
+    QVERIFY(!samples.first().at(1).toBool());
+}
+
+void AudioAnalysisTest::liveWorkerShutsDownInDedicatedThread()
+{
+    auto *worker = new LiveLocalizationWorker;
+    QThread thread;
+    worker->moveToThread(&thread);
+    connect(&thread, &QThread::finished, worker, &QObject::deleteLater);
+    QSignalSpy stopped(worker, &LiveLocalizationWorker::shutdownFinished);
+    thread.start();
     QVERIFY(QMetaObject::invokeMethod(worker, "shutdown", Qt::QueuedConnection));
     QTRY_COMPARE_WITH_TIMEOUT(stopped.count(), 1, 3000);
     thread.quit();

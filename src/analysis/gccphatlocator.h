@@ -1,18 +1,23 @@
 #pragma once
 
 #include "analysis/isoundsourcelocator.h"
+#include "analysis/ispatialresponseprovider.h"
 
 #include <QVector3D>
 
 namespace MicArray {
 
-class GccPhatLocator final : public ISoundSourceLocator
+class GccPhatLocator final : public ISoundSourceLocator,
+                             public ISpatialResponseProvider
 {
 public:
     LocatorDescriptor descriptor() const override;
     bool configure(const LocatorConfiguration &configuration,
                    QString *errorMessage = nullptr) override;
     QVector<SoundSourceDirection> locate(const MultiChannelAudioWindow &window) override;
+    SpatialResponseResult evaluateSpatialResponse(
+        const MultiChannelAudioWindow &window,
+        const SpatialResponseGrid &grid) override;
 
 private:
     struct Pair {

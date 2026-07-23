@@ -112,6 +112,8 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    delete m_liveLocalizationPage;
+    m_liveLocalizationPage = nullptr;
     delete m_audioAnalysisPage;
     m_audioAnalysisPage = nullptr;
     persistGainConfiguration();
@@ -171,6 +173,8 @@ void MainWindow::buildUi()
     m_mainTabs->addTab(buildRecordingPage(), QStringLiteral("音频录制"));
     m_audioAnalysisPage = new AudioAnalysisPage(&m_settings, m_mainTabs);
     m_mainTabs->addTab(m_audioAnalysisPage, QStringLiteral("音频分析"));
+    m_liveLocalizationPage = new LiveLocalizationPage(&m_settings, m_mainTabs);
+    m_mainTabs->addTab(m_liveLocalizationPage, QStringLiteral("声源定位"));
     m_mainTabs->addTab(buildDebugPage(), QStringLiteral("高级帧调试"));
     m_mainTabs->addTab(buildCalibrationPage(), QStringLiteral("阵列校准"));
     root->addWidget(m_mainTabs, 1);
@@ -665,6 +669,8 @@ void MainWindow::connectSignals()
             m_audioPlaybackCheck->setChecked(false);
         }
         m_audioAnalysisPage->setActive(analysisActive);
+        m_liveLocalizationPage->setActive(
+            m_mainTabs->widget(index) == m_liveLocalizationPage);
     });
 
     connect(&m_client, &DeviceClient::stateChanged, this, &MainWindow::updateConnectionState);
@@ -694,8 +700,8 @@ void MainWindow::connectSignals()
             &AudioProcessor::adjustedFrameReady,
             this,
             [this](const QByteArray &payload,
-                   quint32,
-                   quint32,
+                   quint32 timestampSeconds,
+                   quint32 timestampMicros,
                    const GainSnapshot &snapshot) {
                 const bool gainStateChanged = m_gainConfiguration.shifts != snapshot.shifts
                     || m_gainConfiguration.automatic != snapshot.automatic;
@@ -707,6 +713,8 @@ void MainWindow::connectSignals()
                 if (m_audioRecorder.state() == RecordingState::Recording) {
                     m_audioRecorder.enqueueFrame(payload, m_gainConfiguration);
                 }
+                m_liveLocalizationPage->submitAdjustedAudioFrame(
+                    payload, timestampSeconds, timestampMicros);
             },
             Qt::QueuedConnection);
     connect(m_audioProcessor, &AudioProcessor::audioWarning, &m_logger, [this](const QString &message) {
@@ -1083,7 +1091,10 @@ void MainWindow::renderPendingVideoFrame()
         return;
     }
 
-    m_videoLabel->setPixmap(QPixmap::fromImage(m_pendingVideoImage).scaled(m_videoLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    m_videoLabel->setFrame(m_pendingVideoImage);
+    m_liveLocalizationPage->setVideoFrame(m_pendingVideoImage,
+                                          m_pendingVideoTimestampSeconds,
+                                          m_pendingVideoTimestampMicros);
     m_videoStatsLabel->setText(QStringLiteral("视频: %1x%2  %3 FPS  时间戳 %4.%5")
                                    .arg(m_pendingVideoImage.width())
                                    .arg(m_pendingVideoImage.height())

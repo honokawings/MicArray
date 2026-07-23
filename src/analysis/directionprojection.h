@@ -16,5 +16,7 @@ struct ProjectionResult {
 
 ProjectionResult projectDirection(const SoundSourceDirection &direction,
                                   const CameraViewSettings &camera);
+ScanDirection unprojectVideoPoint(const QPointF &normalizedPoint,
+                                  const CameraViewSettings &camera);
 
 } // namespace MicArray

@@ -1,6 +1,8 @@
 #include "ui/arrayheatmapwidget.h"
 #include "ui/audioanalysispage.h"
 #include "ui/directionphotowidget.h"
+#include "ui/livelocalizationview.h"
+#include "ui/livelocalizationpage.h"
 #include "ui/displayformat.h"
 #include "ui/trendchartwidget.h"
 #include "ui/videopreviewwidget.h"
@@ -28,12 +30,16 @@ private slots:
     void audioAnalysisPageProvidesOfflineControls();
     void directionPhotoWidgetMapsDirectionsIntoImageRect();
     void enteringAudioAnalysisDisablesOnlyRealtimePlayback();
+    void liveLocalizationPageKeepsRealtimePlaybackAndSharesVideo();
     void clickingHeatmapCellSelectsChannel();
     void heatmapTracksPeakAndSelectedChannels();
     void heatmapProvidesFortyEightGainControls();
     void movingAutomaticGainSliderSwitchesChannelToManual();
     void heatmapBulkGainCommandsUpdateVisibleState();
     void videoDoubleClickRequestsFullScreen();
+    void videoPreviewReportsActualVideoRectangle();
+    void liveLocalizationViewAcceptsOnlyVideoClicks();
+    void liveLocalizationPageProvidesCalibrationControls();
     void trendChartRetainsSixtySamples();
     void mainWindowProvidesDashboardAndPresentationToggle();
     void heatmapSelectionUpdatesOutputChannel();
@@ -239,6 +245,117 @@ void DashboardTest::videoDoubleClickRequestsFullScreen()
     QSignalSpy spy(&widget, &VideoPreviewWidget::fullScreenRequested);
     QTest::mouseDClick(&widget, Qt::LeftButton, Qt::NoModifier, widget.rect().center());
     QCOMPARE(spy.count(), 1);
+}
+
+void DashboardTest::liveLocalizationPageKeepsRealtimePlaybackAndSharesVideo()
+{
+    MainWindow window;
+    window.show();
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *page = window.findChild<LiveLocalizationPage *>(
+        QStringLiteral("liveLocalizationPage"));
+    auto *playback = window.findChild<QCheckBox *>(
+        QStringLiteral("audioPlaybackCheck"));
+    auto *view = window.findChild<LiveLocalizationView *>(
+        QStringLiteral("liveLocalizationView"));
+    QVERIFY(tabs != nullptr);
+    QVERIFY(page != nullptr);
+    QVERIFY(playback != nullptr);
+    QVERIFY(view != nullptr);
+
+    playback->setChecked(true);
+    tabs->setCurrentWidget(page);
+    QCoreApplication::processEvents();
+    QVERIFY(playback->isChecked());
+
+    const QImage frame(800, 450, QImage::Format_RGB32);
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "showVideoFrame", Qt::DirectConnection,
+        Q_ARG(QImage, frame), Q_ARG(double, 30.0),
+        Q_ARG(quint32, quint32(1)), Q_ARG(quint32, quint32(2))));
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "renderPendingVideoFrame", Qt::DirectConnection));
+    QCOMPARE(view->frame().size(), frame.size());
+    tabs->setCurrentIndex(0);
+    QVERIFY(playback->isChecked());
+    playback->setChecked(false);
+}
+
+void DashboardTest::videoPreviewReportsActualVideoRectangle()
+{
+    VideoPreviewWidget widget;
+    widget.resize(640, 480);
+    widget.setFrame(QImage(1600, 900, QImage::Format_RGB32));
+    const QRectF videoRect = widget.videoRect();
+    QCOMPARE(qRound(videoRect.left()), 0);
+    QCOMPARE(qRound(videoRect.top()), 60);
+    QCOMPARE(qRound(videoRect.width()), 640);
+    QCOMPARE(qRound(videoRect.height()), 360);
+    const std::optional<QPointF> center =
+        widget.normalizedVideoPoint(videoRect.center());
+    QVERIFY(center.has_value());
+    QVERIFY(QLineF(*center, QPointF(0.5, 0.5)).length() < 1.0e-6);
+    QVERIFY(!widget.normalizedVideoPoint(QPointF(320, 20)).has_value());
+}
+
+void DashboardTest::liveLocalizationViewAcceptsOnlyVideoClicks()
+{
+    LiveLocalizationView widget;
+    widget.resize(640, 480);
+    widget.setFrame(QImage(1600, 900, QImage::Format_RGB32));
+    widget.setCalibrationMode(true);
+    widget.show();
+    QSignalSpy clicked(&widget, &LiveLocalizationView::calibrationPointClicked);
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(320, 240));
+    QCOMPARE(clicked.count(), 1);
+    const QPointF point = clicked.first().at(0).toPointF();
+    QVERIFY(QLineF(point, QPointF(0.5, 0.5)).length() < 0.01);
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(320, 20));
+    QCOMPARE(clicked.count(), 1);
+}
+
+void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
+{
+    AppSettings settings;
+    LiveLocalizationSettings stored;
+    stored.displayMode = QStringLiteral("heatmap");
+    stored.camera.centerAzimuthDegrees = 16.0;
+    stored.camera.horizontalFovDegrees = 78.0;
+    settings.saveLiveLocalization(stored);
+    LiveLocalizationPage page(&settings);
+    page.resize(1200, 700);
+    page.show();
+
+    auto *enabled = page.findChild<QCheckBox *>(
+        QStringLiteral("liveLocalizationEnabledCheck"));
+    auto *mode = page.findChild<QComboBox *>(
+        QStringLiteral("liveLocalizationDisplayModeCombo"));
+    auto *view = page.findChild<LiveLocalizationView *>(
+        QStringLiteral("liveLocalizationView"));
+    auto *centerAzimuth = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("liveCameraCenterAzimuthSpin"));
+    auto *horizontalFov = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("liveCameraHorizontalFovSpin"));
+    auto *start = page.findChild<QPushButton *>(
+        QStringLiteral("startFourPointCalibrationButton"));
+    auto *cancel = page.findChild<QPushButton *>(
+        QStringLiteral("cancelFourPointCalibrationButton"));
+    auto *progress = page.findChild<QLabel *>(
+        QStringLiteral("liveCalibrationProgressLabel"));
+    QVERIFY(enabled != nullptr);
+    QVERIFY(mode != nullptr);
+    QVERIFY(view != nullptr);
+    QVERIFY(centerAzimuth != nullptr);
+    QVERIFY(horizontalFov != nullptr);
+    QVERIFY(start != nullptr);
+    QVERIFY(cancel != nullptr);
+    QVERIFY(progress != nullptr);
+    QVERIFY(mode->findData(QStringLiteral("marker")) >= 0);
+    QVERIFY(mode->findData(QStringLiteral("heatmap")) >= 0);
+    QCOMPARE(mode->currentData().toString(), QStringLiteral("heatmap"));
+    QCOMPARE(centerAzimuth->value(), 16.0);
+    QCOMPARE(horizontalFov->value(), 78.0);
+    QVERIFY(!cancel->isEnabled());
 }
 
 void DashboardTest::trendChartRetainsSixtySamples()

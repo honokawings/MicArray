@@ -12,8 +12,10 @@ get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
 set(MICARRAY_SOURCES
     src/analysis/arraygeometry.cpp
     src/analysis/audioanalysisworker.cpp
+    src/analysis/cameraviewcalibrator.cpp
     src/analysis/directionprojection.cpp
     src/analysis/gccphatlocator.cpp
+    src/analysis/livelocalizationworker.cpp
     src/analysis/radix2fft.cpp
     src/analysis/soundsourcelocatorregistry.cpp
     src/analysis/wavefilereader.cpp
@@ -39,6 +41,8 @@ set(MICARRAY_SOURCES
     src/ui/audioanalysispage.cpp
     src/ui/audiowaveformwidget.cpp
     src/ui/directionphotowidget.cpp
+    src/ui/livelocalizationview.cpp
+    src/ui/livelocalizationpage.cpp
     src/ui/displayformat.cpp
     src/ui/mainwindow.cpp
     src/ui/trendchartwidget.cpp
@@ -48,10 +52,13 @@ set(MICARRAY_SOURCES
 set(MICARRAY_HEADERS
     src/analysis/arraygeometry.h
     src/analysis/audioanalysisworker.h
+    src/analysis/cameraviewcalibrator.h
     src/analysis/directionprojection.h
     src/analysis/gccphatlocator.h
     src/analysis/isoundsourcelocator.h
+    src/analysis/ispatialresponseprovider.h
     src/analysis/localizationtypes.h
+    src/analysis/livelocalizationworker.h
     src/analysis/radix2fft.h
     src/analysis/soundsourcelocatorregistry.h
     src/analysis/wavefilereader.h
@@ -77,6 +84,8 @@ set(MICARRAY_HEADERS
     src/ui/audioanalysispage.h
     src/ui/audiowaveformwidget.h
     src/ui/directionphotowidget.h
+    src/ui/livelocalizationview.h
+    src/ui/livelocalizationpage.h
     src/ui/displayformat.h
     src/ui/mainwindow.h
     src/ui/trendchartwidget.h

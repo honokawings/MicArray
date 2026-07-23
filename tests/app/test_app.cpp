@@ -38,6 +38,8 @@ private slots:
     void restoresGainConfigurationAfterSyncFailure();
     void persistsAudioAnalysisSettings();
     void invalidAudioAnalysisFieldsFallBackIndependently();
+    void persistsLiveLocalizationSettings();
+    void invalidLiveLocalizationFieldsFallBackIndependently();
     void healthMonitorClassifiesFreshnessAndCalculatesRates();
     void loggerRotatesAndRetainsBoundedFiles();
     void alertCoalescerSuppressesRepeatedEventsWithinOneSecond();
@@ -478,6 +480,78 @@ void AppTest::invalidAudioAnalysisFieldsFallBackIndependently()
     QCOMPARE(actual.camera.horizontalFovDegrees, defaults.camera.horizontalFovDegrees);
     QCOMPARE(actual.camera.verticalFovDegrees, 75.0);
     QCOMPARE(actual.camera.rollDegrees, 1.0);
+}
+
+void AppTest::persistsLiveLocalizationSettings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    LiveLocalizationSettings expected;
+    expected.enabled = true;
+    expected.displayMode = QStringLiteral("heatmap");
+    expected.heatmapOpacity = 0.55;
+    expected.windowSamples = 4096;
+    expected.updateIntervalMs = 120;
+    expected.soundSpeedMetersPerSecond = 344.0;
+    expected.smoothingFactor = 0.25;
+    expected.confidenceThreshold = 0.6;
+    expected.camera.centerAzimuthDegrees = 12.0;
+    expected.camera.centerElevationDegrees = -4.0;
+    expected.camera.horizontalFovDegrees = 82.0;
+    expected.camera.verticalFovDegrees = 56.0;
+    expected.camera.rollDegrees = 3.0;
+    expected.calibrationRmsPixels = 2.5;
+    expected.calibrationSamples = {
+        {{-20.0, 10.0}, {0.1, 0.2}, 0.8, 1.2},
+        {{20.0, 10.0}, {0.9, 0.2}, 0.82, 1.1},
+        {{20.0, -10.0}, {0.9, 0.8}, 0.9, 1.0},
+        {{-20.0, -10.0}, {0.1, 0.8}, 0.88, 1.3},
+    };
+    {
+        AppSettings settings(path);
+        settings.saveLiveLocalization(expected);
+    }
+
+    AppSettings reloaded(path);
+    QCOMPARE(reloaded.liveLocalization(), expected);
+}
+
+void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("liveLocalization/enabled"), true);
+        raw.setValue(QStringLiteral("liveLocalization/displayMode"), QStringLiteral("glow"));
+        raw.setValue(QStringLiteral("liveLocalization/heatmapOpacity"), 4.0);
+        raw.setValue(QStringLiteral("liveLocalization/windowSamples"), 1000);
+        raw.setValue(QStringLiteral("liveLocalization/updateIntervalMs"), 5);
+        raw.setValue(QStringLiteral("liveLocalization/soundSpeedMetersPerSecond"), 344.0);
+        raw.setValue(QStringLiteral("liveLocalization/smoothingFactor"), -1.0);
+        raw.setValue(QStringLiteral("liveLocalization/confidenceThreshold"), 0.6);
+        raw.setValue(QStringLiteral("liveLocalization/cameraCenterAzimuthDegrees"), 12.0);
+        raw.setValue(QStringLiteral("liveLocalization/cameraHorizontalFovDegrees"), 180.0);
+        raw.setValue(QStringLiteral("liveLocalization/calibrationVersion"), 999);
+        raw.setValue(QStringLiteral("liveLocalization/calibrationCount"), 3);
+    }
+
+    const LiveLocalizationSettings defaults;
+    AppSettings settings(path);
+    const LiveLocalizationSettings actual = settings.liveLocalization();
+    QVERIFY(actual.enabled);
+    QCOMPARE(actual.displayMode, defaults.displayMode);
+    QCOMPARE(actual.heatmapOpacity, defaults.heatmapOpacity);
+    QCOMPARE(actual.windowSamples, defaults.windowSamples);
+    QCOMPARE(actual.updateIntervalMs, defaults.updateIntervalMs);
+    QCOMPARE(actual.soundSpeedMetersPerSecond, 344.0);
+    QCOMPARE(actual.smoothingFactor, defaults.smoothingFactor);
+    QCOMPARE(actual.confidenceThreshold, 0.6);
+    QCOMPARE(actual.camera.centerAzimuthDegrees, 12.0);
+    QCOMPARE(actual.camera.horizontalFovDegrees, defaults.camera.horizontalFovDegrees);
+    QVERIFY(actual.calibrationSamples.isEmpty());
 }
 
 void AppTest::healthMonitorClassifiesFreshnessAndCalculatesRates()
