@@ -1,3 +1,4 @@
+#include "analysis/calibrationprofile.h"
 #include "ui/arrayheatmapwidget.h"
 #include "ui/audioanalysispage.h"
 #include "ui/directionphotowidget.h"
@@ -14,6 +15,8 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QToolButton>
+#include <QTableWidget>
+#include <QTemporaryDir>
 #include <QStandardPaths>
 #include <QtTest>
 
@@ -41,6 +44,7 @@ private slots:
     void videoPreviewReportsActualVideoRectangle();
     void liveLocalizationViewAcceptsOnlyVideoClicks();
     void liveLocalizationPageProvidesCalibrationControls();
+    void liveLocalizationPageLoadsCalibrationProfile();
     void trendChartRetainsSixtySamples();
     void mainWindowProvidesDashboardAndPresentationToggle();
     void heatmapSelectionUpdatesOutputChannel();
@@ -349,6 +353,16 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
         QStringLiteral("cancelFourPointCalibrationButton"));
     auto *progress = page.findChild<QLabel *>(
         QStringLiteral("liveCalibrationProgressLabel"));
+    auto *undo = page.findChild<QPushButton *>(
+        QStringLiteral("undoCalibrationPointButton"));
+    auto *showPoints = page.findChild<QCheckBox *>(
+        QStringLiteral("showCalibrationOverlayCheck"));
+    auto *samples = page.findChild<QTableWidget *>(
+        QStringLiteral("calibrationSamplesTable"));
+    auto *exportButton = page.findChild<QPushButton *>(
+        QStringLiteral("exportVideoCalibrationButton"));
+    auto *importButton = page.findChild<QPushButton *>(
+        QStringLiteral("importVideoCalibrationButton"));
     QVERIFY(enabled != nullptr);
     QVERIFY(mode != nullptr);
     QVERIFY(view != nullptr);
@@ -359,6 +373,14 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     QVERIFY(start != nullptr);
     QVERIFY(cancel != nullptr);
     QVERIFY(progress != nullptr);
+    QVERIFY(undo != nullptr);
+    QVERIFY(showPoints != nullptr);
+    QVERIFY(samples != nullptr);
+    QVERIFY(exportButton != nullptr);
+    QVERIFY(importButton != nullptr);
+    QVERIFY(!undo->isEnabled());
+    QCOMPARE(samples->rowCount(), 4);
+    QCOMPARE(samples->columnCount(), 7);
     QVERIFY(mode->findData(QStringLiteral("marker")) >= 0);
     QVERIFY(mode->findData(QStringLiteral("heatmap")) >= 0);
     QCOMPARE(mode->currentData().toString(), QStringLiteral("heatmap"));
@@ -383,6 +405,45 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     const LiveLocalizationSettings updated = settings.liveLocalization();
     QCOMPARE(updated.heatmapGridColumns, 80);
     QCOMPARE(updated.heatmapGridRows, 45);
+}
+
+void DashboardTest::liveLocalizationPageLoadsCalibrationProfile()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    LiveLocalizationPage page(&settings);
+
+    VideoCalibrationProfile profile;
+    profile.camera.centerAzimuthDegrees = 12.0;
+    profile.camera.centerElevationDegrees = -4.0;
+    profile.camera.horizontalFovDegrees = 82.0;
+    profile.camera.verticalFovDegrees = 56.0;
+    profile.camera.rollDegrees = 3.0;
+    profile.referenceVideoSize = {1920, 1080};
+    profile.calibrationRmsPixels = 2.5;
+    profile.savedAtUtc = QDateTime::currentDateTimeUtc();
+    profile.samples = {
+        {{-20.0, 10.0}, {0.1, 0.2}, 0.8, 1.2},
+        {{20.0, 10.0}, {0.9, 0.2}, 0.82, 1.1},
+        {{20.0, -10.0}, {0.9, 0.8}, 0.9, 1.0},
+        {{-20.0, -10.0}, {0.1, 0.8}, 0.88, 1.3},
+    };
+    const QString path = directory.filePath(QStringLiteral("profile.json"));
+    QString error;
+    QVERIFY2(VideoCalibrationProfileStore::save(path, profile, &error),
+             qPrintable(error));
+    QVERIFY2(page.loadCalibrationProfile(path, &error), qPrintable(error));
+
+    const LiveLocalizationSettings loaded = settings.liveLocalization();
+    QCOMPARE(loaded.camera, profile.camera);
+    QCOMPARE(loaded.calibrationSamples, profile.samples);
+    QCOMPARE(loaded.calibrationReferenceVideoSize, profile.referenceVideoSize);
+    auto *samples = page.findChild<QTableWidget *>(
+        QStringLiteral("calibrationSamplesTable"));
+    QVERIFY(samples != nullptr);
+    QVERIFY(samples->item(0, 1) != nullptr);
+    QVERIFY(samples->item(0, 1)->text() != QStringLiteral("--"));
 }
 
 void DashboardTest::trendChartRetainsSixtySamples()

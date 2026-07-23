@@ -1,5 +1,6 @@
 #include "ui/livelocalizationpage.h"
 
+#include "analysis/calibrationprofile.h"
 #include "analysis/cameraviewcalibrator.h"
 #include "analysis/directionprojection.h"
 #include "analysis/soundsourcelocatorregistry.h"
@@ -8,8 +9,10 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineF>
@@ -19,6 +22,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -157,6 +161,52 @@ void LiveLocalizationPage::submitAdjustedAudioFrame(const QByteArray &payload,
     emit audioFrameRequested(payload, timestampSeconds, timestampMicros);
 }
 
+bool LiveLocalizationPage::saveCalibrationProfile(
+    const QString &filePath, QString *errorMessage) const
+{
+    VideoCalibrationProfile profile;
+    profile.camera = m_settings.camera;
+    profile.referenceVideoSize = m_settings.calibrationReferenceVideoSize;
+    profile.calibrationRmsPixels = m_settings.calibrationRmsPixels;
+    profile.samples = m_settings.calibrationSamples;
+    profile.savedAtUtc = QDateTime::currentDateTimeUtc();
+    return VideoCalibrationProfileStore::save(filePath, profile, errorMessage);
+}
+
+bool LiveLocalizationPage::loadCalibrationProfile(
+    const QString &filePath, QString *errorMessage)
+{
+    VideoCalibrationProfile profile;
+    if (!VideoCalibrationProfileStore::load(filePath, &profile, errorMessage)) {
+        return false;
+    }
+
+    m_calibrating = false;
+    m_workingSamples.clear();
+    m_settings.camera = profile.camera;
+    m_settings.calibrationReferenceVideoSize = profile.referenceVideoSize;
+    m_settings.calibrationRmsPixels = profile.calibrationRmsPixels;
+    m_settings.calibrationSamples = profile.samples;
+    m_savedCamera = profile.camera;
+    m_view->setCalibrationMode(false);
+    m_startCalibrationButton->setEnabled(true);
+    m_cancelCalibrationButton->setEnabled(false);
+    m_undoCalibrationButton->setEnabled(false);
+    applyCameraToUi(profile.camera);
+    m_view->setCameraView(profile.camera);
+    m_rmsLabel->setText(profile.samples.size() == 4
+        ? QStringLiteral("RMS 误差：%1 px").arg(profile.calibrationRmsPixels, 0, 'f', 1)
+        : QStringLiteral("RMS 误差：--"));
+    m_progressLabel->setText(profile.samples.size() == 4
+        ? QStringLiteral("已载入四点校准")
+        : QStringLiteral("已载入视角参数"));
+    persistSettings();
+    rebuildSpatialGrid();
+    refreshCalibrationDetails();
+    refreshCalibrationOverlay();
+    return true;
+}
+
 void LiveLocalizationPage::buildUi()
 {
     auto *root = new QVBoxLayout(this);
@@ -258,11 +308,49 @@ void LiveLocalizationPage::buildUi()
     calibrationButtons->addWidget(m_startCalibrationButton);
     calibrationButtons->addWidget(m_cancelCalibrationButton);
     calibrationButtons->addWidget(m_clearCalibrationButton);
+    m_undoCalibrationButton = new QPushButton(QStringLiteral("撤销上一点"),
+                                              calibrationGroup);
+    m_undoCalibrationButton->setObjectName(
+        QStringLiteral("undoCalibrationPointButton"));
+    m_undoCalibrationButton->setEnabled(false);
+    m_showCalibrationOverlayCheck = new QCheckBox(QStringLiteral("显示已完成校准点"),
+                                                  calibrationGroup);
+    m_showCalibrationOverlayCheck->setObjectName(
+        QStringLiteral("showCalibrationOverlayCheck"));
+    m_calibrationSamplesTable = new QTableWidget(4, 7, calibrationGroup);
+    m_calibrationSamplesTable->setObjectName(
+        QStringLiteral("calibrationSamplesTable"));
+    m_calibrationSamplesTable->setHorizontalHeaderLabels({
+        QStringLiteral("点位"), QStringLiteral("方位角"), QStringLiteral("俯仰角"),
+        QStringLiteral("置信度"), QStringLiteral("角波动"),
+        QStringLiteral("视频 X"), QStringLiteral("视频 Y"),
+    });
+    m_calibrationSamplesTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_calibrationSamplesTable->setSelectionMode(QAbstractItemView::NoSelection);
+    m_calibrationSamplesTable->verticalHeader()->setVisible(false);
+    m_calibrationSamplesTable->horizontalHeader()->setSectionResizeMode(
+        QHeaderView::ResizeToContents);
+    m_calibrationSamplesTable->horizontalHeader()->setStretchLastSection(true);
+    m_exportCalibrationButton = new QPushButton(QStringLiteral("保存校准文件"),
+                                                calibrationGroup);
+    m_exportCalibrationButton->setObjectName(
+        QStringLiteral("exportVideoCalibrationButton"));
+    m_importCalibrationButton = new QPushButton(QStringLiteral("载入校准文件"),
+                                                calibrationGroup);
+    m_importCalibrationButton->setObjectName(
+        QStringLiteral("importVideoCalibrationButton"));
+    auto *profileButtons = new QHBoxLayout;
+    profileButtons->addWidget(m_exportCalibrationButton);
+    profileButtons->addWidget(m_importCalibrationButton);
     m_progressLabel = new QLabel(QStringLiteral("尚未开始校准"), calibrationGroup);
     m_progressLabel->setObjectName(QStringLiteral("liveCalibrationProgressLabel"));
     m_rmsLabel = new QLabel(QStringLiteral("RMS 误差：--"), calibrationGroup);
     m_rmsLabel->setObjectName(QStringLiteral("liveCalibrationRmsLabel"));
     calibrationLayout->addLayout(calibrationButtons);
+    calibrationLayout->addWidget(m_undoCalibrationButton);
+    calibrationLayout->addWidget(m_showCalibrationOverlayCheck);
+    calibrationLayout->addWidget(m_calibrationSamplesTable);
+    calibrationLayout->addLayout(profileButtons);
     calibrationLayout->addWidget(m_progressLabel);
     calibrationLayout->addWidget(m_rmsLabel);
     panelLayout->addWidget(calibrationGroup);
@@ -332,8 +420,41 @@ void LiveLocalizationPage::connectUi()
             this, &LiveLocalizationPage::startCalibration);
     connect(m_cancelCalibrationButton, &QPushButton::clicked,
             this, &LiveLocalizationPage::cancelCalibration);
+    connect(m_undoCalibrationButton, &QPushButton::clicked,
+            this, &LiveLocalizationPage::undoLastCalibrationPoint);
     connect(m_clearCalibrationButton, &QPushButton::clicked,
             this, &LiveLocalizationPage::clearCalibration);
+    connect(m_showCalibrationOverlayCheck, &QCheckBox::toggled,
+            this, [this](bool visible) {
+                m_settings.showCalibrationOverlay = visible;
+                persistSettings();
+                refreshCalibrationOverlay();
+            });
+    connect(m_exportCalibrationButton, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("保存视频校准"),
+            QStringLiteral("video-calibration.json"),
+            QStringLiteral("JSON 校准文件 (*.json)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        QString error;
+        m_statusLabel->setText(saveCalibrationProfile(path, &error)
+            ? QStringLiteral("校准文件已保存：%1").arg(path)
+            : QStringLiteral("保存校准文件失败：%1").arg(error));
+    });
+    connect(m_importCalibrationButton, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("载入视频校准"), {},
+            QStringLiteral("JSON 校准文件 (*.json)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        QString error;
+        m_statusLabel->setText(loadCalibrationProfile(path, &error)
+            ? QStringLiteral("校准文件已载入：%1").arg(path)
+            : QStringLiteral("载入校准文件失败：%1").arg(error));
+    });
     connect(m_restoreSavedButton, &QPushButton::clicked, this, [this] {
         applyCameraToUi(m_savedCamera);
         updateCameraFromUi(false);
@@ -345,6 +466,11 @@ void LiveLocalizationPage::connectUi()
     connect(m_view, &LiveLocalizationView::calibrationPointClicked,
             this, [this](const QPointF &point) {
                 if (!m_calibrating) {
+                    return;
+                }
+                if (m_workingSamples.size() >= 4) {
+                    m_progressLabel->setText(
+                        QStringLiteral("拟合未通过，请先撤销上一点再重新采样"));
                     return;
                 }
                 m_pendingCalibrationPoint = point;
@@ -369,6 +495,7 @@ void LiveLocalizationPage::restoreSettings()
     m_heatmapGridRowsSpin->setValue(m_settings.heatmapGridRows);
     m_updateIntervalSpin->setValue(m_settings.updateIntervalMs);
     m_confidenceSpin->setValue(m_settings.confidenceThreshold);
+    m_showCalibrationOverlayCheck->setChecked(m_settings.showCalibrationOverlay);
     applyCameraToUi(m_settings.camera);
     m_view->setCameraView(m_settings.camera);
     m_view->setDisplayMode(m_settings.displayMode);
@@ -376,6 +503,7 @@ void LiveLocalizationPage::restoreSettings()
     m_rmsLabel->setText(m_settings.calibrationSamples.size() == 4
         ? QStringLiteral("RMS 误差：%1 px").arg(m_settings.calibrationRmsPixels, 0, 'f', 1)
         : QStringLiteral("RMS 误差：--"));
+    refreshCalibrationDetails();
     refreshCalibrationOverlay();
 }
 
@@ -450,6 +578,8 @@ void LiveLocalizationPage::startCalibration()
     m_view->setCalibrationSamples({});
     m_startCalibrationButton->setEnabled(false);
     m_cancelCalibrationButton->setEnabled(true);
+    m_undoCalibrationButton->setEnabled(false);
+    refreshCalibrationDetails();
     m_progressLabel->setText(
         QStringLiteral("第 1/4 点：保持声源稳定并点击视频中的声源位置"));
 }
@@ -461,7 +591,23 @@ void LiveLocalizationPage::cancelCalibration()
     m_view->setCalibrationMode(false);
     m_startCalibrationButton->setEnabled(true);
     m_cancelCalibrationButton->setEnabled(false);
+    m_undoCalibrationButton->setEnabled(false);
     m_progressLabel->setText(QStringLiteral("校准已取消"));
+    refreshCalibrationDetails();
+    refreshCalibrationOverlay();
+}
+
+void LiveLocalizationPage::undoLastCalibrationPoint()
+{
+    if (!m_calibrating || m_workingSamples.isEmpty()) {
+        return;
+    }
+    m_workingSamples.removeLast();
+    m_undoCalibrationButton->setEnabled(!m_workingSamples.isEmpty());
+    m_progressLabel->setText(
+        QStringLiteral("第 %1/4 点：保持声源稳定并点击视频中的声源位置")
+            .arg(m_workingSamples.size() + 1));
+    refreshCalibrationDetails();
     refreshCalibrationOverlay();
 }
 
@@ -469,6 +615,12 @@ void LiveLocalizationPage::clearCalibration()
 {
     m_settings.calibrationSamples.clear();
     m_settings.calibrationRmsPixels = 0.0;
+    m_settings.calibrationReferenceVideoSize = {0, 0};
+    m_settings.showCalibrationOverlay = false;
+    {
+        const QSignalBlocker blocker(m_showCalibrationOverlayCheck);
+        m_showCalibrationOverlayCheck->setChecked(false);
+    }
     m_settings.camera = CameraViewSettings {};
     m_savedCamera = m_settings.camera;
     applyCameraToUi(m_settings.camera);
@@ -476,6 +628,8 @@ void LiveLocalizationPage::clearCalibration()
     persistSettings();
     m_rmsLabel->setText(QStringLiteral("RMS 误差：--"));
     m_progressLabel->setText(QStringLiteral("校准数据已清除"));
+    refreshCalibrationDetails();
+    refreshCalibrationOverlay();
 }
 
 void LiveLocalizationPage::acceptCalibrationDirection(
@@ -483,6 +637,9 @@ void LiveLocalizationPage::acceptCalibrationDirection(
     const QString &message)
 {
     if (!m_calibrating || requestId != m_calibrationRequestId) {
+        return;
+    }
+    if (m_workingSamples.size() >= 4) {
         return;
     }
     if (!valid) {
@@ -505,7 +662,9 @@ void LiveLocalizationPage::acceptCalibrationDirection(
         }
     }
     m_workingSamples.append(sample);
-    m_view->setCalibrationSamples(m_workingSamples);
+    m_undoCalibrationButton->setEnabled(true);
+    refreshCalibrationDetails();
+    refreshCalibrationOverlay();
     if (m_workingSamples.size() == 4) {
         finishCalibration();
     } else {
@@ -527,25 +686,37 @@ void LiveLocalizationPage::finishCalibration()
     m_settings.camera = fitted.camera;
     m_settings.calibrationSamples = m_workingSamples;
     m_settings.calibrationRmsPixels = fitted.rmsPixels;
+    m_settings.calibrationReferenceVideoSize = m_videoFrame.size();
+    m_settings.showCalibrationOverlay = false;
+    {
+        const QSignalBlocker blocker(m_showCalibrationOverlayCheck);
+        m_showCalibrationOverlayCheck->setChecked(false);
+    }
     m_savedCamera = fitted.camera;
     applyCameraToUi(fitted.camera);
     m_view->setCameraView(fitted.camera);
     m_view->setCalibrationMode(false);
     m_startCalibrationButton->setEnabled(true);
     m_cancelCalibrationButton->setEnabled(false);
+    m_undoCalibrationButton->setEnabled(false);
     m_progressLabel->setText(QStringLiteral("四点校准完成"));
     m_rmsLabel->setText(
         QStringLiteral("RMS 误差：%1 px").arg(fitted.rmsPixels, 0, 'f', 1));
     persistSettings();
     rebuildSpatialGrid();
+    refreshCalibrationDetails();
     refreshCalibrationOverlay();
 }
 
 void LiveLocalizationPage::refreshCalibrationOverlay()
 {
     QVector<QPointF> predicted;
-    const QVector<VideoCalibrationSample> &samples = m_calibrating
-        ? m_workingSamples : m_settings.calibrationSamples;
+    QVector<VideoCalibrationSample> samples;
+    if (m_calibrating) {
+        samples = m_workingSamples;
+    } else if (m_settings.showCalibrationOverlay) {
+        samples = m_settings.calibrationSamples;
+    }
     predicted.reserve(samples.size());
     for (const VideoCalibrationSample &sample : samples) {
         SoundSourceDirection direction;
@@ -554,6 +725,41 @@ void LiveLocalizationPage::refreshCalibrationOverlay()
         predicted.append(projectDirection(direction, m_settings.camera).normalizedPoint);
     }
     m_view->setCalibrationSamples(samples, predicted);
+}
+
+void LiveLocalizationPage::refreshCalibrationDetails()
+{
+    const QVector<VideoCalibrationSample> &samples = m_calibrating
+        ? m_workingSamples : m_settings.calibrationSamples;
+    for (int row = 0; row < 4; ++row) {
+        const bool available = row < samples.size();
+        const VideoCalibrationSample sample =
+            available ? samples.at(row) : VideoCalibrationSample {};
+        const QStringList values {
+            QString::number(row + 1),
+            available ? QString::number(sample.direction.azimuthDegrees, 'f', 1)
+                      : QStringLiteral("--"),
+            available ? QString::number(sample.direction.elevationDegrees, 'f', 1)
+                      : QStringLiteral("--"),
+            available ? QString::number(sample.confidence, 'f', 2)
+                      : QStringLiteral("--"),
+            available ? QString::number(sample.angularDeviationDegrees, 'f', 1)
+                      : QStringLiteral("--"),
+            available ? QString::number(sample.normalizedVideoPoint.x(), 'f', 4)
+                      : QStringLiteral("--"),
+            available ? QString::number(sample.normalizedVideoPoint.y(), 'f', 4)
+                      : QStringLiteral("--"),
+        };
+        for (int column = 0; column < values.size(); ++column) {
+            QTableWidgetItem *item = m_calibrationSamplesTable->item(row, column);
+            if (!item) {
+                item = new QTableWidgetItem;
+                item->setTextAlignment(Qt::AlignCenter);
+                m_calibrationSamplesTable->setItem(row, column, item);
+            }
+            item->setText(values.at(column));
+        }
+    }
 }
 
 } // namespace MicArray

@@ -226,6 +226,12 @@ LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettin
     AudioAnalysisSettings cameraValidation;
     cameraValidation.camera = value.camera;
     value.camera = sanitizeAudioAnalysisSettings(cameraValidation).camera;
+    const QSize referenceSize = value.calibrationReferenceVideoSize;
+    if ((referenceSize.width() == 0) != (referenceSize.height() == 0)
+        || referenceSize.width() < 0 || referenceSize.height() < 0
+        || referenceSize.width() > 65535 || referenceSize.height() > 65535) {
+        value.calibrationReferenceVideoSize = defaults.calibrationReferenceVideoSize;
+    }
     if (!std::isfinite(value.calibrationRmsPixels) || value.calibrationRmsPixels < 0.0) {
         value.calibrationRmsPixels = defaults.calibrationRmsPixels;
     }
@@ -505,6 +511,20 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
         m_settings->value(QStringLiteral("liveLocalization/cameraRollDegrees"),
                           defaults.camera.rollDegrees),
         &value.camera.rollDegrees);
+    value.showCalibrationOverlay =
+        m_settings->value(QStringLiteral("liveLocalization/showCalibrationOverlay"),
+                          defaults.showCalibrationOverlay).toBool();
+    int referenceWidth = defaults.calibrationReferenceVideoSize.width();
+    int referenceHeight = defaults.calibrationReferenceVideoSize.height();
+    readIntegerSetting(
+        m_settings->value(QStringLiteral("liveLocalization/calibrationReferenceVideoWidth"),
+                          referenceWidth),
+        &referenceWidth);
+    readIntegerSetting(
+        m_settings->value(QStringLiteral("liveLocalization/calibrationReferenceVideoHeight"),
+                          referenceHeight),
+        &referenceHeight);
+    value.calibrationReferenceVideoSize = {referenceWidth, referenceHeight};
     readFiniteNumberSetting(
         m_settings->value(QStringLiteral("liveLocalization/calibrationRmsPixels"),
                           defaults.calibrationRmsPixels),
@@ -685,6 +705,12 @@ void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsV
                          value.camera.verticalFovDegrees);
     m_settings->setValue(group + QStringLiteral("cameraRollDegrees"),
                          value.camera.rollDegrees);
+    m_settings->setValue(group + QStringLiteral("showCalibrationOverlay"),
+                         value.showCalibrationOverlay);
+    m_settings->setValue(group + QStringLiteral("calibrationReferenceVideoWidth"),
+                         value.calibrationReferenceVideoSize.width());
+    m_settings->setValue(group + QStringLiteral("calibrationReferenceVideoHeight"),
+                         value.calibrationReferenceVideoSize.height());
     m_settings->setValue(group + QStringLiteral("calibrationRmsPixels"),
                          value.calibrationRmsPixels);
     m_settings->setValue(group + QStringLiteral("calibrationVersion"),

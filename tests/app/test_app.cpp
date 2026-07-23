@@ -504,6 +504,8 @@ void AppTest::persistsLiveLocalizationSettings()
     expected.camera.verticalFovDegrees = 56.0;
     expected.camera.rollDegrees = 3.0;
     expected.calibrationRmsPixels = 2.5;
+    expected.showCalibrationOverlay = true;
+    expected.calibrationReferenceVideoSize = {1920, 1080};
     expected.calibrationSamples = {
         {{-20.0, 10.0}, {0.1, 0.2}, 0.8, 1.2},
         {{20.0, 10.0}, {0.9, 0.2}, 0.82, 1.1},
@@ -540,6 +542,8 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
         raw.setValue(QStringLiteral("liveLocalization/cameraHorizontalFovDegrees"), 180.0);
         raw.setValue(QStringLiteral("liveLocalization/calibrationVersion"), 999);
         raw.setValue(QStringLiteral("liveLocalization/calibrationCount"), 3);
+        raw.setValue(QStringLiteral("liveLocalization/calibrationReferenceVideoWidth"), -1);
+        raw.setValue(QStringLiteral("liveLocalization/calibrationReferenceVideoHeight"), 999999);
     }
 
     const LiveLocalizationSettings defaults;
@@ -558,6 +562,8 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
     QCOMPARE(actual.camera.centerAzimuthDegrees, 12.0);
     QCOMPARE(actual.camera.horizontalFovDegrees, defaults.camera.horizontalFovDegrees);
     QVERIFY(actual.calibrationSamples.isEmpty());
+    QCOMPARE(actual.calibrationReferenceVideoSize,
+             defaults.calibrationReferenceVideoSize);
 }
 
 void AppTest::healthMonitorClassifiesFreshnessAndCalculatesRates()

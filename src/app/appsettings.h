@@ -5,6 +5,7 @@
 
 #include <QMetaType>
 #include <QObject>
+#include <QSize>
 #include <QString>
 #include <QVector>
 
@@ -61,6 +62,8 @@ struct LiveLocalizationSettings {
     double smoothingFactor = 0.35;
     double confidenceThreshold = 0.45;
     CameraViewSettings camera;
+    bool showCalibrationOverlay = false;
+    QSize calibrationReferenceVideoSize = {0, 0};
     QVector<VideoCalibrationSample> calibrationSamples;
     double calibrationRmsPixels = 0.0;
     int calibrationVersion = 1;

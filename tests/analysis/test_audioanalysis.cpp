@@ -1,5 +1,6 @@
 #include "analysis/arraygeometry.h"
 #include "analysis/audioanalysisworker.h"
+#include "analysis/calibrationprofile.h"
 #include "analysis/cameraviewcalibrator.h"
 #include "analysis/directionprojection.h"
 #include "analysis/gccphatlocator.h"
@@ -281,6 +282,9 @@ private slots:
     void unprojectsVideoPointBackToDirection();
     void fitsCameraViewFromFourDirectionPoints();
     void rejectsDegenerateCameraCalibration();
+    void roundTripsCompleteCalibrationProfile();
+    void roundTripsCameraOnlyCalibrationProfile();
+    void rejectsInvalidCalibrationProfiles();
     void transformsRadixTwoFftRoundTrip();
     void locatesSyntheticPlaneWaves();
     void rejectsSilentLocalizationWindow();
@@ -588,6 +592,78 @@ void AudioAnalysisTest::rejectsDegenerateCameraCalibration()
     const CameraViewFitResult fitted = fitCameraView(samples, {}, {1280, 720});
     QVERIFY(!fitted.valid);
     QVERIFY(!fitted.error.isEmpty());
+}
+
+void AudioAnalysisTest::roundTripsCompleteCalibrationProfile()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    VideoCalibrationProfile expected;
+    expected.camera.centerAzimuthDegrees = 12.0;
+    expected.camera.centerElevationDegrees = -4.0;
+    expected.camera.horizontalFovDegrees = 82.0;
+    expected.camera.verticalFovDegrees = 56.0;
+    expected.camera.rollDegrees = 3.0;
+    expected.referenceVideoSize = {1920, 1080};
+    expected.calibrationRmsPixels = 2.5;
+    expected.savedAtUtc = QDateTime::fromString(
+        QStringLiteral("2026-07-23T03:04:05.000Z"), Qt::ISODateWithMs);
+    expected.samples = {
+        {{-20.0, 10.0}, {0.1, 0.2}, 0.8, 1.2},
+        {{20.0, 10.0}, {0.9, 0.2}, 0.82, 1.1},
+        {{20.0, -10.0}, {0.9, 0.8}, 0.9, 1.0},
+        {{-20.0, -10.0}, {0.1, 0.8}, 0.88, 1.3},
+    };
+    const QString path = directory.filePath(QStringLiteral("calibration.json"));
+    QString error;
+    QVERIFY2(VideoCalibrationProfileStore::save(path, expected, &error),
+             qPrintable(error));
+
+    VideoCalibrationProfile actual;
+    QVERIFY2(VideoCalibrationProfileStore::load(path, &actual, &error),
+             qPrintable(error));
+    QCOMPARE(actual, expected);
+}
+
+void AudioAnalysisTest::roundTripsCameraOnlyCalibrationProfile()
+{
+    QTemporaryDir directory;
+    VideoCalibrationProfile expected;
+    expected.camera.centerAzimuthDegrees = -15.0;
+    expected.camera.horizontalFovDegrees = 70.0;
+    expected.referenceVideoSize = {0, 0};
+    expected.savedAtUtc = QDateTime::currentDateTimeUtc();
+    const QString path = directory.filePath(QStringLiteral("camera-only.json"));
+    QString error;
+    QVERIFY(VideoCalibrationProfileStore::save(path, expected, &error));
+    VideoCalibrationProfile actual;
+    QVERIFY(VideoCalibrationProfileStore::load(path, &actual, &error));
+    QCOMPARE(actual, expected);
+    QVERIFY(actual.samples.isEmpty());
+}
+
+void AudioAnalysisTest::rejectsInvalidCalibrationProfiles()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("invalid.json"));
+    QString error;
+    VideoCalibrationProfile actual;
+    QVERIFY(!VideoCalibrationProfileStore::load(path, &actual, &error));
+    QVERIFY(!error.isEmpty());
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(R"({"format":"Wrong","version":1})");
+    file.close();
+    QVERIFY(!VideoCalibrationProfileStore::load(path, &actual, &error));
+
+    VideoCalibrationProfile invalid;
+    invalid.camera.horizontalFovDegrees = 180.0;
+    QVERIFY(!VideoCalibrationProfileStore::save(path, invalid, &error));
+    invalid = {};
+    invalid.samples.resize(3);
+    QVERIFY(!VideoCalibrationProfileStore::save(path, invalid, &error));
 }
 
 void AudioAnalysisTest::transformsRadixTwoFftRoundTrip()

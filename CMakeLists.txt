@@ -12,6 +12,7 @@ get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
 set(MICARRAY_SOURCES
     src/analysis/arraygeometry.cpp
     src/analysis/audioanalysisworker.cpp
+    src/analysis/calibrationprofile.cpp
     src/analysis/cameraviewcalibrator.cpp
     src/analysis/directionprojection.cpp
     src/analysis/gccphatlocator.cpp
@@ -52,6 +53,7 @@ set(MICARRAY_SOURCES
 set(MICARRAY_HEADERS
     src/analysis/arraygeometry.h
     src/analysis/audioanalysisworker.h
+    src/analysis/calibrationprofile.h
     src/analysis/cameraviewcalibrator.h
     src/analysis/directionprojection.h
     src/analysis/gccphatlocator.h

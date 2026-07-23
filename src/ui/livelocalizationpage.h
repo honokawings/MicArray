@@ -13,6 +13,7 @@ class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
+class QTableWidget;
 
 namespace MicArray {
 
@@ -33,6 +34,10 @@ public:
     void submitAdjustedAudioFrame(const QByteArray &payload,
                                   quint32 timestampSeconds,
                                   quint32 timestampMicros);
+    bool saveCalibrationProfile(const QString &filePath,
+                                QString *errorMessage = nullptr) const;
+    bool loadCalibrationProfile(const QString &filePath,
+                                QString *errorMessage = nullptr);
 
 signals:
     void configureWorkerRequested(const LiveLocalizationSettings &settings);
@@ -55,6 +60,7 @@ private:
     void rebuildSpatialGrid();
     void startCalibration();
     void cancelCalibration();
+    void undoLastCalibrationPoint();
     void clearCalibration();
     void acceptCalibrationDirection(quint64 requestId,
                                     bool valid,
@@ -62,6 +68,7 @@ private:
                                     const QString &message);
     void finishCalibration();
     void refreshCalibrationOverlay();
+    void refreshCalibrationDetails();
 
     AppSettings *m_settingsStore = nullptr;
     LiveLocalizationSettings m_settings;
@@ -93,7 +100,12 @@ private:
     QDoubleSpinBox *m_rollSpin = nullptr;
     QPushButton *m_startCalibrationButton = nullptr;
     QPushButton *m_cancelCalibrationButton = nullptr;
+    QPushButton *m_undoCalibrationButton = nullptr;
     QPushButton *m_clearCalibrationButton = nullptr;
+    QPushButton *m_exportCalibrationButton = nullptr;
+    QPushButton *m_importCalibrationButton = nullptr;
+    QCheckBox *m_showCalibrationOverlayCheck = nullptr;
+    QTableWidget *m_calibrationSamplesTable = nullptr;
     QPushButton *m_restoreSavedButton = nullptr;
     QPushButton *m_restoreDefaultsButton = nullptr;
     QLabel *m_progressLabel = nullptr;

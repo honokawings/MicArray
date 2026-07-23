@@ -185,6 +185,7 @@ UI 支持有线、无线和自定义 IP/端口。
 - `src/analysis/livelocalizationworker.*`
 - `src/analysis/ispatialresponseprovider.h`
 - `src/analysis/cameraviewcalibrator.*`
+- `src/analysis/calibrationprofile.*`
 - `src/ui/livelocalizationpage.*`
 - `src/ui/livelocalizationview.*`
 
@@ -206,6 +207,8 @@ GCC-PHAT 的实时热力图使用高性能纯 CPU 路径：122 个麦克风对�
 实时视频视角参数与离线静态照片设置相互独立，但使用相同的 `CameraViewSettings`：中心方位角、中心俯仰角、水平视场角、垂直视场角和滚转角均可手动调整，修改后立即更新叠加并自动保存。
 
 四点自动校准要求用户依次把稳定声源放在视频中的四个分散位置并点击声源。每次点击会对最近约一秒的可靠定位结果进行单位方向加权平均；样本不足、置信度低、方向波动大或与已有点过近时拒绝记录。四点完成后通过受限多起点阻尼最小二乘拟合五个物理视角参数，显示点击点、预测点和 RMS 像素误差；拟合失败不会覆盖旧设置。归一化点击坐标和校准结果自动保存，下次启动自动载入，不因视频分辨率或宽高比变化提示重新校准。
+
+校准面板以四行明细显示每个点的方位角、俯仰角、置信度、角度波动和归一化视频坐标，并支持撤销最近一次采样。拟合成功后已完成定位点默认隐藏，可由“显示已完成校准点”手动切换；正在采集的点始终可见。视角参数、参考视频尺寸、RMS 和零个或四个样本可以手动保存为版本化 JSON 文件并载入，载入时严格校验格式、阵列规格和数值范围，失败不会修改当前配置；文件写入采用原子替换。
 
 进入和离开“声源定位”页不会修改实时选中通道播放状态，也不会改变设备连接、视频、录音、增益或控制状态。
 
@@ -512,6 +515,7 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-23 | 四点视频校准精细化 | 分析、UI、配置、测试、文档 | 校准面板新增四点参数明细、撤销上一点和完成点显隐控制；拟合成功后自动隐藏完成点；新增包含视角、参考视频尺寸、RMS 和样本的严格版本化 JSON 校准文件，支持手动原子保存和无损载入。 | C++ 目标完整构建、Python 工具测试、模拟服务端自检、`git diff --check` |
 | 2026-07-23 | SRP-PHAT CPU 性能优化 | 分析、线程、构建、测试、文档 | 将 122 个阵元对聚合为 4 类基线，复用定位窗口的 PHAT 结果，缓存方向转向索引并使用专用 CPU 线程池并行扫描；当前开发机 Release 下 `640×360` 实时链路中位约 70 ms，热力图阶段约 1 ms。 | Release `test_analysis::evaluatesMaximumSpatialGridWithinCpuBudget`、Debug 全量 `ctest`、Python 测试、模拟服务端自检、`git diff --check` |
 | 2026-07-23 | 实时热力图网格增强 | 分析、UI、配置、测试、文档 | 实时空间响应方向网格支持独立调整宽度和高度，默认 `64×36`、最大 `640×360`，配置自动保存并在启动时恢复。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check` |
 | 2026-07-23 | 实时声源定位与视频校准 | 分析、音频、视频、UI、配置、测试、文档 | 新增独立线程的实时 48 通道声源定位页面，支持纯标记和真实 SRP-PHAT 热力图；复用实时视频并提供四点稳定声源采集，自动拟合且允许手动调整五个视频视角参数，校准结果本地持久化；页面切换保持实时播放及其他设备功能不变。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
