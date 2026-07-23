@@ -53,6 +53,8 @@ struct LiveLocalizationSettings {
     QString locatorId = QStringLiteral("gcc-phat-tdoa");
     QString displayMode = QStringLiteral("marker");
     double heatmapOpacity = 0.45;
+    int heatmapGridColumns = 64;
+    int heatmapGridRows = 36;
     int windowSamples = 2048;
     int updateIntervalMs = 100;
     double soundSpeedMetersPerSecond = 343.0;

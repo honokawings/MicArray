@@ -197,6 +197,12 @@ LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettin
         || value.heatmapOpacity < 0.0 || value.heatmapOpacity > 1.0) {
         value.heatmapOpacity = defaults.heatmapOpacity;
     }
+    if (value.heatmapGridColumns < 16 || value.heatmapGridColumns > 640) {
+        value.heatmapGridColumns = defaults.heatmapGridColumns;
+    }
+    if (value.heatmapGridRows < 9 || value.heatmapGridRows > 360) {
+        value.heatmapGridRows = defaults.heatmapGridRows;
+    }
     if (value.windowSamples < 512 || value.windowSamples > 8192
         || !isPowerOfTwo(value.windowSamples)) {
         value.windowSamples = defaults.windowSamples;
@@ -453,6 +459,14 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
         m_settings->value(QStringLiteral("liveLocalization/heatmapOpacity"),
                           defaults.heatmapOpacity),
         &value.heatmapOpacity);
+    readIntegerSetting(
+        m_settings->value(QStringLiteral("liveLocalization/heatmapGridColumns"),
+                          defaults.heatmapGridColumns),
+        &value.heatmapGridColumns);
+    readIntegerSetting(
+        m_settings->value(QStringLiteral("liveLocalization/heatmapGridRows"),
+                          defaults.heatmapGridRows),
+        &value.heatmapGridRows);
     readIntegerSetting(m_settings->value(QStringLiteral("liveLocalization/windowSamples"),
                                          defaults.windowSamples),
                        &value.windowSamples);
@@ -650,6 +664,10 @@ void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsV
     m_settings->setValue(group + QStringLiteral("locatorId"), value.locatorId);
     m_settings->setValue(group + QStringLiteral("displayMode"), value.displayMode);
     m_settings->setValue(group + QStringLiteral("heatmapOpacity"), value.heatmapOpacity);
+    m_settings->setValue(group + QStringLiteral("heatmapGridColumns"),
+                         value.heatmapGridColumns);
+    m_settings->setValue(group + QStringLiteral("heatmapGridRows"),
+                         value.heatmapGridRows);
     m_settings->setValue(group + QStringLiteral("windowSamples"), value.windowSamples);
     m_settings->setValue(group + QStringLiteral("updateIntervalMs"), value.updateIntervalMs);
     m_settings->setValue(group + QStringLiteral("soundSpeedMetersPerSecond"),

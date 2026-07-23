@@ -64,6 +64,9 @@ void LiveLocalizationWorker::setSpatialGrid(const SpatialResponseGrid &grid,
     m_grid = grid;
     m_gridGeneration = generation;
     m_smoothedSpatialValues.clear();
+    if (m_spatialProvider != nullptr) {
+        m_spatialProvider->prepareSpatialResponseGrid(m_grid);
+    }
 }
 
 void LiveLocalizationWorker::pushAdjustedFrame(const QByteArray &payload,
@@ -212,6 +215,9 @@ bool LiveLocalizationWorker::rebuildLocator()
         return false;
     }
     emit spatialResponseSupported(m_spatialProvider != nullptr);
+    if (m_spatialProvider != nullptr && !m_grid.directions.isEmpty()) {
+        m_spatialProvider->prepareSpatialResponseGrid(m_grid);
+    }
     return true;
 }
 

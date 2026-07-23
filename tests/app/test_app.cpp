@@ -491,6 +491,8 @@ void AppTest::persistsLiveLocalizationSettings()
     expected.enabled = true;
     expected.displayMode = QStringLiteral("heatmap");
     expected.heatmapOpacity = 0.55;
+    expected.heatmapGridColumns = 320;
+    expected.heatmapGridRows = 180;
     expected.windowSamples = 4096;
     expected.updateIntervalMs = 120;
     expected.soundSpeedMetersPerSecond = 344.0;
@@ -527,6 +529,8 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
         raw.setValue(QStringLiteral("liveLocalization/enabled"), true);
         raw.setValue(QStringLiteral("liveLocalization/displayMode"), QStringLiteral("glow"));
         raw.setValue(QStringLiteral("liveLocalization/heatmapOpacity"), 4.0);
+        raw.setValue(QStringLiteral("liveLocalization/heatmapGridColumns"), 641);
+        raw.setValue(QStringLiteral("liveLocalization/heatmapGridRows"), 8);
         raw.setValue(QStringLiteral("liveLocalization/windowSamples"), 1000);
         raw.setValue(QStringLiteral("liveLocalization/updateIntervalMs"), 5);
         raw.setValue(QStringLiteral("liveLocalization/soundSpeedMetersPerSecond"), 344.0);
@@ -544,6 +548,8 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
     QVERIFY(actual.enabled);
     QCOMPARE(actual.displayMode, defaults.displayMode);
     QCOMPARE(actual.heatmapOpacity, defaults.heatmapOpacity);
+    QCOMPARE(actual.heatmapGridColumns, defaults.heatmapGridColumns);
+    QCOMPARE(actual.heatmapGridRows, defaults.heatmapGridRows);
     QCOMPARE(actual.windowSamples, defaults.windowSamples);
     QCOMPARE(actual.updateIntervalMs, defaults.updateIntervalMs);
     QCOMPARE(actual.soundSpeedMetersPerSecond, 344.0);

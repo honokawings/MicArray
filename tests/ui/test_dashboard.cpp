@@ -12,6 +12,7 @@
 #include <QCheckBox>
 #include <QScrollArea>
 #include <QSlider>
+#include <QSpinBox>
 #include <QToolButton>
 #include <QStandardPaths>
 #include <QtTest>
@@ -319,6 +320,8 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     AppSettings settings;
     LiveLocalizationSettings stored;
     stored.displayMode = QStringLiteral("heatmap");
+    stored.heatmapGridColumns = 320;
+    stored.heatmapGridRows = 180;
     stored.camera.centerAzimuthDegrees = 16.0;
     stored.camera.horizontalFovDegrees = 78.0;
     settings.saveLiveLocalization(stored);
@@ -332,6 +335,10 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
         QStringLiteral("liveLocalizationDisplayModeCombo"));
     auto *view = page.findChild<LiveLocalizationView *>(
         QStringLiteral("liveLocalizationView"));
+    auto *gridColumns = page.findChild<QSpinBox *>(
+        QStringLiteral("liveHeatmapGridColumnsSpin"));
+    auto *gridRows = page.findChild<QSpinBox *>(
+        QStringLiteral("liveHeatmapGridRowsSpin"));
     auto *centerAzimuth = page.findChild<QDoubleSpinBox *>(
         QStringLiteral("liveCameraCenterAzimuthSpin"));
     auto *horizontalFov = page.findChild<QDoubleSpinBox *>(
@@ -345,6 +352,8 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     QVERIFY(enabled != nullptr);
     QVERIFY(mode != nullptr);
     QVERIFY(view != nullptr);
+    QVERIFY(gridColumns != nullptr);
+    QVERIFY(gridRows != nullptr);
     QVERIFY(centerAzimuth != nullptr);
     QVERIFY(horizontalFov != nullptr);
     QVERIFY(start != nullptr);
@@ -353,9 +362,27 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     QVERIFY(mode->findData(QStringLiteral("marker")) >= 0);
     QVERIFY(mode->findData(QStringLiteral("heatmap")) >= 0);
     QCOMPARE(mode->currentData().toString(), QStringLiteral("heatmap"));
+    QCOMPARE(gridColumns->value(), 320);
+    QCOMPARE(gridColumns->maximum(), 640);
+    QCOMPARE(gridRows->value(), 180);
+    QCOMPARE(gridRows->maximum(), 360);
     QCOMPARE(centerAzimuth->value(), 16.0);
     QCOMPARE(horizontalFov->value(), 78.0);
     QVERIFY(!cancel->isEnabled());
+
+    QSignalSpy gridChanged(&page, &LiveLocalizationPage::spatialGridRequested);
+    page.setVideoFrame(QImage(1280, 720, QImage::Format_RGB32), 0, 0);
+    gridColumns->setValue(80);
+    gridRows->setValue(45);
+    QVERIFY(gridChanged.count() >= 3);
+    const SpatialResponseGrid grid =
+        qvariant_cast<SpatialResponseGrid>(gridChanged.last().at(0));
+    QCOMPARE(grid.columns, 80);
+    QCOMPARE(grid.rows, 45);
+    QCOMPARE(grid.directions.size(), 80 * 45);
+    const LiveLocalizationSettings updated = settings.liveLocalization();
+    QCOMPARE(updated.heatmapGridColumns, 80);
+    QCOMPARE(updated.heatmapGridRows, 45);
 }
 
 void DashboardTest::trendChartRetainsSixtySamples()

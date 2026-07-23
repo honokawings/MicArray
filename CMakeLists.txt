@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 project(MicArray LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Test Charts)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Test Charts Concurrent)
 
 qt_standard_project_setup()
 
@@ -112,6 +112,7 @@ target_link_libraries(MicArray
         Qt::Network
         Qt::Multimedia
         Qt::Charts
+        Qt::Concurrent
 )
 
 enable_testing()
@@ -129,6 +130,7 @@ target_link_libraries(MicArrayCore
         Qt::Network
         Qt::Multimedia
         Qt::Charts
+        Qt::Concurrent
 )
 
 qt_add_executable(test_protocol

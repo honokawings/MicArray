@@ -191,6 +191,13 @@ void LiveLocalizationPage::buildUi()
     m_heatmapOpacitySpin->setObjectName(QStringLiteral("liveHeatmapOpacitySpin"));
     m_heatmapOpacitySpin->setRange(0.0, 1.0);
     m_heatmapOpacitySpin->setSingleStep(0.05);
+    m_heatmapGridColumnsSpin = new QSpinBox(localizationGroup);
+    m_heatmapGridColumnsSpin->setObjectName(
+        QStringLiteral("liveHeatmapGridColumnsSpin"));
+    m_heatmapGridColumnsSpin->setRange(16, 640);
+    m_heatmapGridRowsSpin = new QSpinBox(localizationGroup);
+    m_heatmapGridRowsSpin->setObjectName(QStringLiteral("liveHeatmapGridRowsSpin"));
+    m_heatmapGridRowsSpin->setRange(9, 360);
     m_updateIntervalSpin = new QSpinBox(localizationGroup);
     m_updateIntervalSpin->setRange(20, 1000);
     m_updateIntervalSpin->setSuffix(QStringLiteral(" ms"));
@@ -201,6 +208,8 @@ void LiveLocalizationPage::buildUi()
     localizationLayout->addRow(QStringLiteral("算法"), m_locatorCombo);
     localizationLayout->addRow(QStringLiteral("显示方式"), m_displayModeCombo);
     localizationLayout->addRow(QStringLiteral("热力图透明度"), m_heatmapOpacitySpin);
+    localizationLayout->addRow(QStringLiteral("方向网格宽度"), m_heatmapGridColumnsSpin);
+    localizationLayout->addRow(QStringLiteral("方向网格高度"), m_heatmapGridRowsSpin);
     localizationLayout->addRow(QStringLiteral("更新周期"), m_updateIntervalSpin);
     localizationLayout->addRow(QStringLiteral("置信度门限"), m_confidenceSpin);
     panelLayout->addWidget(localizationGroup);
@@ -292,6 +301,16 @@ void LiveLocalizationPage::connectUi()
         m_view->setHeatmapOpacity(value);
         persistSettings();
     });
+    connect(m_heatmapGridColumnsSpin, &QSpinBox::valueChanged, this, [this](int value) {
+        m_settings.heatmapGridColumns = value;
+        rebuildSpatialGrid();
+        persistSettings();
+    });
+    connect(m_heatmapGridRowsSpin, &QSpinBox::valueChanged, this, [this](int value) {
+        m_settings.heatmapGridRows = value;
+        rebuildSpatialGrid();
+        persistSettings();
+    });
     connect(m_updateIntervalSpin, &QSpinBox::valueChanged, this, [this](int value) {
         m_settings.updateIntervalMs = value;
         emit configureWorkerRequested(m_settings);
@@ -346,6 +365,8 @@ void LiveLocalizationPage::restoreSettings()
     m_displayModeCombo->setCurrentIndex(
         std::max(0, m_displayModeCombo->findData(m_settings.displayMode)));
     m_heatmapOpacitySpin->setValue(m_settings.heatmapOpacity);
+    m_heatmapGridColumnsSpin->setValue(m_settings.heatmapGridColumns);
+    m_heatmapGridRowsSpin->setValue(m_settings.heatmapGridRows);
     m_updateIntervalSpin->setValue(m_settings.updateIntervalMs);
     m_confidenceSpin->setValue(m_settings.confidenceThreshold);
     applyCameraToUi(m_settings.camera);
@@ -401,9 +422,8 @@ void LiveLocalizationPage::rebuildSpatialGrid()
         return;
     }
     SpatialResponseGrid grid;
-    grid.columns = 64;
-    grid.rows = std::clamp(
-        qRound(64.0 * m_videoFrame.height() / m_videoFrame.width()), 24, 64);
+    grid.columns = m_settings.heatmapGridColumns;
+    grid.rows = m_settings.heatmapGridRows;
     grid.directions.reserve(grid.columns * grid.rows);
     for (int row = 0; row < grid.rows; ++row) {
         for (int column = 0; column < grid.columns; ++column) {

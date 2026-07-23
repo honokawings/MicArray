@@ -9,6 +9,10 @@ class ISpatialResponseProvider
 public:
     virtual ~ISpatialResponseProvider() = default;
 
+    virtual void prepareSpatialResponseGrid(const SpatialResponseGrid &)
+    {
+    }
+
     virtual SpatialResponseResult evaluateSpatialResponse(
         const MultiChannelAudioWindow &window,
         const SpatialResponseGrid &grid) = 0;

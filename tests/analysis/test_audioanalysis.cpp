@@ -12,6 +12,7 @@
 #include "media/multichannelwavwriter.h"
 
 #include <QFile>
+#include <QElapsedTimer>
 #include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QThread>
@@ -241,6 +242,24 @@ QByteArray syntheticPayload(const MultiChannelAudioWindow &window, int frameInde
     return payload;
 }
 
+SpatialResponseGrid fieldOfViewGrid(int columns, int rows)
+{
+    SpatialResponseGrid grid;
+    grid.columns = columns;
+    grid.rows = rows;
+    grid.directions.reserve(columns * rows);
+    for (int row = 0; row < rows; ++row) {
+        const double elevation = 30.0
+            - 60.0 * (row + 0.5) / static_cast<double>(rows);
+        for (int column = 0; column < columns; ++column) {
+            const double azimuth = -60.0
+                + 120.0 * (column + 0.5) / static_cast<double>(columns);
+            grid.directions.append({azimuth, elevation});
+        }
+    }
+    return grid;
+}
+
 } // namespace
 
 class AudioAnalysisTest : public QObject
@@ -268,6 +287,9 @@ private slots:
     void toleratesOneCorruptedMicrophone();
     void producesSpatialResponsePeakAtSyntheticDirection();
     void rejectsInvalidOrSilentSpatialResponse();
+    void spatialResponseMatchesAfterLocalizationWarmup();
+    void preparedSpatialGridInvalidatesForChangedDirections();
+    void evaluatesMaximumSpatialGridWithinCpuBudget();
     void registersBuiltInLocator();
     void workerLoadsAndAnalyzesPausedFile();
     void workerRejectsStaleAnalysisRequest();
@@ -697,6 +719,114 @@ void AudioAnalysisTest::rejectsInvalidOrSilentSpatialResponse()
     const SpatialResponseResult response = provider->evaluateSpatialResponse(silence, grid);
     QVERIFY(response.values.isEmpty());
     QCOMPARE(response.reliability, 0.0);
+}
+
+void AudioAnalysisTest::spatialResponseMatchesAfterLocalizationWarmup()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    const MultiChannelAudioWindow window = syntheticPlaneWave(18.0, -7.0);
+    const SpatialResponseGrid grid = fieldOfViewGrid(32, 18);
+
+    GccPhatLocator direct;
+    GccPhatLocator warmed;
+    QVERIFY(direct.configure(configuration));
+    QVERIFY(warmed.configure(configuration));
+    const SpatialResponseResult directResult =
+        direct.evaluateSpatialResponse(window, grid);
+    QVERIFY(!warmed.locate(window).isEmpty());
+    const SpatialResponseResult warmedResult =
+        warmed.evaluateSpatialResponse(window, grid);
+
+    QCOMPARE(warmedResult.values.size(), directResult.values.size());
+    for (int index = 0; index < directResult.values.size(); ++index) {
+        QVERIFY(std::abs(warmedResult.values.at(index)
+                         - directResult.values.at(index)) < 1.0e-6f);
+    }
+    QVERIFY(std::abs(warmedResult.reliability - directResult.reliability) < 1.0e-9);
+}
+
+void AudioAnalysisTest::preparedSpatialGridInvalidatesForChangedDirections()
+{
+    GccPhatLocator locator;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(locator.configure(configuration));
+    const MultiChannelAudioWindow window = syntheticPlaneWave(25.0, 10.0);
+
+    SpatialResponseGrid first;
+    first.columns = 2;
+    first.rows = 1;
+    first.directions = {{-40.0, 10.0}, {25.0, 10.0}};
+    locator.prepareSpatialResponseGrid(first);
+    const SpatialResponseResult firstResponse =
+        locator.evaluateSpatialResponse(window, first);
+    QCOMPARE(std::distance(firstResponse.values.cbegin(),
+                           std::max_element(firstResponse.values.cbegin(),
+                                            firstResponse.values.cend())),
+             qsizetype(1));
+
+    SpatialResponseGrid changed = first;
+    std::reverse(changed.directions.begin(), changed.directions.end());
+    locator.prepareSpatialResponseGrid(changed);
+    const SpatialResponseResult changedResponse =
+        locator.evaluateSpatialResponse(window, changed);
+    QCOMPARE(std::distance(changedResponse.values.cbegin(),
+                           std::max_element(changedResponse.values.cbegin(),
+                                            changedResponse.values.cend())),
+             qsizetype(0));
+}
+
+void AudioAnalysisTest::evaluatesMaximumSpatialGridWithinCpuBudget()
+{
+    GccPhatLocator locator;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(locator.configure(configuration));
+    MultiChannelAudioWindow window = syntheticPlaneWave(20.0, 5.0);
+    const SpatialResponseGrid grid = fieldOfViewGrid(640, 360);
+    locator.prepareSpatialResponseGrid(grid);
+    locator.evaluateSpatialResponse(window, grid);
+    QVector<qint64> measurements;
+    QVector<qint64> localizationMeasurements;
+    QVector<qint64> heatmapMeasurements;
+    SpatialResponseResult response;
+    for (int iteration = 0; iteration < 5; ++iteration) {
+        ++window.centerSample;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        const QVector<SoundSourceDirection> directions = locator.locate(window);
+        localizationMeasurements.append(elapsed.restart());
+        response = locator.evaluateSpatialResponse(window, grid);
+        heatmapMeasurements.append(elapsed.elapsed());
+        measurements.append(localizationMeasurements.last()
+                            + heatmapMeasurements.last());
+        QVERIFY(!directions.isEmpty());
+    }
+    std::sort(measurements.begin(), measurements.end());
+    std::sort(localizationMeasurements.begin(), localizationMeasurements.end());
+    std::sort(heatmapMeasurements.begin(), heatmapMeasurements.end());
+    const qint64 milliseconds = measurements.at(measurements.size() / 2);
+    qInfo().noquote() << "640x360 SRP-PHAT median:" << milliseconds
+                      << "ms; localization:"
+                      << localizationMeasurements.at(
+                             localizationMeasurements.size() / 2)
+                      << "ms; heatmap:"
+                      << heatmapMeasurements.at(heatmapMeasurements.size() / 2)
+                      << "ms; samples:" << measurements;
+
+    QCOMPARE(response.values.size(), 640 * 360);
+    QVERIFY(std::all_of(response.values.cbegin(), response.values.cend(),
+                        [](float value) { return std::isfinite(value); }));
+#ifdef NDEBUG
+    constexpr qint64 BudgetMilliseconds = 100;
+#else
+    constexpr qint64 BudgetMilliseconds = 1000;
+#endif
+    QVERIFY2(milliseconds <= BudgetMilliseconds,
+             qPrintable(QStringLiteral("640x360 took %1 ms, budget is %2 ms")
+                            .arg(milliseconds)
+                            .arg(BudgetMilliseconds)));
 }
 
 void AudioAnalysisTest::registersBuiltInLocator()

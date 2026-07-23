@@ -82,6 +82,8 @@ private:
     QComboBox *m_locatorCombo = nullptr;
     QComboBox *m_displayModeCombo = nullptr;
     QDoubleSpinBox *m_heatmapOpacitySpin = nullptr;
+    QSpinBox *m_heatmapGridColumnsSpin = nullptr;
+    QSpinBox *m_heatmapGridRowsSpin = nullptr;
     QSpinBox *m_updateIntervalSpin = nullptr;
     QDoubleSpinBox *m_confidenceSpin = nullptr;
     QDoubleSpinBox *m_centerAzimuthSpin = nullptr;

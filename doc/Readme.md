@@ -195,6 +195,12 @@ UI 支持有线、无线和自定义 IP/端口。
 - 纯标记：把 GCC-PHAT 主声源方位角、俯仰角和置信度投影为视频准星。
 - 真实空间响应热力图：按当前视频视角反投影约 64×36 个方向，使用 SRP-PHAT 理论阵元时延累加真实互相关响应，再以半透明色阶覆盖视频。
 
+热力图方向网格的宽度和高度可在页面中独立调整，默认 `64×36`，宽度范围为 `16..640`、高度范围为 `9..360`，修改后立即重建并自动保存。更高分辨率会显著增加 SRP-PHAT 计算量，但分析仍由独立线程和有界音频旁路隔离，不会阻塞实时播放、录音或视频。
+
+GCC-PHAT 的实时热力图使用高性能纯 CPU 路径：122 个麦克风对按相同阵元间距聚合为 4 类基线，在频域累加 PHAT 互谱后只生成 4 条聚合互相关；定位阶段生成的聚合结果由同一音频窗口的热力图直接复用。视频视角或网格变化时会预计算全部方向的环形相关索引与插值系数，逐帧扫描不再计算三角函数，并由专用 Qt 线程池按连续行块并行执行，保留一个逻辑核心给主音视频链路。
+
+当前开发机 Release 实测中，`640×360` 网格的“定位 + 热力图”连续五帧中位耗时由优化前单独热力图约 254 ms 降至约 70 ms，其中复用定位缓存后的热力图阶段约 1 ms，达到约 14 FPS。实际结果会随 CPU、采样窗口和系统负载变化。
+
 空间响应采用可选源码级接口 `ISpatialResponseProvider`。只实现 `ISoundSourceLocator` 的自定义算法仍可用于纯标记；同时实现空间响应接口后即可启用真实热力图，不需要修改页面。
 
 实时视频视角参数与离线静态照片设置相互独立，但使用相同的 `CameraViewSettings`：中心方位角、中心俯仰角、水平视场角、垂直视场角和滚转角均可手动调整，修改后立即更新叠加并自动保存。
@@ -506,6 +512,8 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-23 | SRP-PHAT CPU 性能优化 | 分析、线程、构建、测试、文档 | 将 122 个阵元对聚合为 4 类基线，复用定位窗口的 PHAT 结果，缓存方向转向索引并使用专用 CPU 线程池并行扫描；当前开发机 Release 下 `640×360` 实时链路中位约 70 ms，热力图阶段约 1 ms。 | Release `test_analysis::evaluatesMaximumSpatialGridWithinCpuBudget`、Debug 全量 `ctest`、Python 测试、模拟服务端自检、`git diff --check` |
+| 2026-07-23 | 实时热力图网格增强 | 分析、UI、配置、测试、文档 | 实时空间响应方向网格支持独立调整宽度和高度，默认 `64×36`、最大 `640×360`，配置自动保存并在启动时恢复。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check` |
 | 2026-07-23 | 实时声源定位与视频校准 | 分析、音频、视频、UI、配置、测试、文档 | 新增独立线程的实时 48 通道声源定位页面，支持纯标记和真实 SRP-PHAT 热力图；复用实时视频并提供四点稳定声源采集，自动拟合且允许手动调整五个视频视角参数，校准结果本地持久化；页面切换保持实时播放及其他设备功能不变。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-23 | 离线分析与声源定位 | 分析、音频、UI、配置、测试、文档 | 新增独立线程的多通道 WAV 读取与单通道播放、6×8/5 cm 阵列 GCC-PHAT 声源定位、可扩展源码级定位器接口，以及按自定义相机视角在静态照片上动态标记方向；进入分析页仅关闭实时通道播放。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-21 | 音频播放缺陷修复 | 音频、UI、测试、文档 | 修复进入“音视频融合”页面后音频播放异常：阵列热力图原先绕过 33 ms 渲染定时器，以约 240 FPS 对 48 个控件重复设置动态样式，且音频线程每处理一帧都等待 UI 回调后才接收下一帧。现将可视化严格限制到渲染节拍、隐藏页面跳过绘制、热力图颜色改为低开销调色板更新，并采用最多 16 帧在途和 32 帧有界等待的连续音频投递机制。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check` |

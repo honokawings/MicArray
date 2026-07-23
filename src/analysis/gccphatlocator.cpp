@@ -3,6 +3,10 @@
 #include "analysis/arraygeometry.h"
 #include "analysis/radix2fft.h"
 
+#include <QThread>
+#include <QThreadPool>
+#include <QtConcurrent>
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -31,6 +35,8 @@ double correlationAtLag(const QVector<std::complex<double>> &correlation, int la
 }
 
 } // namespace
+
+GccPhatLocator::~GccPhatLocator() = default;
 
 LocatorDescriptor GccPhatLocator::descriptor() const
 {
@@ -68,6 +74,7 @@ bool GccPhatLocator::configure(const LocatorConfiguration &configuration,
     m_configured = true;
     m_hasSmoothedDirection = false;
     rebuildPairs();
+    invalidateSpatialCaches();
     if (errorMessage != nullptr) {
         errorMessage->clear();
     }
@@ -129,6 +136,8 @@ QVector<SoundSourceDirection> GccPhatLocator::locate(const MultiChannelAudioWind
     QVector<Measurement> measurements;
     measurements.reserve(m_pairs.size());
     QVector<std::complex<double>> crossSpectrum(fftSize);
+    QVector<QVector<std::complex<double>>> groupSpectra(
+        m_baselineGroups.size(), QVector<std::complex<double>>(fftSize));
     for (const Pair &pair : m_pairs) {
         for (int bin = 0; bin < fftSize; ++bin) {
             const std::complex<double> cross = spectra.at(pair.first).at(bin)
@@ -137,6 +146,7 @@ QVector<SoundSourceDirection> GccPhatLocator::locate(const MultiChannelAudioWind
             crossSpectrum[bin] = magnitude > 1.0e-12
                 ? cross / magnitude
                 : std::complex<double>(0.0, 0.0);
+            groupSpectra[pair.groupIndex][bin] += crossSpectrum[bin];
         }
         QVector<std::complex<double>> correlation = crossSpectrum;
         if (!Radix2Fft::transform(&correlation, true)) {
@@ -199,6 +209,9 @@ QVector<SoundSourceDirection> GccPhatLocator::locate(const MultiChannelAudioWind
                              weight,
                              weight,
                              0.0});
+    }
+    if (!finalizeGroupedCorrelations(&groupSpectra, window)) {
+        return {};
     }
 
     if (measurements.size() < 8) {
@@ -272,6 +285,63 @@ QVector<SoundSourceDirection> GccPhatLocator::locate(const MultiChannelAudioWind
     return {result};
 }
 
+void GccPhatLocator::prepareSpatialResponseGrid(const SpatialResponseGrid &grid)
+{
+    m_preparedGrid = {};
+    m_steeringGroups.clear();
+    m_validSteeringDirections.clear();
+    if (!m_configured
+        || grid.columns <= 0 || grid.rows <= 0
+        || grid.directions.size() != grid.columns * grid.rows
+        || m_baselineGroups.isEmpty()) {
+        return;
+    }
+
+    const int fftSize = m_configuration.windowSamples * 2;
+    m_steeringGroups.resize(m_baselineGroups.size());
+    for (SteeringGroup &steering : m_steeringGroups) {
+        steering.firstIndices.resize(grid.directions.size());
+        steering.secondIndices.resize(grid.directions.size());
+        steering.fractions.resize(grid.directions.size());
+    }
+    m_validSteeringDirections.fill(0, grid.directions.size());
+    const auto wrappedIndex = [fftSize](int lag) {
+        const int wrapped = lag % fftSize;
+        return static_cast<quint16>(wrapped >= 0 ? wrapped : wrapped + fftSize);
+    };
+    for (int directionIndex = 0; directionIndex < grid.directions.size();
+         ++directionIndex) {
+        const ScanDirection &scan = grid.directions.at(directionIndex);
+        if (!std::isfinite(scan.azimuthDegrees)
+            || !std::isfinite(scan.elevationDegrees)) {
+            m_steeringGroups.clear();
+            m_validSteeringDirections.clear();
+            return;
+        }
+        const QVector3D direction = directionFromAngles(scan.azimuthDegrees,
+                                                        scan.elevationDegrees);
+        if (direction.z() < 0.0f) {
+            continue;
+        }
+        m_validSteeringDirections[directionIndex] = 1;
+        for (int groupIndex = 0; groupIndex < m_baselineGroups.size();
+             ++groupIndex) {
+            const BaselineGroup &group = m_baselineGroups.at(groupIndex);
+            const double lag = (group.dxMeters * direction.x()
+                                + group.dyMeters * direction.y())
+                / m_configuration.soundSpeedMetersPerSecond
+                * m_configuration.sampleRate;
+            const int lower = static_cast<int>(std::floor(lag));
+            SteeringGroup &steering = m_steeringGroups[groupIndex];
+            steering.firstIndices[directionIndex] = wrappedIndex(lower);
+            steering.secondIndices[directionIndex] = wrappedIndex(lower + 1);
+            steering.fractions[directionIndex] =
+                static_cast<float>(lag - lower);
+        }
+    }
+    m_preparedGrid = grid;
+}
+
 SpatialResponseResult GccPhatLocator::evaluateSpatialResponse(
     const MultiChannelAudioWindow &window,
     const SpatialResponseGrid &grid)
@@ -284,116 +354,237 @@ SpatialResponseResult GccPhatLocator::evaluateSpatialResponse(
         || window.channels.size() != m_configuration.microphones.size()) {
         return result;
     }
-    const int sampleCount = m_configuration.windowSamples;
-    const int fftSize = sampleCount * 2;
-    QVector<QVector<std::complex<double>>> spectra;
-    spectra.reserve(window.channels.size());
-    double totalEnergy = 0.0;
     for (const QVector<float> &channel : window.channels) {
-        if (channel.size() != sampleCount) {
+        if (channel.size() != m_configuration.windowSamples) {
             return {};
         }
-        double mean = std::accumulate(channel.cbegin(), channel.cend(), 0.0)
-            / sampleCount;
-        QVector<std::complex<double>> spectrum(fftSize);
-        double energy = 0.0;
-        for (int sample = 0; sample < sampleCount; ++sample) {
-            if (!std::isfinite(channel.at(sample))) {
-                return {};
-            }
-            const double centered = channel.at(sample) - mean;
-            const double hann = 0.5 - 0.5
-                * std::cos(2.0 * std::numbers::pi * sample / (sampleCount - 1));
-            const double value = centered * hann;
-            spectrum[sample] = {value, 0.0};
-            energy += value * value;
-        }
-        totalEnergy += energy / sampleCount;
-        if (!Radix2Fft::transform(&spectrum, false)) {
-            return {};
-        }
-        spectra.append(std::move(spectrum));
     }
-    totalEnergy /= window.channels.size();
-    if (!std::isfinite(totalEnergy) || totalEnergy < 1.0e-10) {
+    if (!preparedGridMatches(grid)) {
+        prepareSpatialResponseGrid(grid);
+    }
+    if (m_steeringGroups.size() != m_baselineGroups.size()
+        || m_validSteeringDirections.size() != grid.directions.size()) {
         return {};
     }
 
-    QVector<QVector<std::complex<double>>> correlations;
-    correlations.reserve(m_pairs.size());
-    QVector<std::complex<double>> crossSpectrum(fftSize);
+    if (!groupedCorrelationCacheMatches(window)) {
+        const int sampleCount = m_configuration.windowSamples;
+        const int fftSize = sampleCount * 2;
+        QVector<QVector<std::complex<double>>> spectra;
+        spectra.reserve(window.channels.size());
+        double totalEnergy = 0.0;
+        for (const QVector<float> &channel : window.channels) {
+            const double mean =
+                std::accumulate(channel.cbegin(), channel.cend(), 0.0)
+                / sampleCount;
+            QVector<std::complex<double>> spectrum(fftSize);
+            double energy = 0.0;
+            for (int sample = 0; sample < sampleCount; ++sample) {
+                if (!std::isfinite(channel.at(sample))) {
+                    return {};
+                }
+                const double centered = channel.at(sample) - mean;
+                const double hann = 0.5 - 0.5
+                    * std::cos(2.0 * std::numbers::pi * sample
+                               / (sampleCount - 1));
+                const double value = centered * hann;
+                spectrum[sample] = {value, 0.0};
+                energy += value * value;
+            }
+            totalEnergy += energy / sampleCount;
+            if (!Radix2Fft::transform(&spectrum, false)) {
+                return {};
+            }
+            spectra.append(std::move(spectrum));
+        }
+        totalEnergy /= window.channels.size();
+        if (!std::isfinite(totalEnergy) || totalEnergy < 1.0e-10
+            || !buildGroupedCorrelations(spectra, window)) {
+            return {};
+        }
+    }
+
+    result.values.fill(0.0f, grid.directions.size());
+    float *output = result.values.data();
+    const auto scanRange = [this, output](const QPair<int, int> &range) {
+        for (int directionIndex = range.first;
+             directionIndex < range.second; ++directionIndex) {
+            if (m_validSteeringDirections.at(directionIndex) == 0) {
+                continue;
+            }
+            double response = 0.0;
+            for (int groupIndex = 0; groupIndex < m_steeringGroups.size();
+                 ++groupIndex) {
+                const SteeringGroup &steering = m_steeringGroups.at(groupIndex);
+                const auto &correlation = m_groupedCorrelations.at(groupIndex);
+                const float fraction = steering.fractions.at(directionIndex);
+                response += correlation.at(
+                                steering.firstIndices.at(directionIndex)).real()
+                        * (1.0f - fraction)
+                    + correlation.at(
+                                steering.secondIndices.at(directionIndex)).real()
+                        * fraction;
+            }
+            output[directionIndex] = static_cast<float>(response);
+        }
+    };
+    if (grid.directions.size() < 4096 || grid.rows < 2) {
+        scanRange({0, grid.directions.size()});
+    } else {
+        QThreadPool *pool = spatialThreadPool();
+        const int chunkCount = std::min(pool->maxThreadCount(), grid.rows);
+        const int rowsPerChunk = (grid.rows + chunkCount - 1) / chunkCount;
+        QVector<QPair<int, int>> ranges;
+        ranges.reserve(chunkCount);
+        for (int firstRow = 0; firstRow < grid.rows;
+             firstRow += rowsPerChunk) {
+            ranges.append({firstRow * grid.columns,
+                           std::min(grid.rows, firstRow + rowsPerChunk)
+                               * grid.columns});
+        }
+        QtConcurrent::blockingMap(pool, ranges, scanRange);
+    }
+
+    const auto [minimum, maximum] = std::minmax_element(
+        result.values.cbegin(), result.values.cend());
+    if (minimum == result.values.cend()
+        || !std::isfinite(*minimum) || !std::isfinite(*maximum)
+        || *maximum - *minimum <= 1.0e-12f) {
+        result.values.clear();
+        return result;
+    }
+    const float minimumValue = *minimum;
+    const float maximumValue = *maximum;
+    const double range = static_cast<double>(maximumValue) - minimumValue;
+    double sum = 0.0;
+    for (float &value : result.values) {
+        value = static_cast<float>((value - minimumValue) / range);
+        sum += value;
+    }
+    const double mean = sum / result.values.size();
+    result.reliability = std::clamp(1.0 - mean, 0.0, 1.0);
+    return result;
+}
+
+void GccPhatLocator::invalidateSpatialCaches()
+{
+    m_groupedCorrelations.clear();
+    m_steeringGroups.clear();
+    m_validSteeringDirections.clear();
+    m_preparedGrid = {};
+    m_cachedCenterSample = std::numeric_limits<qint64>::min();
+    m_cachedSampleRate = 0;
+    m_cachedSampleCount = 0;
+    m_cachedChannelCount = 0;
+    m_cachedFirstChannelData = nullptr;
+}
+
+bool GccPhatLocator::finalizeGroupedCorrelations(
+    QVector<QVector<std::complex<double>>> *groupSpectra,
+    const MultiChannelAudioWindow &window)
+{
+    if (groupSpectra == nullptr
+        || groupSpectra->size() != m_baselineGroups.size()) {
+        return false;
+    }
+    for (QVector<std::complex<double>> &correlation : *groupSpectra) {
+        if (!Radix2Fft::transform(&correlation, true)) {
+            return false;
+        }
+    }
+    m_groupedCorrelations = std::move(*groupSpectra);
+    m_cachedCenterSample = window.centerSample;
+    m_cachedSampleRate = window.sampleRate;
+    m_cachedSampleCount = m_configuration.windowSamples;
+    m_cachedChannelCount = window.channels.size();
+    m_cachedFirstChannelData = window.channels.isEmpty()
+        ? nullptr : window.channels.first().constData();
+    return true;
+}
+
+bool GccPhatLocator::buildGroupedCorrelations(
+    const QVector<QVector<std::complex<double>>> &spectra,
+    const MultiChannelAudioWindow &window)
+{
+    if (spectra.size() != m_configuration.microphones.size()) {
+        return false;
+    }
+    const int fftSize = m_configuration.windowSamples * 2;
+    QVector<QVector<std::complex<double>>> groupSpectra(
+        m_baselineGroups.size(), QVector<std::complex<double>>(fftSize));
     for (const Pair &pair : m_pairs) {
+        QVector<std::complex<double>> &group = groupSpectra[pair.groupIndex];
         for (int bin = 0; bin < fftSize; ++bin) {
             const std::complex<double> cross = spectra.at(pair.first).at(bin)
                 * std::conj(spectra.at(pair.second).at(bin));
             const double magnitude = std::abs(cross);
-            crossSpectrum[bin] = magnitude > 1.0e-12
-                ? cross / magnitude : std::complex<double>(0.0, 0.0);
+            if (magnitude > 1.0e-12) {
+                group[bin] += cross / magnitude;
+            }
         }
-        QVector<std::complex<double>> correlation = crossSpectrum;
-        if (!Radix2Fft::transform(&correlation, true)) {
-            return {};
-        }
-        correlations.append(std::move(correlation));
     }
+    return finalizeGroupedCorrelations(&groupSpectra, window);
+}
 
-    result.values.fill(0.0f, grid.directions.size());
-    for (int directionIndex = 0; directionIndex < grid.directions.size();
-         ++directionIndex) {
-        const ScanDirection &scan = grid.directions.at(directionIndex);
-        if (!std::isfinite(scan.azimuthDegrees)
-            || !std::isfinite(scan.elevationDegrees)) {
-            return {};
-        }
-        const QVector3D direction = directionFromAngles(scan.azimuthDegrees,
-                                                        scan.elevationDegrees);
-        if (direction.z() < 0.0f) {
-            continue;
-        }
-        double response = 0.0;
-        for (int pairIndex = 0; pairIndex < m_pairs.size(); ++pairIndex) {
-            const Pair &pair = m_pairs.at(pairIndex);
-            const double lag = (pair.dxMeters * direction.x()
-                                + pair.dyMeters * direction.y())
-                / m_configuration.soundSpeedMetersPerSecond
-                * m_configuration.sampleRate;
-            const int lower = static_cast<int>(std::floor(lag));
-            const double fraction = lag - lower;
-            const QVector<std::complex<double>> &correlation =
-                correlations.at(pairIndex);
-            const double interpolated =
-                correlationAtLag(correlation, lower) * (1.0 - fraction)
-                + correlationAtLag(correlation, lower + 1) * fraction;
-            response += std::max(0.0, interpolated);
-        }
-        result.values[directionIndex] = static_cast<float>(
-            response / std::max<qsizetype>(1, m_pairs.size()));
+bool GccPhatLocator::groupedCorrelationCacheMatches(
+    const MultiChannelAudioWindow &window) const
+{
+    return m_groupedCorrelations.size() == m_baselineGroups.size()
+        && !window.channels.isEmpty()
+        && m_cachedCenterSample == window.centerSample
+        && m_cachedSampleRate == window.sampleRate
+        && m_cachedSampleCount == m_configuration.windowSamples
+        && m_cachedChannelCount == window.channels.size()
+        && m_cachedFirstChannelData == window.channels.first().constData();
+}
+
+bool GccPhatLocator::preparedGridMatches(const SpatialResponseGrid &grid) const
+{
+    return m_preparedGrid.columns == grid.columns
+        && m_preparedGrid.rows == grid.rows
+        && m_preparedGrid.directions == grid.directions;
+}
+
+QThreadPool *GccPhatLocator::spatialThreadPool()
+{
+    if (m_spatialThreadPool == nullptr) {
+        m_spatialThreadPool = std::make_unique<QThreadPool>();
+        m_spatialThreadPool->setObjectName(
+            QStringLiteral("SrpPhatSpatialResponsePool"));
+        m_spatialThreadPool->setMaxThreadCount(
+            std::max(1, QThread::idealThreadCount() - 1));
+        m_spatialThreadPool->setExpiryTimeout(30'000);
     }
-    const auto peak = std::max_element(result.values.cbegin(), result.values.cend());
-    if (peak == result.values.cend() || *peak <= 1.0e-12f) {
-        result.values.clear();
-        return result;
-    }
-    const double mean = std::accumulate(result.values.cbegin(),
-                                        result.values.cend(), 0.0)
-        / result.values.size();
-    result.reliability = std::clamp(
-        (static_cast<double>(*peak) - mean)
-            / (static_cast<double>(*peak) + 1.0e-12),
-        0.0, 1.0);
-    return result;
+    return m_spatialThreadPool.get();
 }
 
 void GccPhatLocator::rebuildPairs()
 {
     m_pairs.clear();
+    m_baselineGroups.clear();
     const auto appendPair = [this](int first, int second) {
         const MicrophonePosition &a = m_configuration.microphones.at(first);
         const MicrophonePosition &b = m_configuration.microphones.at(second);
         const double dx = a.xMeters - b.xMeters;
         const double dy = a.yMeters - b.yMeters;
         const double dz = a.zMeters - b.zMeters;
-        m_pairs.append({first, second, dx, dy, std::sqrt(dx * dx + dy * dy + dz * dz)});
+        int groupIndex = -1;
+        for (int index = 0; index < m_baselineGroups.size(); ++index) {
+            const BaselineGroup &group = m_baselineGroups.at(index);
+            if (std::abs(group.dxMeters - dx) < 1.0e-12
+                && std::abs(group.dyMeters - dy) < 1.0e-12) {
+                groupIndex = index;
+                break;
+            }
+        }
+        if (groupIndex < 0) {
+            groupIndex = m_baselineGroups.size();
+            m_baselineGroups.append({dx, dy, 0});
+        }
+        ++m_baselineGroups[groupIndex].pairCount;
+        m_pairs.append({first, second, dx, dy,
+                        std::sqrt(dx * dx + dy * dy + dz * dz),
+                        groupIndex});
     };
     for (int row = 0; row < 6; ++row) {
         for (int offset : {1, 4}) {
