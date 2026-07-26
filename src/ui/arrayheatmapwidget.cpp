@@ -28,7 +28,8 @@ ArrayHeatmapWidget::ArrayHeatmapWidget(QWidget *parent)
     auto *headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(0, 0, 0, 0);
     auto *title = new QLabel(QStringLiteral("48 通道阵列幅值与移位增益"), header);
-    title->setStyleSheet(QStringLiteral("font-weight:600; color:#d9e7f5;"));
+    title->setObjectName(QStringLiteral("arrayHeatmapTitle"));
+    title->setStyleSheet(QStringLiteral("font-weight:600;"));
     headerLayout->addWidget(title);
     headerLayout->addStretch();
     auto createCommand = [header, headerLayout](const QString &text, const QString &name) {

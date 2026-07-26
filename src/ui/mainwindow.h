@@ -9,7 +9,6 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPlainTextEdit>
-#include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -36,7 +35,12 @@
 #include "ui/livelocalizationpage.h"
 #include "ui/audiowaveformwidget.h"
 #include "ui/trendchartwidget.h"
+#include "ui/uitheme.h"
 #include "ui/videopreviewwidget.h"
+
+class QKeyEvent;
+class QSplitter;
+class QVBoxLayout;
 
 namespace MicArray {
 
@@ -47,6 +51,10 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
     void applyPreset(int index);
@@ -109,6 +117,8 @@ private:
     void setRecordingConfigurationEnabled(bool enabled);
     void updateRecordingStartEnabled();
     void persistGainConfiguration();
+    void applyUiTheme(UiTheme theme, bool persist);
+    void setPresentationMode(bool enabled);
 
     AppSettings m_settings;
     Logger m_logger;
@@ -148,6 +158,11 @@ private:
     QVector<qint16> m_lastSentControlValues;
     bool m_hasLastSentControl = false;
     bool m_presentationMode = false;
+    QList<int> m_monitorSplitterSizes;
+    QList<int> m_presentationVideoSplitterSizes;
+    QRect m_mainWindowGeometryBeforePresentation;
+    Qt::WindowStates m_mainWindowStateBeforePresentation = Qt::WindowNoState;
+    UiTheme m_uiTheme = UiTheme::Light;
     AlertCoalescer m_alertCoalescer;
     QStringList m_alertEvents;
     QDateTime m_sessionStartedAt;
@@ -164,14 +179,25 @@ private:
     QLabel *m_rateLabel = nullptr;
     QLabel *m_errorLabel = nullptr;
     QLabel *m_healthLabel = nullptr;
+    QWidget *m_statusBand = nullptr;
+    QWidget *m_monitorLeftPanel = nullptr;
+    QWidget *m_monitorCenterPanel = nullptr;
+    QWidget *m_monitorDiagnosticsPanel = nullptr;
+    QWidget *m_presentationDiagnosticsPanel = nullptr;
+    QWidget *m_presentationWindow = nullptr;
+    QSplitter *m_monitorSplitter = nullptr;
+    QSplitter *m_presentationVideoSplitter = nullptr;
+    QVBoxLayout *m_rootLayout = nullptr;
+    QVBoxLayout *m_presentationLayout = nullptr;
     VideoPreviewWidget *m_videoLabel = nullptr;
     AudioWaveformWidget *m_waveformWidget = nullptr;
     ArrayHeatmapWidget *m_dashboardHeatmap = nullptr;
     TrendChartWidget *m_trendChart = nullptr;
     QLabel *m_videoStatsLabel = nullptr;
     QLabel *m_audioStatsLabel = nullptr;
-    QProgressBar *m_audioLevel = nullptr;
     QLabel *m_protocolStatsLabel = nullptr;
+    QLabel *m_presentationProtocolStatsLabel = nullptr;
+    QLabel *m_presentationTransitionOverlay = nullptr;
     QLabel *m_debugMetaLabel = nullptr;
     QLabel *m_debugHeadLabel = nullptr;
     QLabel *m_debugTailLabel = nullptr;
@@ -204,6 +230,7 @@ private:
     AudioAnalysisPage *m_audioAnalysisPage = nullptr;
     LiveLocalizationPage *m_liveLocalizationPage = nullptr;
     QPushButton *m_presentationButton = nullptr;
+    QToolButton *m_themeButton = nullptr;
     QPushButton *m_exportDiagnosticsButton = nullptr;
     QLineEdit *m_recordingDirectoryEdit = nullptr;
     QPushButton *m_recordingBrowseButton = nullptr;

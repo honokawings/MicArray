@@ -47,6 +47,7 @@ set(MICARRAY_SOURCES
     src/ui/displayformat.cpp
     src/ui/mainwindow.cpp
     src/ui/trendchartwidget.cpp
+    src/ui/uitheme.cpp
     src/ui/videopreviewwidget.cpp
 )
 
@@ -91,6 +92,7 @@ set(MICARRAY_HEADERS
     src/ui/displayformat.h
     src/ui/mainwindow.h
     src/ui/trendchartwidget.h
+    src/ui/uitheme.h
     src/ui/videopreviewwidget.h
 )
 

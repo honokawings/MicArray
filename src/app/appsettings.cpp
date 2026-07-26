@@ -371,6 +371,17 @@ VideoSettings AppSettings::video() const
     return value;
 }
 
+AppearanceSettings AppSettings::appearance() const
+{
+    AppearanceSettings value;
+    const QString theme = m_settings->value(QStringLiteral("appearance/theme"),
+                                             value.theme).toString().trimmed().toLower();
+    if (theme == QStringLiteral("light") || theme == QStringLiteral("dark")) {
+        value.theme = theme;
+    }
+    return value;
+}
+
 AudioAnalysisSettings AppSettings::audioAnalysis() const
 {
     const AudioAnalysisSettings defaults;
@@ -646,6 +657,16 @@ void AppSettings::saveVideo(const VideoSettings &settingsValue)
 {
     const QString format = settingsValue.format.toUpper();
     m_settings->setValue(QStringLiteral("video/format"), format == QStringLiteral("JPEG") ? QStringLiteral("JPG") : format);
+}
+
+void AppSettings::saveAppearance(const AppearanceSettings &settingsValue)
+{
+    const QString theme = settingsValue.theme.trimmed().toLower();
+    m_settings->setValue(QStringLiteral("appearance/theme"),
+                         theme == QStringLiteral("dark")
+                             ? QStringLiteral("dark")
+                             : QStringLiteral("light"));
+    m_settings->sync();
 }
 
 void AppSettings::saveAudioAnalysis(const AudioAnalysisSettings &settingsValue)

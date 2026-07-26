@@ -6,24 +6,84 @@
 #include "ui/livelocalizationpage.h"
 #include "ui/displayformat.h"
 #include "ui/trendchartwidget.h"
+#include "ui/uitheme.h"
 #include "ui/videopreviewwidget.h"
 #include "ui/mainwindow.h"
 
 #include <QSignalSpy>
 #include <QCheckBox>
+#include <QProgressBar>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
+#include <QSplitter>
+#include <QStatusBar>
 #include <QToolButton>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QStandardPaths>
+#include <QWindow>
 #include <QtTest>
 
 #include <limits>
 #include <algorithm>
 
 using namespace MicArray;
+
+namespace {
+
+class ParentChangeOverlayProbe : public QObject
+{
+public:
+    explicit ParentChangeOverlayProbe(QWidget *overlay)
+        : m_overlay(overlay)
+    {
+    }
+
+    bool sawParentChange = false;
+    bool overlayVisibleDuringParentChange = false;
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::ParentChange) {
+            sawParentChange = true;
+            overlayVisibleDuringParentChange = m_overlay->isVisible();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QWidget *m_overlay;
+};
+
+int contrastingPixelCount(const QImage &image)
+{
+    const QColor background = image.pixelColor(8, image.height() / 2);
+    const QRect textArea(image.width() / 6,
+                         image.height() / 5,
+                         image.width() * 2 / 3,
+                         image.height() * 3 / 5);
+    int contrastingPixels = 0;
+    for (int y = textArea.top(); y <= textArea.bottom(); ++y) {
+        for (int x = textArea.left(); x <= textArea.right(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            const int redDifference = pixel.red() - background.red();
+            const int greenDifference = pixel.green() - background.green();
+            const int blueDifference = pixel.blue() - background.blue();
+            if (redDifference * redDifference
+                    + greenDifference * greenDifference
+                    + blueDifference * blueDifference
+                > 45 * 45) {
+                ++contrastingPixels;
+            }
+        }
+    }
+    return contrastingPixels;
+}
+
+} // namespace
 
 class DashboardTest : public QObject
 {
@@ -37,6 +97,7 @@ private slots:
     void liveLocalizationPageKeepsRealtimePlaybackAndSharesVideo();
     void clickingHeatmapCellSelectsChannel();
     void heatmapTracksPeakAndSelectedChannels();
+    void themeStylePreservesHeatmapAmplitudeColors();
     void heatmapProvidesFortyEightGainControls();
     void movingAutomaticGainSliderSwitchesChannelToManual();
     void heatmapBulkGainCommandsUpdateVisibleState();
@@ -46,13 +107,20 @@ private slots:
     void liveLocalizationPageProvidesCalibrationControls();
     void liveLocalizationPageLoadsCalibrationProfile();
     void trendChartRetainsSixtySamples();
+    void uiThemeProvidesDistinctPalettesAndBulbIcons();
+    void arrayHeatmapTitleFollowsApplicationTheme();
     void mainWindowProvidesDashboardAndPresentationToggle();
+    void presentationRestoresMaximizedWindow();
+    void presentationVideoSplitterRemainsStableAfterDiagnosticsUpdates();
+    void mainWindowTogglesAndPersistsTheme();
     void heatmapSelectionUpdatesOutputChannel();
     void applyingPresetMarksValuesPendingWithoutSending();
     void formatsAdaptiveByteUnits();
     void mainWindowUsesAudioVideoFusionTitle();
+    void monitorStatisticsDoNotContainUnlabelledProgressBar();
     void debugPageProvidesPostTailPreview();
     void recordingPageProvidesChannelSelectionAndCommands();
+    void lightThemeRecordingChannelsUseDedicatedReadableStyle();
     void recordingDefaultsToPersistedOutputChannel();
     void recordingPageFitsAtMinimumSupportedSize();
     void gainGridFitsAtMinimumSupportedSize();
@@ -163,6 +231,29 @@ void DashboardTest::heatmapTracksPeakAndSelectedChannels()
     QCOMPARE(widget.peakChannel(), 23);
     QVERIFY(widget.findChild<QToolButton *>(QStringLiteral("channelCell_5"))->property("selected").toBool());
     QVERIFY(widget.findChild<QToolButton *>(QStringLiteral("channelCell_23"))->property("peak").toBool());
+}
+
+void DashboardTest::themeStylePreservesHeatmapAmplitudeColors()
+{
+    QApplication::setPalette(paletteForUiTheme(UiTheme::Dark));
+    qApp->setStyleSheet(styleSheetForUiTheme(UiTheme::Dark));
+
+    ArrayHeatmapWidget widget;
+    widget.resize(780, 760);
+    QVector<double> amplitudes(48, 0.0);
+    amplitudes[0] = 1.0;
+    widget.setAmplitudes(amplitudes, 1);
+    widget.show();
+    QCoreApplication::processEvents();
+
+    auto *cell = widget.findChild<QToolButton *>(QStringLiteral("channelCell_0"));
+    QVERIFY(cell != nullptr);
+    const QColor expected = cell->palette().color(QPalette::Button);
+    const QColor rendered = cell->grab().toImage().pixelColor(10, 10);
+    QCOMPARE(rendered, expected);
+
+    QApplication::setPalette(paletteForUiTheme(UiTheme::Light));
+    qApp->setStyleSheet(styleSheetForUiTheme(UiTheme::Light));
 }
 
 void DashboardTest::heatmapProvidesFortyEightGainControls()
@@ -455,20 +546,248 @@ void DashboardTest::trendChartRetainsSixtySamples()
     QCOMPARE(widget.sampleCount(), 60);
 }
 
+void DashboardTest::uiThemeProvidesDistinctPalettesAndBulbIcons()
+{
+    QCOMPARE(uiThemeFromName(QStringLiteral("dark")), UiTheme::Dark);
+    QCOMPARE(uiThemeFromName(QStringLiteral("invalid")), UiTheme::Light);
+    QVERIFY(paletteForUiTheme(UiTheme::Light).color(QPalette::Window)
+            != paletteForUiTheme(UiTheme::Dark).color(QPalette::Window));
+    QVERIFY(!styleSheetForUiTheme(UiTheme::Dark).isEmpty());
+    QVERIFY(!styleSheetForUiTheme(UiTheme::Light).contains(QStringLiteral("palette(disabled")));
+    QVERIFY(!styleSheetForUiTheme(UiTheme::Dark).contains(QStringLiteral("palette(disabled")));
+    QVERIFY(!bulbIconForUiTheme(UiTheme::Light).isNull());
+    QVERIFY(!bulbIconForUiTheme(UiTheme::Dark).isNull());
+    QVERIFY(bulbIconForUiTheme(UiTheme::Light).availableSizes().contains(QSize(48, 48)));
+    QVERIFY(bulbIconForUiTheme(UiTheme::Light).availableSizes().contains(QSize(96, 96)));
+}
+
+void DashboardTest::arrayHeatmapTitleFollowsApplicationTheme()
+{
+    ArrayHeatmapWidget widget;
+    auto *title = widget.findChild<QLabel *>(QStringLiteral("arrayHeatmapTitle"));
+    QVERIFY(title != nullptr);
+    QVERIFY(!title->styleSheet().contains(QStringLiteral("color:"), Qt::CaseInsensitive));
+}
+
 void DashboardTest::mainWindowProvidesDashboardAndPresentationToggle()
 {
     MainWindow window;
+    window.resize(1200, 700);
     window.show();
     auto *health = window.findChild<QLabel *>(QStringLiteral("healthStatusLabel"));
     auto *presentation = window.findChild<QPushButton *>(QStringLiteral("presentationModeButton"));
+    auto *statusBand = window.findChild<QWidget *>(QStringLiteral("statusBand"));
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *splitter = window.findChild<QSplitter *>(QStringLiteral("monitorSplitter"));
+    auto *left = window.findChild<QWidget *>(QStringLiteral("monitorLeftPanel"));
+    auto *center = window.findChild<QWidget *>(QStringLiteral("monitorCenterPanel"));
+    auto *right = window.findChild<QWidget *>(QStringLiteral("monitorDiagnosticsPanel"));
+    auto *presentationDiagnostics = window.findChild<QWidget *>(
+        QStringLiteral("presentationDiagnosticsPanel"));
+    auto *presentationWindow = window.findChild<QWidget *>(
+        QStringLiteral("presentationWindow"));
+    auto *transitionOverlay = window.findChild<QLabel *>(
+        QStringLiteral("presentationTransitionOverlay"));
+    auto *presentationProtocolStats = window.findChild<QLabel *>(
+        QStringLiteral("presentationProtocolStatsLabel"));
+    auto *protocolStats = window.findChild<QLabel *>(QStringLiteral("protocolStatsLabel"));
+    auto *errorLabel = window.findChild<QLabel *>(QStringLiteral("errorCountLabel"));
+    auto *exportButton = window.findChild<QPushButton *>(QStringLiteral("exportDiagnosticsButton"));
+    auto *video = window.findChild<VideoPreviewWidget *>(
+        QStringLiteral("dashboardVideoPreview"));
+    auto *windowStatusBar = window.statusBar();
     QVERIFY(health != nullptr);
     QVERIFY(presentation != nullptr);
+    QVERIFY(statusBand != nullptr);
+    QVERIFY(tabs != nullptr);
+    QVERIFY(splitter != nullptr);
+    QVERIFY(left != nullptr);
+    QVERIFY(center != nullptr);
+    QVERIFY(right != nullptr);
+    QVERIFY(presentationDiagnostics != nullptr);
+    QVERIFY(presentationWindow != nullptr);
+    QVERIFY(transitionOverlay != nullptr);
+    QVERIFY(presentationProtocolStats != nullptr);
+    QVERIFY(protocolStats != nullptr);
+    QVERIFY(errorLabel != nullptr);
+    QVERIFY(exportButton != nullptr);
+    QVERIFY(video != nullptr);
+    QVERIFY(windowStatusBar->isVisible());
+    QVERIFY(!presentationDiagnostics->isVisible());
     QVERIFY(window.findChild<QToolButton *>(QStringLiteral("channelCell_0")) != nullptr);
+    splitter->setSizes({240, 700, 260});
+    QCoreApplication::processEvents();
+    const QList<int> normalSizes = splitter->sizes();
+    const QRect normalGeometry = window.geometry();
 
     QTest::mouseClick(presentation, Qt::LeftButton);
-    QTRY_VERIFY(window.isFullScreen());
+    QTRY_VERIFY(presentationWindow->isFullScreen());
+    QVERIFY(!window.isFullScreen());
+    QCOMPARE(window.geometry(), normalGeometry);
+    QVERIFY(statusBand->isVisible());
+    QVERIFY(center->isVisible());
+    QCOMPARE(statusBand->window(), presentationWindow);
+    QCOMPARE(center->window(), presentationWindow);
+    QVERIFY(presentationDiagnostics->isVisible());
+    QVERIFY(presentationDiagnostics->geometry().left() >= video->geometry().right());
+    QVERIFY(presentationDiagnostics->width() >= 240);
+    QCOMPARE(presentationProtocolStats->text(), protocolStats->text());
+    QVERIFY(!errorLabel->isVisible());
+    QVERIFY(!exportButton->isVisible());
+    QVERIFY(windowStatusBar->isVisible());
+    QVERIFY(tabs->tabBar()->isVisible());
+
+    ParentChangeOverlayProbe overlayProbe(transitionOverlay);
+    center->installEventFilter(&overlayProbe);
+    QTest::keyClick(presentationWindow, Qt::Key_Escape);
+    QTRY_VERIFY(!presentationWindow->isVisible());
+    QVERIFY(!window.isFullScreen());
+    QVERIFY(left->isVisible());
+    QVERIFY(right->isVisible());
+    QCOMPARE(statusBand->window(), static_cast<QWidget *>(&window));
+    QCOMPARE(center->window(), static_cast<QWidget *>(&window));
+    QVERIFY(!presentationDiagnostics->isVisible());
+    QVERIFY(errorLabel->isVisible());
+    QVERIFY(exportButton->isVisible());
+    QVERIFY(windowStatusBar->isVisible());
+    QVERIFY(tabs->tabBar()->isVisible());
+    QCOMPARE(window.geometry(), normalGeometry);
+    QVERIFY(overlayProbe.sawParentChange);
+    QVERIFY(overlayProbe.overlayVisibleDuringParentChange);
+    QCOMPARE(splitter->sizes(), normalSizes);
+
     QTest::mouseClick(presentation, Qt::LeftButton);
-    QTRY_VERIFY(!window.isFullScreen());
+    QTRY_VERIFY(presentationWindow->isFullScreen());
+    QTest::mouseDClick(video, Qt::LeftButton, Qt::NoModifier, video->rect().center());
+    QTRY_VERIFY(!presentationWindow->isVisible());
+    QCOMPARE(splitter->sizes(), normalSizes);
+
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(presentationWindow->isFullScreen());
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(!presentationWindow->isVisible());
+    QCOMPARE(splitter->sizes(), normalSizes);
+
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(presentationWindow->isFullScreen());
+    presentationWindow->close();
+    QTRY_VERIFY(!presentationWindow->isVisible());
+    QCOMPARE(statusBand->window(), static_cast<QWidget *>(&window));
+    QCOMPARE(center->window(), static_cast<QWidget *>(&window));
+}
+
+void DashboardTest::presentationRestoresMaximizedWindow()
+{
+    MainWindow window;
+    window.showMaximized();
+    QTRY_VERIFY(window.isMaximized());
+    auto *presentation = window.findChild<QPushButton *>(
+        QStringLiteral("presentationModeButton"));
+    auto *presentationWindow = window.findChild<QWidget *>(
+        QStringLiteral("presentationWindow"));
+    QVERIFY(presentation != nullptr);
+    QVERIFY(presentationWindow != nullptr);
+    QVERIFY(window.windowHandle() != nullptr);
+    const Qt::WindowStates originalState = window.windowState();
+    QSignalSpy windowStateSpy(window.windowHandle(), &QWindow::windowStateChanged);
+
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(presentationWindow->isFullScreen());
+    QCOMPARE(window.windowState(), originalState);
+    QCOMPARE(windowStateSpy.count(), 0);
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(!presentationWindow->isVisible());
+    QCOMPARE(window.windowState(), originalState);
+    QCOMPARE(windowStateSpy.count(), 0);
+}
+
+void DashboardTest::presentationVideoSplitterRemainsStableAfterDiagnosticsUpdates()
+{
+    MainWindow window;
+    window.resize(1200, 700);
+    window.show();
+    auto *presentation = window.findChild<QPushButton *>(
+        QStringLiteral("presentationModeButton"));
+    auto *presentationWindow = window.findChild<QWidget *>(
+        QStringLiteral("presentationWindow"));
+    auto *videoSplitter = window.findChild<QSplitter *>(
+        QStringLiteral("presentationVideoSplitter"));
+    auto *video = window.findChild<VideoPreviewWidget *>(
+        QStringLiteral("dashboardVideoPreview"));
+    auto *diagnostics = window.findChild<QWidget *>(
+        QStringLiteral("presentationDiagnosticsPanel"));
+    auto *diagnosticsText = window.findChild<QLabel *>(
+        QStringLiteral("presentationProtocolStatsLabel"));
+    QVERIFY(presentation != nullptr);
+    QVERIFY(presentationWindow != nullptr);
+    QVERIFY(videoSplitter != nullptr);
+    QVERIFY(video != nullptr);
+    QVERIFY(diagnostics != nullptr);
+    QVERIFY(diagnosticsText != nullptr);
+    QCOMPARE(videoSplitter->orientation(), Qt::Horizontal);
+    QVERIFY(videoSplitter->handleWidth() >= 6);
+    QVERIFY(videoSplitter->styleSheet().contains(
+        QStringLiteral("QSplitter::handle")));
+    QCOMPARE(videoSplitter->count(), 1);
+    QCOMPARE(diagnostics->parentWidget(), presentationWindow);
+
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(presentationWindow->isFullScreen());
+    QCOMPARE(video->parentWidget(), static_cast<QWidget *>(videoSplitter));
+    QCOMPARE(diagnostics->parentWidget(), static_cast<QWidget *>(videoSplitter));
+    QVERIFY(videoSplitter->handle(1) != nullptr);
+    videoSplitter->setSizes({900, 300});
+    QCoreApplication::processEvents();
+    const QList<int> manuallyAdjustedSizes = videoSplitter->sizes();
+    QVERIFY(manuallyAdjustedSizes.at(0) > manuallyAdjustedSizes.at(1));
+
+    for (int update = 0; update < 12; ++update) {
+        diagnosticsText->setText(QString(update + 1, QLatin1Char('X')));
+        QCoreApplication::processEvents();
+        QCOMPARE(videoSplitter->sizes(), manuallyAdjustedSizes);
+    }
+
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(!presentationWindow->isVisible());
+    QCOMPARE(videoSplitter->count(), 1);
+    QCOMPARE(diagnostics->parentWidget(), presentationWindow);
+    QTest::mouseClick(presentation, Qt::LeftButton);
+    QTRY_VERIFY(presentationWindow->isFullScreen());
+    QTRY_COMPARE(videoSplitter->sizes(), manuallyAdjustedSizes);
+}
+
+void DashboardTest::mainWindowTogglesAndPersistsTheme()
+{
+    QSettings settings;
+    settings.remove(QStringLiteral("appearance"));
+    settings.sync();
+
+    {
+        MainWindow window;
+        window.show();
+        auto *themeButton = window.findChild<QToolButton *>(
+            QStringLiteral("themeToggleButton"));
+        QVERIFY(themeButton != nullptr);
+        QVERIFY(themeButton->text().isEmpty());
+        QVERIFY(!themeButton->icon().isNull());
+        QCOMPARE(window.property("uiTheme").toString(), QStringLiteral("light"));
+        QVERIFY(themeButton->toolTip().contains(QStringLiteral("深色")));
+
+        QTest::mouseClick(themeButton, Qt::LeftButton);
+        QCOMPARE(window.property("uiTheme").toString(), QStringLiteral("dark"));
+        QVERIFY(themeButton->toolTip().contains(QStringLiteral("浅色")));
+    }
+
+    {
+        MainWindow reloaded;
+        reloaded.show();
+        auto *themeButton = reloaded.findChild<QToolButton *>(
+            QStringLiteral("themeToggleButton"));
+        QVERIFY(themeButton != nullptr);
+        QCOMPARE(reloaded.property("uiTheme").toString(), QStringLiteral("dark"));
+        QTest::mouseClick(themeButton, Qt::LeftButton);
+        QCOMPARE(reloaded.property("uiTheme").toString(), QStringLiteral("light"));
+    }
 }
 
 void DashboardTest::heatmapSelectionUpdatesOutputChannel()
@@ -544,6 +863,17 @@ void DashboardTest::mainWindowUsesAudioVideoFusionTitle()
     QCOMPARE(tabs->tabText(index), QStringLiteral("音视频融合"));
 }
 
+void DashboardTest::monitorStatisticsDoNotContainUnlabelledProgressBar()
+{
+    MainWindow window;
+    auto *center = window.findChild<QWidget *>(QStringLiteral("monitorCenterPanel"));
+    QVERIFY(center != nullptr);
+    QCOMPARE(center->findChildren<QProgressBar *>(QString(),
+                                                 Qt::FindDirectChildrenOnly)
+                 .size(),
+             0);
+}
+
 void DashboardTest::debugPageProvidesPostTailPreview()
 {
     MainWindow window;
@@ -614,6 +944,37 @@ void DashboardTest::recordingPageProvidesChannelSelectionAndCommands()
     QVERIFY(!channels.at(17)->isEnabled());
     QVERIFY(!sampleRate->isEnabled());
     QVERIFY(!resetSettings->isEnabled());
+}
+
+void DashboardTest::lightThemeRecordingChannelsUseDedicatedReadableStyle()
+{
+    QApplication::setPalette(paletteForUiTheme(UiTheme::Light));
+    qApp->setStyleSheet(styleSheetForUiTheme(UiTheme::Light));
+
+    MainWindow window;
+    window.show();
+    auto *unchecked = window.findChild<QToolButton *>(QStringLiteral("recordChannel_1"));
+    auto *checked = window.findChild<QToolButton *>(QStringLiteral("recordChannel_0"));
+    QVERIFY(unchecked != nullptr);
+    QVERIFY(checked != nullptr);
+    QVERIFY(unchecked->property("recordingChannelButton").toBool());
+    QVERIFY(checked->property("recordingChannelButton").toBool());
+    unchecked->setChecked(false);
+    checked->setChecked(true);
+    QVERIFY(!unchecked->isChecked());
+    QVERIFY(checked->isChecked());
+    QCoreApplication::processEvents();
+
+    const QImage uncheckedImage = unchecked->grab().toImage();
+    const QImage checkedImage = checked->grab().toImage();
+    QVERIFY(contrastingPixelCount(uncheckedImage) > 8);
+    QVERIFY(contrastingPixelCount(checkedImage) > 8);
+
+    const QString themeStyle = styleSheetForUiTheme(UiTheme::Light);
+    QVERIFY(themeStyle.contains(
+        QStringLiteral("QToolButton[recordingChannelButton=\"true\"]")));
+    QVERIFY(themeStyle.contains(
+        QStringLiteral("QToolButton[recordingChannelButton=\"true\"]:checked")));
 }
 
 void DashboardTest::recordingDefaultsToPersistedOutputChannel()

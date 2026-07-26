@@ -25,6 +25,7 @@ class AppTest : public QObject
 
 private slots:
     void invalidSettingsFallBackToSafeDefaults();
+    void persistsAndSanitizesAppearanceSettings();
     void persistsNamedControlPresets();
     void migratesLegacyEightChannelControlPresets();
     void rejectsInvalidControlPresets();
@@ -75,6 +76,34 @@ void AppTest::invalidSettingsFallBackToSafeDefaults()
     QCOMPARE(audio.outputChannel, 0);
     QCOMPARE(audio.averageWindowFrames, 100);
     QCOMPARE(video.format, QStringLiteral("JPG"));
+}
+
+void AppTest::persistsAndSanitizesAppearanceSettings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+
+    {
+        AppSettings settings(path);
+        QCOMPARE(settings.appearance().theme, QStringLiteral("light"));
+        settings.saveAppearance({QStringLiteral("dark")});
+    }
+    QCOMPARE(AppSettings(path).appearance().theme, QStringLiteral("dark"));
+
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("appearance/theme"), QStringLiteral("unknown"));
+        raw.sync();
+    }
+    QCOMPARE(AppSettings(path).appearance().theme, QStringLiteral("light"));
+
+    {
+        AppSettings settings(path);
+        settings.saveAppearance({QStringLiteral("dark")});
+        settings.resetAll();
+        QCOMPARE(settings.appearance().theme, QStringLiteral("light"));
+    }
 }
 
 void AppTest::persistsNamedControlPresets()

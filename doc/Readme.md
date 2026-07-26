@@ -289,6 +289,8 @@ Connecting -> Error
 当前页面：
 
 - `音视频融合`：连接、6 路控制、媒体设置、视频预览、音频电平、阵列幅值与增益、诊断和日志。
+- “演示全屏”会打开独立全屏窗口，主窗口保持进入前的普通或最大化状态，从而避免退出时经过中等窗口；演示窗口保留顶部连接、端点、心跳、接收速率和健康状态，以及视频、滚动波形、阵列幅值热力图和趋势图。视频与右侧实时协议诊断摘要之间的分隔条可手动拖动，实时文本刷新不会改变比例，拖动比例在本次运行期间自动保留。左侧操作区、完整诊断右栏、告警、日志、底部日志状态栏、错误计数、导出诊断和页签栏不会出现在演示窗口，但对应后台功能和数据记录不会停止。可使用“退出全屏”、双击视频或 `Esc` 恢复原布局。
+- 顶部右侧灯泡按钮用于切换浅色/深色模式，主题立即应用到全部页面并自动保存到本地，下次启动自动恢复；恢复全部默认设置会回到浅色模式。
 - 实时监控页的视频预览下方显示当前播放通道的滚动音频波形，用于快速确认选中通道是否有信号、是否削顶或静音。
 - `音视频融合 -> 阵列幅值` 以 6x8 顺序显示 48 个通道；每个通道左侧是增益后归一化幅值，右侧是竖向移位滑条和独立自动增益复选框。工具栏提供全部自动、全部手动、复位、保存和载入。
 - `音频录制`：以 6x8 通道矩阵选择一个或多个通道，支持全选、清空、反选和同步当前监听通道，显示录制状态、时长、写入量、速率、待写队列、帧数、丢弃帧和清单路径。
@@ -515,6 +517,9 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-26 | 独立演示窗口与可拖动视频分隔条 | UI、窗口状态、测试、文档 | 演示模式改用独立顶层全屏窗口，主窗口全程保持原状态，退出时不再经过普通中等窗口；视频与紧凑诊断卡片改用水平分隔器，支持手动拖动并在运行期保存比例，诊断文本刷新不再引发视频区域逐步放大；普通模式下诊断卡片完全移出分隔器，避免隐藏控件的最小宽度撑大主窗口。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
+| 2026-07-26 | 音视频融合与演示界面修复 | UI、主题、测试、文档 | 移除视频/音频时间戳统计之间无说明的电平进度条，音频峰值继续由统计文本显示；补齐浅色主题下录制通道按钮的未选中、悬停、选中和禁用配色；演示全屏在视频右侧显示紧凑实时协议诊断卡片并继续隐藏告警和日志；退出全屏改为禁用绘制期间一次性恢复进入前窗口状态和布局，避免普通窗口到最大化窗口的中间闪跳。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
+| 2026-07-26 | 演示全屏与主题增强 | UI、配置、测试、文档 | 演示全屏改为保留顶部连接/健康状态和中心视频、波形、阵列热力图、趋势图的清爽布局，隐藏诊断、告警、日志及操作侧栏并支持 `Esc` 无损恢复；新增代码绘制的灯泡按钮切换全局浅色/深色主题，主题本地持久化并在启动时恢复。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-23 | 四点视频校准精细化 | 分析、UI、配置、测试、文档 | 校准面板新增四点参数明细、撤销上一点和完成点显隐控制；拟合成功后自动隐藏完成点；新增包含视角、参考视频尺寸、RMS 和样本的严格版本化 JSON 校准文件，支持手动原子保存和无损载入。 | C++ 目标完整构建、Python 工具测试、模拟服务端自检、`git diff --check` |
 | 2026-07-23 | SRP-PHAT CPU 性能优化 | 分析、线程、构建、测试、文档 | 将 122 个阵元对聚合为 4 类基线，复用定位窗口的 PHAT 结果，缓存方向转向索引并使用专用 CPU 线程池并行扫描；当前开发机 Release 下 `640×360` 实时链路中位约 70 ms，热力图阶段约 1 ms。 | Release `test_analysis::evaluatesMaximumSpatialGridWithinCpuBudget`、Debug 全量 `ctest`、Python 测试、模拟服务端自检、`git diff --check` |
 | 2026-07-23 | 实时热力图网格增强 | 分析、UI、配置、测试、文档 | 实时空间响应方向网格支持独立调整宽度和高度，默认 `64×36`、最大 `640×360`，配置自动保存并在启动时恢复。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`git diff --check` |

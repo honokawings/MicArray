@@ -1,6 +1,7 @@
 #include "ui/mainwindow.h"
 
 #include "ui/displayformat.h"
+#include "ui/uitheme.h"
 #include "media/gainprofilestore.h"
 
 #include <QAbstractAnimation>
@@ -18,6 +19,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMetaObject>
@@ -112,6 +114,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    if (m_presentationMode) {
+        setPresentationMode(false);
+    }
     delete m_liveLocalizationPage;
     m_liveLocalizationPage = nullptr;
     delete m_audioAnalysisPage;
@@ -140,11 +145,13 @@ void MainWindow::buildUi()
     resize(1366, 768);
 
     auto *central = new QWidget(this);
-    auto *root = new QVBoxLayout(central);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(8);
+    m_rootLayout = new QVBoxLayout(central);
+    m_rootLayout->setContentsMargins(8, 8, 8, 8);
+    m_rootLayout->setSpacing(8);
 
     auto *statusBand = new QWidget(central);
+    statusBand->setObjectName(QStringLiteral("statusBand"));
+    m_statusBand = statusBand;
     auto *statusLayout = new QHBoxLayout(statusBand);
     statusLayout->setContentsMargins(0, 0, 0, 0);
     m_stateLabel = new QLabel(statusBand);
@@ -152,6 +159,7 @@ void MainWindow::buildUi()
     m_heartbeatLabel = new QLabel(statusBand);
     m_rateLabel = new QLabel(statusBand);
     m_errorLabel = new QLabel(statusBand);
+    m_errorLabel->setObjectName(QStringLiteral("errorCountLabel"));
     m_healthLabel = new QLabel(QStringLiteral("健康: 未连接"), statusBand);
     m_healthLabel->setObjectName(QStringLiteral("healthStatusLabel"));
     m_healthLabel->setAlignment(Qt::AlignCenter);
@@ -163,9 +171,16 @@ void MainWindow::buildUi()
     m_presentationButton = new QPushButton(QStringLiteral("演示全屏"), statusBand);
     m_presentationButton->setObjectName(QStringLiteral("presentationModeButton"));
     m_exportDiagnosticsButton = new QPushButton(QStringLiteral("导出诊断"), statusBand);
+    m_exportDiagnosticsButton->setObjectName(QStringLiteral("exportDiagnosticsButton"));
+    m_themeButton = new QToolButton(statusBand);
+    m_themeButton->setObjectName(QStringLiteral("themeToggleButton"));
+    m_themeButton->setText(QString());
+    m_themeButton->setFixedSize(34, 34);
+    m_themeButton->setIconSize(QSize(24, 24));
     statusLayout->addWidget(m_exportDiagnosticsButton);
     statusLayout->addWidget(m_presentationButton);
-    root->addWidget(statusBand);
+    statusLayout->addWidget(m_themeButton);
+    m_rootLayout->addWidget(statusBand);
 
     m_mainTabs = new QTabWidget(central);
     m_mainTabs->setObjectName(QStringLiteral("mainTabs"));
@@ -177,9 +192,27 @@ void MainWindow::buildUi()
     m_mainTabs->addTab(m_liveLocalizationPage, QStringLiteral("声源定位"));
     m_mainTabs->addTab(buildDebugPage(), QStringLiteral("高级帧调试"));
     m_mainTabs->addTab(buildCalibrationPage(), QStringLiteral("阵列校准"));
-    root->addWidget(m_mainTabs, 1);
+    m_rootLayout->addWidget(m_mainTabs, 1);
 
     setCentralWidget(central);
+
+    m_presentationWindow = new QWidget(this,
+                                       Qt::Window | Qt::FramelessWindowHint);
+    m_presentationWindow->setObjectName(QStringLiteral("presentationWindow"));
+    m_presentationWindow->setWindowTitle(QStringLiteral("MicArray 演示"));
+    m_presentationLayout = new QVBoxLayout(m_presentationWindow);
+    m_presentationLayout->setContentsMargins(8, 8, 8, 8);
+    m_presentationLayout->setSpacing(8);
+    m_presentationTransitionOverlay = new QLabel(m_presentationWindow);
+    m_presentationTransitionOverlay->setObjectName(
+        QStringLiteral("presentationTransitionOverlay"));
+    m_presentationTransitionOverlay->setAlignment(Qt::AlignCenter);
+    m_presentationTransitionOverlay->setAttribute(
+        Qt::WA_TransparentForMouseEvents);
+    m_presentationTransitionOverlay->hide();
+    m_presentationWindow->installEventFilter(this);
+    m_presentationDiagnosticsPanel->setParent(m_presentationWindow);
+    m_presentationWindow->hide();
 }
 
 QWidget *MainWindow::buildMonitorPage()
@@ -190,9 +223,13 @@ QWidget *MainWindow::buildMonitorPage()
     pageLayout->setContentsMargins(0, 0, 0, 0);
 
     auto *mainSplitter = new QSplitter(Qt::Horizontal, page);
+    mainSplitter->setObjectName(QStringLiteral("monitorSplitter"));
+    m_monitorSplitter = mainSplitter;
     mainSplitter->setChildrenCollapsible(false);
 
     auto *left = new QWidget(mainSplitter);
+    left->setObjectName(QStringLiteral("monitorLeftPanel"));
+    m_monitorLeftPanel = left;
     auto *leftLayout = new QVBoxLayout(left);
 
     auto *connectionGroup = new QGroupBox(QStringLiteral("设备连接"), left);
@@ -281,17 +318,51 @@ QWidget *MainWindow::buildMonitorPage()
     mainSplitter->addWidget(left);
 
     auto *center = new QWidget(mainSplitter);
+    center->setObjectName(QStringLiteral("monitorCenterPanel"));
+    m_monitorCenterPanel = center;
     auto *centerLayout = new QVBoxLayout(center);
-    m_videoLabel = new VideoPreviewWidget(center);
+    m_presentationVideoSplitter = new QSplitter(Qt::Horizontal, center);
+    m_presentationVideoSplitter->setObjectName(
+        QStringLiteral("presentationVideoSplitter"));
+    m_presentationVideoSplitter->setChildrenCollapsible(false);
+    m_presentationVideoSplitter->setHandleWidth(8);
+    m_presentationVideoSplitter->setStyleSheet(QStringLiteral(
+        "QSplitter::handle { background:palette(mid); border-radius:3px; margin:2px 1px; }"
+        "QSplitter::handle:hover { background:palette(highlight); }"));
+    m_videoLabel = new VideoPreviewWidget(m_presentationVideoSplitter);
+    m_videoLabel->setObjectName(QStringLiteral("dashboardVideoPreview"));
+    m_presentationVideoSplitter->addWidget(m_videoLabel);
+
+    m_presentationDiagnosticsPanel =
+        new QGroupBox(QStringLiteral("实时诊断"),
+                      m_presentationVideoSplitter);
+    m_presentationDiagnosticsPanel->setObjectName(
+        QStringLiteral("presentationDiagnosticsPanel"));
+    m_presentationDiagnosticsPanel->setMinimumWidth(240);
+    m_presentationDiagnosticsPanel->setSizePolicy(QSizePolicy::Ignored,
+                                                   QSizePolicy::Expanding);
+    auto *presentationDiagnosticsLayout = new QVBoxLayout(
+        m_presentationDiagnosticsPanel);
+    m_presentationProtocolStatsLabel = new QLabel(m_presentationDiagnosticsPanel);
+    m_presentationProtocolStatsLabel->setObjectName(
+        QStringLiteral("presentationProtocolStatsLabel"));
+    m_presentationProtocolStatsLabel->setWordWrap(true);
+    m_presentationProtocolStatsLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    m_presentationProtocolStatsLabel->setSizePolicy(QSizePolicy::Ignored,
+                                                     QSizePolicy::Preferred);
+    presentationDiagnosticsLayout->addWidget(m_presentationProtocolStatsLabel);
+    presentationDiagnosticsLayout->addStretch();
+    m_presentationDiagnosticsPanel->hide();
+    m_presentationVideoSplitter->addWidget(m_presentationDiagnosticsPanel);
+    m_presentationVideoSplitter->setStretchFactor(0, 3);
+    m_presentationVideoSplitter->setStretchFactor(1, 1);
+
     m_waveformWidget = new AudioWaveformWidget(center);
     m_videoStatsLabel = new QLabel(center);
-    m_audioLevel = new QProgressBar(center);
-    m_audioLevel->setRange(0, 100);
     m_audioStatsLabel = new QLabel(center);
-    centerLayout->addWidget(m_videoLabel, 1);
+    centerLayout->addWidget(m_presentationVideoSplitter, 1);
     centerLayout->addWidget(m_waveformWidget);
     centerLayout->addWidget(m_videoStatsLabel);
-    centerLayout->addWidget(m_audioLevel);
     centerLayout->addWidget(m_audioStatsLabel);
     auto *dashboardDetails = new QTabWidget(center);
     m_dashboardHeatmap = new ArrayHeatmapWidget(dashboardDetails);
@@ -302,10 +373,13 @@ QWidget *MainWindow::buildMonitorPage()
     mainSplitter->addWidget(center);
 
     auto *right = new QWidget(mainSplitter);
+    right->setObjectName(QStringLiteral("monitorDiagnosticsPanel"));
+    m_monitorDiagnosticsPanel = right;
     auto *rightLayout = new QVBoxLayout(right);
     auto *diagnosticGroup = new QGroupBox(QStringLiteral("诊断"), right);
     auto *diagnosticLayout = new QVBoxLayout(diagnosticGroup);
     m_protocolStatsLabel = new QLabel(diagnosticGroup);
+    m_protocolStatsLabel->setObjectName(QStringLiteral("protocolStatsLabel"));
     m_protocolStatsLabel->setWordWrap(true);
     diagnosticLayout->addWidget(m_protocolStatsLabel);
     rightLayout->addWidget(diagnosticGroup);
@@ -362,6 +436,7 @@ QWidget *MainWindow::buildRecordingPage()
             auto *button = new QToolButton(channelGroup);
             button->setObjectName(QStringLiteral("recordChannel_%1").arg(channel));
             button->setText(QStringLiteral("CH%1").arg(channel));
+            button->setProperty("recordingChannelButton", true);
             button->setCheckable(true);
             button->setChecked(channel == 0);
             button->setMinimumSize(58, 44);
@@ -587,6 +662,9 @@ void MainWindow::connectSignals()
     connect(m_deletePresetButton, &QPushButton::clicked, this, &MainWindow::deleteControlPreset);
     connect(m_resetSettingsButton, &QPushButton::clicked, this, &MainWindow::resetSettingsToDefaults);
     connect(m_presentationButton, &QPushButton::clicked, this, &MainWindow::togglePresentationMode);
+    connect(m_themeButton, &QToolButton::clicked, this, [this]() {
+        applyUiTheme(m_uiTheme == UiTheme::Light ? UiTheme::Dark : UiTheme::Light, true);
+    });
     connect(m_exportDiagnosticsButton, &QPushButton::clicked, this, &MainWindow::exportDiagnostics);
     connect(m_recordingBrowseButton, &QPushButton::clicked, this, &MainWindow::chooseRecordingDirectory);
     connect(m_recordingStartButton, &QPushButton::clicked, this, &MainWindow::startRecording);
@@ -753,6 +831,7 @@ void MainWindow::connectSignals()
 
 void MainWindow::loadSettings()
 {
+    applyUiTheme(uiThemeFromName(m_settings.appearance().theme), false);
     const ConnectionSettings connection = m_settings.connection();
     m_hostEdit->setText(connection.host);
     m_portSpin->setValue(connection.port);
@@ -798,6 +877,29 @@ void MainWindow::saveSettings()
                           m_averageWindowSpin->value(),
                           m_audioPlaybackCheck->isChecked()});
     m_settings.saveVideo({m_videoFormatCombo->currentData().toString()});
+}
+
+void MainWindow::applyUiTheme(UiTheme theme, bool persist)
+{
+    m_uiTheme = theme;
+    QApplication::setPalette(paletteForUiTheme(theme));
+    qApp->setStyleSheet(styleSheetForUiTheme(theme));
+    const QString name = uiThemeName(theme);
+    setProperty("uiTheme", name);
+
+    if (m_themeButton != nullptr) {
+        const bool dark = theme == UiTheme::Dark;
+        m_themeButton->setIcon(bulbIconForUiTheme(theme));
+        m_themeButton->setToolTip(dark
+                                      ? QStringLiteral("切换到浅色模式")
+                                      : QStringLiteral("切换到深色模式"));
+        m_themeButton->setAccessibleName(dark
+                                             ? QStringLiteral("切换到浅色模式")
+                                             : QStringLiteral("切换到深色模式"));
+    }
+    if (persist) {
+        m_settings.saveAppearance({name});
+    }
 }
 
 void MainWindow::applyPreset(int index)
@@ -1031,23 +1133,30 @@ void MainWindow::updateStatistics()
     const QString lastRx = m_client.lastReceiveTime().isValid()
         ? m_client.lastReceiveTime().toString(QStringLiteral("HH:mm:ss.zzz"))
         : QStringLiteral("-");
-    m_protocolStatsLabel->setText(QStringLiteral("最后接收: %1\n健康状态: %2\n解析错误: %3\n接收字节: %4\n已解析字节: %5\n丢弃字节: %6\n协议缓冲: %7\n接收背压: %8\n待解析队列: %9\n重连次数: %10\n视频帧: %11\n音频字节: %12\n音频丢帧: %13\n视频丢帧: %14\n播放通道: %15\n平均窗口: %16 帧")
-                                      .arg(lastRx)
-                                      .arg(healthLevelName(m_healthSnapshot.level))
-                                      .arg(m_client.parseErrorCount())
-                                      .arg(formatByteSize(m_client.bytesReceived()))
-                                      .arg(formatByteSize(m_client.protocolBytesParsed()))
-                                      .arg(formatByteSize(m_client.protocolBytesDiscarded()))
-                                      .arg(formatByteSize(static_cast<quint64>(std::max<qsizetype>(0, m_client.protocolBufferedBytes()))))
-                                      .arg(m_client.receiveBackpressureActive() ? QStringLiteral("启用") : QStringLiteral("正常"))
-                                      .arg(formatByteSize(static_cast<quint64>(std::max<qint64>(0, m_client.pendingProtocolBytes()))))
-                                      .arg(m_client.reconnectCount())
-                                      .arg(m_videoDecodedFrames)
-                                      .arg(formatByteSize(static_cast<quint64>(std::max<qint64>(0, m_audioBytesReceived))))
-                                      .arg(m_audioDroppedFrames)
-                                      .arg(m_videoDroppedFrames)
-                                      .arg(m_audioOutputChannel)
-                                      .arg(m_audioAverageWindowFrames));
+    const QString protocolStatistics =
+        QStringLiteral("最后接收: %1\n健康状态: %2\n解析错误: %3\n接收字节: %4\n已解析字节: %5\n丢弃字节: %6\n协议缓冲: %7\n接收背压: %8\n待解析队列: %9\n重连次数: %10\n视频帧: %11\n音频字节: %12\n音频丢帧: %13\n视频丢帧: %14\n播放通道: %15\n平均窗口: %16 帧")
+            .arg(lastRx)
+            .arg(healthLevelName(m_healthSnapshot.level))
+            .arg(m_client.parseErrorCount())
+            .arg(formatByteSize(m_client.bytesReceived()))
+            .arg(formatByteSize(m_client.protocolBytesParsed()))
+            .arg(formatByteSize(m_client.protocolBytesDiscarded()))
+            .arg(formatByteSize(static_cast<quint64>(
+                std::max<qsizetype>(0, m_client.protocolBufferedBytes()))))
+            .arg(m_client.receiveBackpressureActive() ? QStringLiteral("启用")
+                                                      : QStringLiteral("正常"))
+            .arg(formatByteSize(static_cast<quint64>(
+                std::max<qint64>(0, m_client.pendingProtocolBytes()))))
+            .arg(m_client.reconnectCount())
+            .arg(m_videoDecodedFrames)
+            .arg(formatByteSize(static_cast<quint64>(
+                std::max<qint64>(0, m_audioBytesReceived))))
+            .arg(m_audioDroppedFrames)
+            .arg(m_videoDroppedFrames)
+            .arg(m_audioOutputChannel)
+            .arg(m_audioAverageWindowFrames);
+    m_protocolStatsLabel->setText(protocolStatistics);
+    m_presentationProtocolStatsLabel->setText(protocolStatistics);
 }
 
 void MainWindow::appendLog(LogLevel, const QString &, const QString &, const QString &formatted)
@@ -1069,7 +1178,6 @@ void MainWindow::showVideoFrame(const QImage &image, double fps, quint32 timesta
 void MainWindow::updateAudioLevel(double peakLevel, qint64 bytesReceived, quint32 timestampSeconds, quint32 timestampMicros)
 {
     m_audioBytesReceived = bytesReceived;
-    m_audioLevel->setValue(static_cast<int>(std::clamp(peakLevel, 0.0, 1.0) * 100.0));
     m_audioStatsLabel->setText(QStringLiteral("音频: %1  选中通道峰值 %2%  时间戳 %3.%4")
                                    .arg(formatByteSize(static_cast<quint64>(std::max<qint64>(0, bytesReceived))))
                                    .arg(static_cast<int>(std::clamp(peakLevel, 0.0, 1.0) * 100.0))
@@ -1332,17 +1440,128 @@ void MainWindow::updateHealthSnapshot()
 
 void MainWindow::togglePresentationMode()
 {
-    m_presentationMode = !m_presentationMode;
-    if (m_mainTabs != nullptr) {
+    setPresentationMode(!m_presentationMode);
+}
+
+void MainWindow::setPresentationMode(bool enabled)
+{
+    if (m_presentationMode == enabled) {
+        return;
+    }
+    if (enabled) {
+        m_monitorSplitterSizes = m_monitorSplitter != nullptr
+            ? m_monitorSplitter->sizes()
+            : QList<int>();
+        m_mainWindowGeometryBeforePresentation = geometry();
+        m_mainWindowStateBeforePresentation = windowState();
+        m_presentationMode = true;
         m_mainTabs->setCurrentIndex(0);
-        m_mainTabs->tabBar()->setVisible(!m_presentationMode);
-    }
-    m_presentationButton->setText(m_presentationMode ? QStringLiteral("退出全屏") : QStringLiteral("演示全屏"));
-    if (m_presentationMode) {
-        showFullScreen();
+        m_errorLabel->hide();
+        m_exportDiagnosticsButton->hide();
+        m_presentationDiagnosticsPanel->setMinimumWidth(240);
+        m_presentationDiagnosticsPanel->setParent(m_presentationVideoSplitter);
+        m_presentationVideoSplitter->addWidget(m_presentationDiagnosticsPanel);
+        m_presentationDiagnosticsPanel->show();
+        m_statusBand->setParent(m_presentationWindow);
+        m_monitorCenterPanel->setParent(m_presentationWindow);
+        m_presentationLayout->addWidget(m_statusBand);
+        m_presentationLayout->addWidget(m_monitorCenterPanel, 1);
+        m_statusBand->show();
+        m_monitorCenterPanel->show();
+        m_presentationButton->setText(QStringLiteral("退出全屏"));
+        m_presentationWindow->showFullScreen();
+        m_presentationWindow->raise();
+        m_presentationWindow->activateWindow();
+        QTimer::singleShot(0, this, [this]() {
+            if (!m_presentationMode) {
+                return;
+            }
+            if (!m_presentationVideoSplitterSizes.isEmpty()) {
+                m_presentationVideoSplitter->setSizes(
+                    m_presentationVideoSplitterSizes);
+                return;
+            }
+            const int availableWidth = std::max(
+                1,
+                m_presentationVideoSplitter->width()
+                    - m_presentationVideoSplitter->handleWidth());
+            m_presentationVideoSplitter->setSizes(
+                {availableWidth * 3 / 4, availableWidth / 4});
+        });
     } else {
-        showNormal();
+        const bool freezePresentationFrame = m_presentationWindow->isVisible();
+        if (freezePresentationFrame) {
+            m_presentationTransitionOverlay->setGeometry(
+                m_presentationWindow->rect());
+            m_presentationTransitionOverlay->setPixmap(
+                m_presentationWindow->grab());
+            m_presentationTransitionOverlay->show();
+            m_presentationTransitionOverlay->raise();
+            m_presentationTransitionOverlay->repaint();
+        }
+        m_presentationVideoSplitterSizes =
+            m_presentationVideoSplitter->sizes();
+        m_presentationDiagnosticsPanel->setParent(m_presentationWindow);
+        m_presentationDiagnosticsPanel->setMinimumWidth(0);
+        m_statusBand->setParent(centralWidget());
+        m_rootLayout->insertWidget(0, m_statusBand);
+        m_monitorCenterPanel->setParent(m_monitorSplitter);
+        m_monitorSplitter->insertWidget(1, m_monitorCenterPanel);
+        m_statusBand->show();
+        m_monitorCenterPanel->show();
+        m_presentationDiagnosticsPanel->hide();
+        m_errorLabel->show();
+        m_exportDiagnosticsButton->show();
+        m_presentationButton->setText(QStringLiteral("演示全屏"));
+        m_rootLayout->activate();
+        if (!(m_mainWindowStateBeforePresentation & Qt::WindowMaximized)
+            && m_mainWindowGeometryBeforePresentation.isValid()) {
+            setGeometry(m_mainWindowGeometryBeforePresentation);
+        }
+        if (!m_monitorSplitterSizes.isEmpty()) {
+            m_monitorSplitter->setSizes(m_monitorSplitterSizes);
+        }
+        centralWidget()->repaint();
+        m_presentationMode = false;
+        m_presentationWindow->hide();
+        m_presentationTransitionOverlay->hide();
+        m_presentationTransitionOverlay->clear();
+        const QList<int> restoredMonitorSizes = m_monitorSplitterSizes;
+        QTimer::singleShot(0, this, [this, restoredMonitorSizes]() {
+            if (!m_presentationMode && !restoredMonitorSizes.isEmpty()) {
+                m_monitorSplitter->setSizes(restoredMonitorSizes);
+            }
+        });
     }
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_presentationWindow && m_presentationMode) {
+        if (event->type() == QEvent::KeyPress) {
+            auto *keyEvent = static_cast<QKeyEvent *>(event);
+            if (keyEvent->key() == Qt::Key_Escape) {
+                setPresentationMode(false);
+                event->accept();
+                return true;
+            }
+        } else if (event->type() == QEvent::Close) {
+            setPresentationMode(false);
+            event->ignore();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (m_presentationMode && event->key() == Qt::Key_Escape) {
+        setPresentationMode(false);
+        event->accept();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 QVector<qint16> MainWindow::currentControlVector() const

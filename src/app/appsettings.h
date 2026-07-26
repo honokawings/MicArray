@@ -33,6 +33,12 @@ struct VideoSettings {
     QString format = QStringLiteral("JPG");
 };
 
+struct AppearanceSettings {
+    QString theme = QStringLiteral("light");
+
+    bool operator==(const AppearanceSettings &) const = default;
+};
+
 struct AudioAnalysisSettings {
     QString lastWavePath;
     QString lastPhotoPath;
@@ -90,6 +96,7 @@ public:
     ConnectionSettings connection() const;
     AudioSettings audio() const;
     VideoSettings video() const;
+    AppearanceSettings appearance() const;
     AudioAnalysisSettings audioAnalysis() const;
     LiveLocalizationSettings liveLocalization() const;
     GainConfiguration gainConfiguration() const;
@@ -97,6 +104,7 @@ public:
     void saveConnection(const ConnectionSettings &settings);
     void saveAudio(const AudioSettings &settings);
     void saveVideo(const VideoSettings &settings);
+    void saveAppearance(const AppearanceSettings &settings);
     void saveAudioAnalysis(const AudioAnalysisSettings &settings);
     void saveLiveLocalization(const LiveLocalizationSettings &settings);
     bool saveGainConfiguration(const GainConfiguration &configuration, QString *error = nullptr);
