@@ -331,6 +331,7 @@ Connecting -> Error
 
 - `音视频融合`：连接、6 路控制、媒体设置、视频预览、音频电平、阵列幅值与增益、诊断和日志。
 - `降噪处理`：从增益前原始 CH0-CH3 实时执行单点/两点维纳抑制，提供五种监听源、双波形/功率谱对比、视频点击方向控制和独立精简全屏。
+- 主窗口右上角“演示全屏”按钮按当前页分派：在“音视频融合”页打开音视频融合演示窗口，在“降噪处理”页打开只含视频与两张功率谱的降噪演示窗口。
 - “演示全屏”会打开独立全屏窗口，主窗口保持进入前的普通或最大化状态，从而避免退出时经过中等窗口；演示窗口保留顶部连接、端点、心跳、接收速率和健康状态，以及视频、滚动波形、阵列幅值热力图和趋势图。视频与右侧实时协议诊断摘要之间的分隔条可手动拖动，实时文本刷新不会改变比例，拖动比例在本次运行期间自动保留。左侧操作区、完整诊断右栏、告警、日志、底部日志状态栏、错误计数、导出诊断和页签栏不会出现在演示窗口，但对应后台功能和数据记录不会停止。可使用“退出全屏”、双击视频或 `Esc` 恢复原布局。
 - 顶部右侧灯泡按钮用于切换浅色/深色模式，主题立即应用到全部页面并自动保存到本地，下次启动自动恢复；恢复全部默认设置会回到浅色模式。
 - 实时监控页的视频预览下方显示当前播放通道的滚动音频波形，用于快速确认选中通道是否有信号、是否削顶或静音。
@@ -561,6 +562,7 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-29 | 演示全屏页面路由修复 | UI、测试、文档 | 修复右上角“演示全屏”按钮固定打开音视频融合演示窗口的问题；按钮现在根据当前页分别进入音视频融合或降噪处理专用全屏，两个演示窗口保持互斥，页面内部按钮和视频双击行为不变。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-29 | 降噪算法与输出后处理增强 | 音频、UI、配置、线程、测试、文档 | 降噪算法新增默认固定参数维纳并保留自适应维纳；单点系数默认 3，双点 B1/B2 系数可独立设置且默认 5；降噪后新增可选四阶带通及人声/音乐预设，监听可独立关闭；实际角度映射默认 `-90°～90°`、视场角默认显示/保存 `180°` 并以 `179°` 安全投影，方向、映射和视角输入屏蔽滚轮误操作。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-28 | 降噪方向连续标记修正 | 控制、UI、配置、测试、文档 | A/B1/B2 改为保存和编辑连续实际角度，视频点击标记不再吸附到接口量化网格；六路接口码改为只读显示并仅在发送边界量化；已有接口码配置可自动迁移为连续角度。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-28 | 实时阵列降噪 | 音频、控制、UI、配置、线程、测试、文档 | 新增位于音视频融合右侧的实时降噪页；从增益前原始 CH0-CH3 建立独立有界旁路，支持单点/两点频域维纳抑制、五源监听、双波形/功率谱对比；支持可配置实际角度映射、视频点击设置 A/B1/B2 并发送全部 6 路控制值，以及只包含视频和两张功率谱的独立全屏窗口。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |

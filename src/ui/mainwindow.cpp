@@ -670,7 +670,8 @@ void MainWindow::connectSignals()
     connect(m_savePresetButton, &QPushButton::clicked, this, &MainWindow::saveControlPreset);
     connect(m_deletePresetButton, &QPushButton::clicked, this, &MainWindow::deleteControlPreset);
     connect(m_resetSettingsButton, &QPushButton::clicked, this, &MainWindow::resetSettingsToDefaults);
-    connect(m_presentationButton, &QPushButton::clicked, this, &MainWindow::togglePresentationMode);
+    connect(m_presentationButton, &QPushButton::clicked,
+            this, &MainWindow::toggleCurrentPagePresentation);
     connect(m_themeButton, &QToolButton::clicked, this, [this]() {
         applyUiTheme(m_uiTheme == UiTheme::Light ? UiTheme::Dark : UiTheme::Light, true);
     });
@@ -1512,6 +1513,18 @@ void MainWindow::updateHealthSnapshot()
 void MainWindow::togglePresentationMode()
 {
     setPresentationMode(!m_presentationMode);
+}
+
+void MainWindow::toggleCurrentPagePresentation()
+{
+    if (m_mainTabs->currentWidget() == m_noiseReductionPage) {
+        if (m_presentationMode) {
+            setPresentationMode(false);
+        }
+        m_noiseReductionPage->showPresentation();
+        return;
+    }
+    togglePresentationMode();
 }
 
 void MainWindow::setPresentationMode(bool enabled)

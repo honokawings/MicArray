@@ -225,6 +225,11 @@ void NoiseReductionPage::setControlSendResult(
         success ? QStringLiteral("方向控制已发送：%1").arg(message) : message);
 }
 
+void NoiseReductionPage::showPresentation()
+{
+    setPresentationMode(true);
+}
+
 ControlValues NoiseReductionPage::currentControlValues() const
 {
     return DirectionControlMapper::controlValues(

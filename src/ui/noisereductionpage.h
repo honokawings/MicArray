@@ -40,6 +40,7 @@ public:
                              quint32 timestampSeconds,
                              quint32 timestampMicros);
     void setControlSendResult(bool success, const QString &message);
+    void showPresentation();
     ControlValues currentControlValues() const;
     NoiseReductionSettings currentSettings() const { return m_settings; }
     int pendingAudioFrames() const { return m_pendingAudioFrames; }

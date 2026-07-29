@@ -117,6 +117,7 @@ private slots:
     void uiThemeProvidesDistinctPalettesAndBulbIcons();
     void arrayHeatmapTitleFollowsApplicationTheme();
     void mainWindowProvidesDashboardAndPresentationToggle();
+    void presentationButtonRoutesToCurrentPageFullscreen();
     void presentationRestoresMaximizedWindow();
     void presentationVideoSplitterRemainsStableAfterDiagnosticsUpdates();
     void mainWindowTogglesAndPersistsTheme();
@@ -1007,6 +1008,45 @@ void DashboardTest::mainWindowProvidesDashboardAndPresentationToggle()
     QTRY_VERIFY(!presentationWindow->isVisible());
     QCOMPARE(statusBand->window(), static_cast<QWidget *>(&window));
     QCOMPARE(center->window(), static_cast<QWidget *>(&window));
+}
+
+void DashboardTest::presentationButtonRoutesToCurrentPageFullscreen()
+{
+    MainWindow window;
+    window.resize(1200, 700);
+    window.show();
+
+    auto *button = window.findChild<QPushButton *>(
+        QStringLiteral("presentationModeButton"));
+    auto *tabs = window.findChild<QTabWidget *>(
+        QStringLiteral("mainTabs"));
+    auto *noisePage = window.findChild<NoiseReductionPage *>(
+        QStringLiteral("noiseReductionPage"));
+    auto *fusionPresentation = window.findChild<QWidget *>(
+        QStringLiteral("presentationWindow"));
+    auto *noisePresentation = window.findChild<QWidget *>(
+        QStringLiteral("noiseReductionPresentationWindow"));
+    QVERIFY(button);
+    QVERIFY(tabs);
+    QVERIFY(noisePage);
+    QVERIFY(fusionPresentation);
+    QVERIFY(noisePresentation);
+
+    tabs->setCurrentIndex(0);
+    QTest::mouseClick(button, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(fusionPresentation->isFullScreen(), 1000);
+    QVERIFY(!noisePresentation->isVisible());
+    QTest::keyClick(fusionPresentation, Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(!fusionPresentation->isVisible(), 1000);
+
+    tabs->setCurrentWidget(noisePage);
+    QCoreApplication::processEvents();
+    QTest::mouseClick(button, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(noisePresentation->isFullScreen(), 1000);
+    QVERIFY(!fusionPresentation->isVisible());
+    QTest::keyClick(noisePresentation, Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(!noisePresentation->isVisible(), 1000);
+    QVERIFY(!fusionPresentation->isVisible());
 }
 
 void DashboardTest::presentationRestoresMaximizedWindow()

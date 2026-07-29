@@ -76,6 +76,7 @@ private slots:
     void enqueueAudioFrame(const HostFrame &frame);
     void dispatchNextAudioFrame();
     void dispatchNextVideoFrame();
+    void toggleCurrentPagePresentation();
     void togglePresentationMode();
     void applyControlPreset();
     void saveControlPreset();
