@@ -6,6 +6,7 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 namespace MicArray {
@@ -32,6 +33,29 @@ void AudioWaveformWidget::appendPcm16(const QByteArray &pcm16)
     update();
 }
 
+void AudioWaveformWidget::setSamples(const QVector<float> &samples)
+{
+    m_samples.clear();
+    const int start =
+        std::max(0, static_cast<int>(samples.size()) - m_maxSamples);
+    m_samples.reserve(static_cast<int>(samples.size()) - start);
+    for (int index = start; index < samples.size(); ++index) {
+        const double normalized =
+            std::clamp(static_cast<double>(samples.at(index)),
+                       -1.0,
+                       32767.0 / 32768.0);
+        m_samples.append(
+            static_cast<qint16>(std::lround(normalized * 32768.0)));
+    }
+    update();
+}
+
+void AudioWaveformWidget::setTitle(const QString &title)
+{
+    m_title = title.trimmed();
+    update();
+}
+
 void AudioWaveformWidget::clear()
 {
     m_samples.clear();
@@ -53,7 +77,9 @@ void AudioWaveformWidget::paintEvent(QPaintEvent *)
     painter.drawLine(QPointF(plot.left(), centerY), QPointF(plot.right(), centerY));
 
     painter.setPen(QColor(170, 185, 200));
-    painter.drawText(plot.adjusted(8, 4, -8, -4), Qt::AlignLeft | Qt::AlignTop, QStringLiteral("当前播放通道波形"));
+    painter.drawText(plot.adjusted(8, 4, -8, -4),
+                     Qt::AlignLeft | Qt::AlignTop,
+                     m_title);
 
     if (m_samples.size() < 2) {
         painter.setPen(QColor(130, 145, 160));

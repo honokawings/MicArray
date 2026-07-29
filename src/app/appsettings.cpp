@@ -1,6 +1,7 @@
 #include "app/appsettings.h"
 
 #include "control/controlvalues.h"
+#include "control/directioncontrolmapper.h"
 
 #include <QSettings>
 #include <QRegularExpression>
@@ -260,6 +261,200 @@ LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettin
         value.calibrationSamples.clear();
         value.calibrationRmsPixels = defaults.calibrationRmsPixels;
         value.calibrationVersion = defaults.calibrationVersion;
+    }
+    return value;
+}
+
+bool validNoiseSource(NoiseSignalSource source)
+{
+    switch (source) {
+    case NoiseSignalSource::FirstElement:
+    case NoiseSignalSource::EnhancedA:
+    case NoiseSignalSource::SuppressionB1:
+    case NoiseSignalSource::SuppressionB2:
+    case NoiseSignalSource::Denoised:
+        return true;
+    }
+    return false;
+}
+
+QString noiseModeKey(NoiseReductionMode mode)
+{
+    return mode == NoiseReductionMode::TwoPoint
+        ? QStringLiteral("twoPoint") : QStringLiteral("singlePoint");
+}
+
+QString noiseAlgorithmKey(NoiseReductionAlgorithm algorithm)
+{
+    return algorithm == NoiseReductionAlgorithm::AdaptiveWiener
+        ? QStringLiteral("adaptive") : QStringLiteral("fixed");
+}
+
+NoiseReductionAlgorithm noiseAlgorithmFromKey(const QString &key)
+{
+    if (key == QStringLiteral("adaptive")) {
+        return NoiseReductionAlgorithm::AdaptiveWiener;
+    }
+    return NoiseReductionAlgorithm::FixedParameterWiener;
+}
+
+QString bandPassPresetKey(BandPassPreset preset)
+{
+    switch (preset) {
+    case BandPassPreset::Voice:
+        return QStringLiteral("voice");
+    case BandPassPreset::Music:
+        return QStringLiteral("music");
+    case BandPassPreset::Custom:
+        return QStringLiteral("custom");
+    }
+    return QStringLiteral("voice");
+}
+
+BandPassPreset bandPassPresetFromKey(const QString &key)
+{
+    if (key == QStringLiteral("music")) {
+        return BandPassPreset::Music;
+    }
+    if (key == QStringLiteral("custom")) {
+        return BandPassPreset::Custom;
+    }
+    return BandPassPreset::Voice;
+}
+
+NoiseReductionMode noiseModeFromKey(const QString &key)
+{
+    if (key == QStringLiteral("twoPoint")) {
+        return NoiseReductionMode::TwoPoint;
+    }
+    return NoiseReductionMode::SinglePoint;
+}
+
+QString noiseSourceKey(NoiseSignalSource source)
+{
+    switch (source) {
+    case NoiseSignalSource::FirstElement:
+        return QStringLiteral("firstElement");
+    case NoiseSignalSource::EnhancedA:
+        return QStringLiteral("enhancedA");
+    case NoiseSignalSource::SuppressionB1:
+        return QStringLiteral("suppressionB1");
+    case NoiseSignalSource::SuppressionB2:
+        return QStringLiteral("suppressionB2");
+    case NoiseSignalSource::Denoised:
+        return QStringLiteral("denoised");
+    }
+    return QStringLiteral("denoised");
+}
+
+NoiseSignalSource noiseSourceFromKey(
+    const QString &key, NoiseSignalSource fallback)
+{
+    if (key == QStringLiteral("firstElement")) {
+        return NoiseSignalSource::FirstElement;
+    }
+    if (key == QStringLiteral("enhancedA")) {
+        return NoiseSignalSource::EnhancedA;
+    }
+    if (key == QStringLiteral("suppressionB1")) {
+        return NoiseSignalSource::SuppressionB1;
+    }
+    if (key == QStringLiteral("suppressionB2")) {
+        return NoiseSignalSource::SuppressionB2;
+    }
+    if (key == QStringLiteral("denoised")) {
+        return NoiseSignalSource::Denoised;
+    }
+    return fallback;
+}
+
+NoiseReductionSettings sanitizeNoiseReductionSettings(
+    NoiseReductionSettings value)
+{
+    const NoiseReductionSettings defaults;
+    if (value.algorithm != NoiseReductionAlgorithm::FixedParameterWiener
+        && value.algorithm != NoiseReductionAlgorithm::AdaptiveWiener) {
+        value.algorithm = defaults.algorithm;
+    }
+    if (value.mode != NoiseReductionMode::SinglePoint
+        && value.mode != NoiseReductionMode::TwoPoint) {
+        value.mode = defaults.mode;
+    }
+    auto sanitizeCoefficient = [](double value, double fallback) {
+        return std::isfinite(value) && value >= 0.0 && value <= 100.0
+            ? value : fallback;
+    };
+    value.singleSuppressionCoefficient = sanitizeCoefficient(
+        value.singleSuppressionCoefficient,
+        defaults.singleSuppressionCoefficient);
+    value.dualB1SuppressionCoefficient = sanitizeCoefficient(
+        value.dualB1SuppressionCoefficient,
+        defaults.dualB1SuppressionCoefficient);
+    value.dualB2SuppressionCoefficient = sanitizeCoefficient(
+        value.dualB2SuppressionCoefficient,
+        defaults.dualB2SuppressionCoefficient);
+    if (!validNoiseSource(value.monitorSource)) {
+        value.monitorSource = defaults.monitorSource;
+    }
+    if (!validNoiseSource(value.firstPlotSource)) {
+        value.firstPlotSource = defaults.firstPlotSource;
+    }
+    if (!validNoiseSource(value.secondPlotSource)) {
+        value.secondPlotSource = defaults.secondPlotSource;
+    }
+    if (!std::isfinite(value.monitorGainDb)
+        || value.monitorGainDb < -60.0 || value.monitorGainDb > 24.0) {
+        value.monitorGainDb = defaults.monitorGainDb;
+    }
+    if (value.bandPass.preset != BandPassPreset::Voice
+        && value.bandPass.preset != BandPassPreset::Music
+        && value.bandPass.preset != BandPassPreset::Custom) {
+        value.bandPass.preset = defaults.bandPass.preset;
+    }
+    if (!std::isfinite(value.bandPass.lowCutoffHz)
+        || !std::isfinite(value.bandPass.highCutoffHz)
+        || value.bandPass.lowCutoffHz <= 0.0
+        || value.bandPass.lowCutoffHz >= value.bandPass.highCutoffHz) {
+        value.bandPass.lowCutoffHz = defaults.bandPass.lowCutoffHz;
+        value.bandPass.highCutoffHz = defaults.bandPass.highCutoffHz;
+    }
+    if (!value.mapping.isValid()) {
+        value.mapping = defaults.mapping;
+    }
+    value.enhancedA = DirectionControlMapper::clampDirection(
+        value.enhancedA, value.mapping);
+    value.suppressionB1 = DirectionControlMapper::clampDirection(
+        value.suppressionB1, value.mapping);
+    value.suppressionB2 = DirectionControlMapper::clampDirection(
+        value.suppressionB2, value.mapping);
+    if (!std::isfinite(value.camera.centerAzimuthDegrees)
+        || value.camera.centerAzimuthDegrees < -180.0
+        || value.camera.centerAzimuthDegrees > 180.0) {
+        value.camera.centerAzimuthDegrees =
+            defaults.camera.centerAzimuthDegrees;
+    }
+    if (!std::isfinite(value.camera.centerElevationDegrees)
+        || value.camera.centerElevationDegrees < -90.0
+        || value.camera.centerElevationDegrees > 90.0) {
+        value.camera.centerElevationDegrees =
+            defaults.camera.centerElevationDegrees;
+    }
+    if (!std::isfinite(value.camera.horizontalFovDegrees)
+        || value.camera.horizontalFovDegrees <= 1.0
+        || value.camera.horizontalFovDegrees > 180.0) {
+        value.camera.horizontalFovDegrees =
+            defaults.camera.horizontalFovDegrees;
+    }
+    if (!std::isfinite(value.camera.verticalFovDegrees)
+        || value.camera.verticalFovDegrees <= 1.0
+        || value.camera.verticalFovDegrees > 180.0) {
+        value.camera.verticalFovDegrees =
+            defaults.camera.verticalFovDegrees;
+    }
+    if (!std::isfinite(value.camera.rollDegrees)
+        || value.camera.rollDegrees < -180.0
+        || value.camera.rollDegrees > 180.0) {
+        value.camera.rollDegrees = defaults.camera.rollDegrees;
     }
     return value;
 }
@@ -574,6 +769,169 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
     return sanitizeLiveLocalizationSettings(value);
 }
 
+NoiseReductionSettings AppSettings::noiseReduction() const
+{
+    const NoiseReductionSettings defaults;
+    NoiseReductionSettings value;
+    const QString group = QStringLiteral("noiseReduction/");
+    value.enabled =
+        m_settings->value(group + QStringLiteral("enabled"), defaults.enabled)
+            .toBool();
+    const QString algorithm =
+        m_settings->value(group + QStringLiteral("algorithm"),
+                          noiseAlgorithmKey(defaults.algorithm)).toString();
+    value.algorithm = noiseAlgorithmFromKey(algorithm);
+    const QString mode =
+        m_settings->value(group + QStringLiteral("mode"),
+                          noiseModeKey(defaults.mode)).toString();
+    value.mode = noiseModeFromKey(mode);
+    value.monitorEnabled =
+        m_settings->value(group + QStringLiteral("monitorEnabled"),
+                          defaults.monitorEnabled).toBool();
+    value.monitorSource = noiseSourceFromKey(
+        m_settings->value(group + QStringLiteral("monitorSource"),
+                          noiseSourceKey(defaults.monitorSource)).toString(),
+        defaults.monitorSource);
+    value.firstPlotSource = noiseSourceFromKey(
+        m_settings->value(group + QStringLiteral("firstPlotSource"),
+                          noiseSourceKey(defaults.firstPlotSource)).toString(),
+        defaults.firstPlotSource);
+    value.secondPlotSource = noiseSourceFromKey(
+        m_settings->value(group + QStringLiteral("secondPlotSource"),
+                          noiseSourceKey(defaults.secondPlotSource)).toString(),
+        defaults.secondPlotSource);
+    value.showMarkers =
+        m_settings->value(group + QStringLiteral("showMarkers"),
+                          defaults.showMarkers).toBool();
+    value.bandPass.enabled =
+        m_settings->value(group + QStringLiteral("bandPassEnabled"),
+                          defaults.bandPass.enabled).toBool();
+    value.bandPass.preset = bandPassPresetFromKey(
+        m_settings->value(group + QStringLiteral("bandPassPreset"),
+                          bandPassPresetKey(defaults.bandPass.preset))
+            .toString());
+
+    auto readDouble = [this, &group](const QString &key,
+                                     double fallback,
+                                     double *target) {
+        if (!readFiniteNumberSetting(
+                m_settings->value(group + key, fallback), target)) {
+            *target = fallback;
+        }
+    };
+    readDouble(QStringLiteral("monitorGainDb"),
+               defaults.monitorGainDb,
+               &value.monitorGainDb);
+    readDouble(QStringLiteral("singleSuppressionCoefficient"),
+               defaults.singleSuppressionCoefficient,
+               &value.singleSuppressionCoefficient);
+    readDouble(QStringLiteral("dualB1SuppressionCoefficient"),
+               defaults.dualB1SuppressionCoefficient,
+               &value.dualB1SuppressionCoefficient);
+    readDouble(QStringLiteral("dualB2SuppressionCoefficient"),
+               defaults.dualB2SuppressionCoefficient,
+               &value.dualB2SuppressionCoefficient);
+    readDouble(QStringLiteral("bandPassLowCutoffHz"),
+               defaults.bandPass.lowCutoffHz,
+               &value.bandPass.lowCutoffHz);
+    readDouble(QStringLiteral("bandPassHighCutoffHz"),
+               defaults.bandPass.highCutoffHz,
+               &value.bandPass.highCutoffHz);
+
+    readDouble(QStringLiteral("mappingAzimuthMinimumDegrees"),
+               defaults.mapping.azimuthMinimumDegrees,
+               &value.mapping.azimuthMinimumDegrees);
+    readDouble(QStringLiteral("mappingAzimuthMaximumDegrees"),
+               defaults.mapping.azimuthMaximumDegrees,
+               &value.mapping.azimuthMaximumDegrees);
+    readDouble(QStringLiteral("mappingElevationMinimumDegrees"),
+               defaults.mapping.elevationMinimumDegrees,
+               &value.mapping.elevationMinimumDegrees);
+    readDouble(QStringLiteral("mappingElevationMaximumDegrees"),
+               defaults.mapping.elevationMaximumDegrees,
+               &value.mapping.elevationMaximumDegrees);
+    if (!value.mapping.isValid()) {
+        value.mapping = defaults.mapping;
+    }
+
+    auto readTarget = [this, &group, &value](
+                          const QString &prefix,
+                          const ContinuousDirectionTarget &fallback) {
+        ContinuousDirectionTarget target = fallback;
+        const QString azimuthDegreesKey =
+            group + prefix + QStringLiteral("AzimuthDegrees");
+        const QString elevationDegreesKey =
+            group + prefix + QStringLiteral("ElevationDegrees");
+        if (m_settings->contains(azimuthDegreesKey)
+            && m_settings->contains(elevationDegreesKey)) {
+            if (!readFiniteNumberSetting(
+                    m_settings->value(azimuthDegreesKey),
+                    &target.azimuthDegrees)) {
+                target.azimuthDegrees = fallback.azimuthDegrees;
+            }
+            if (!readFiniteNumberSetting(
+                    m_settings->value(elevationDegreesKey),
+                    &target.elevationDegrees)) {
+                target.elevationDegrees = fallback.elevationDegrees;
+            }
+        } else {
+            int azimuth = DirectionControlMapper::azimuthCode(
+                fallback.azimuthDegrees, value.mapping);
+            int elevation = DirectionControlMapper::elevationCode(
+                fallback.elevationDegrees, value.mapping);
+            if (!readIntegerSetting(
+                    m_settings->value(
+                        group + prefix + QStringLiteral("AzimuthCode"),
+                        azimuth),
+                    &azimuth)
+                || azimuth < -4 || azimuth > 4) {
+                azimuth = DirectionControlMapper::azimuthCode(
+                    fallback.azimuthDegrees, value.mapping);
+            }
+            if (!readIntegerSetting(
+                    m_settings->value(
+                        group + prefix + QStringLiteral("ElevationCode"),
+                        elevation),
+                    &elevation)
+                || elevation < -3 || elevation > 3) {
+                elevation = DirectionControlMapper::elevationCode(
+                    fallback.elevationDegrees, value.mapping);
+            }
+            target.azimuthDegrees =
+                DirectionControlMapper::azimuthDegrees(
+                    static_cast<qint16>(azimuth), value.mapping);
+            target.elevationDegrees =
+                DirectionControlMapper::elevationDegrees(
+                    static_cast<qint16>(elevation), value.mapping);
+        }
+        return DirectionControlMapper::clampDirection(
+            target, value.mapping);
+    };
+    value.enhancedA =
+        readTarget(QStringLiteral("enhancedA"), defaults.enhancedA);
+    value.suppressionB1 =
+        readTarget(QStringLiteral("suppressionB1"), defaults.suppressionB1);
+    value.suppressionB2 =
+        readTarget(QStringLiteral("suppressionB2"), defaults.suppressionB2);
+
+    readDouble(QStringLiteral("cameraCenterAzimuthDegrees"),
+               value.camera.centerAzimuthDegrees,
+               &value.camera.centerAzimuthDegrees);
+    readDouble(QStringLiteral("cameraCenterElevationDegrees"),
+               value.camera.centerElevationDegrees,
+               &value.camera.centerElevationDegrees);
+    readDouble(QStringLiteral("cameraHorizontalFovDegrees"),
+               value.camera.horizontalFovDegrees,
+               &value.camera.horizontalFovDegrees);
+    readDouble(QStringLiteral("cameraVerticalFovDegrees"),
+               value.camera.verticalFovDegrees,
+               &value.camera.verticalFovDegrees);
+    readDouble(QStringLiteral("cameraRollDegrees"),
+               value.camera.rollDegrees,
+               &value.camera.rollDegrees);
+    return sanitizeNoiseReductionSettings(value);
+}
+
 GainConfiguration AppSettings::gainConfiguration() const
 {
     const GainConfiguration defaults;
@@ -754,6 +1112,81 @@ void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsV
         m_settings->setValue(prefix + QStringLiteral("deviation"),
                              sample.angularDeviationDegrees);
     }
+    m_settings->sync();
+}
+
+void AppSettings::saveNoiseReduction(
+    const NoiseReductionSettings &settingsValue)
+{
+    const NoiseReductionSettings value =
+        sanitizeNoiseReductionSettings(settingsValue);
+    const QString group = QStringLiteral("noiseReduction/");
+    m_settings->setValue(group + QStringLiteral("enabled"), value.enabled);
+    m_settings->setValue(group + QStringLiteral("algorithm"),
+                         noiseAlgorithmKey(value.algorithm));
+    m_settings->setValue(group + QStringLiteral("mode"),
+                         noiseModeKey(value.mode));
+    m_settings->setValue(group + QStringLiteral("singleSuppressionCoefficient"),
+                         value.singleSuppressionCoefficient);
+    m_settings->setValue(group + QStringLiteral("dualB1SuppressionCoefficient"),
+                         value.dualB1SuppressionCoefficient);
+    m_settings->setValue(group + QStringLiteral("dualB2SuppressionCoefficient"),
+                         value.dualB2SuppressionCoefficient);
+    m_settings->setValue(group + QStringLiteral("monitorEnabled"),
+                         value.monitorEnabled);
+    m_settings->setValue(group + QStringLiteral("monitorSource"),
+                         noiseSourceKey(value.monitorSource));
+    m_settings->setValue(group + QStringLiteral("monitorGainDb"),
+                         value.monitorGainDb);
+    m_settings->setValue(group + QStringLiteral("firstPlotSource"),
+                         noiseSourceKey(value.firstPlotSource));
+    m_settings->setValue(group + QStringLiteral("secondPlotSource"),
+                         noiseSourceKey(value.secondPlotSource));
+    m_settings->setValue(group + QStringLiteral("showMarkers"),
+                         value.showMarkers);
+    m_settings->setValue(group + QStringLiteral("bandPassEnabled"),
+                         value.bandPass.enabled);
+    m_settings->setValue(group + QStringLiteral("bandPassPreset"),
+                         bandPassPresetKey(value.bandPass.preset));
+    m_settings->setValue(group + QStringLiteral("bandPassLowCutoffHz"),
+                         value.bandPass.lowCutoffHz);
+    m_settings->setValue(group + QStringLiteral("bandPassHighCutoffHz"),
+                         value.bandPass.highCutoffHz);
+    auto saveTarget = [this, &group](
+                          const QString &prefix,
+                          const ContinuousDirectionTarget &target) {
+        m_settings->setValue(
+            group + prefix + QStringLiteral("AzimuthDegrees"),
+            target.azimuthDegrees);
+        m_settings->setValue(
+            group + prefix + QStringLiteral("ElevationDegrees"),
+            target.elevationDegrees);
+    };
+    saveTarget(QStringLiteral("enhancedA"), value.enhancedA);
+    saveTarget(QStringLiteral("suppressionB1"), value.suppressionB1);
+    saveTarget(QStringLiteral("suppressionB2"), value.suppressionB2);
+    m_settings->setValue(
+        group + QStringLiteral("mappingAzimuthMinimumDegrees"),
+        value.mapping.azimuthMinimumDegrees);
+    m_settings->setValue(
+        group + QStringLiteral("mappingAzimuthMaximumDegrees"),
+        value.mapping.azimuthMaximumDegrees);
+    m_settings->setValue(
+        group + QStringLiteral("mappingElevationMinimumDegrees"),
+        value.mapping.elevationMinimumDegrees);
+    m_settings->setValue(
+        group + QStringLiteral("mappingElevationMaximumDegrees"),
+        value.mapping.elevationMaximumDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraCenterAzimuthDegrees"),
+                         value.camera.centerAzimuthDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraCenterElevationDegrees"),
+                         value.camera.centerElevationDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraHorizontalFovDegrees"),
+                         value.camera.horizontalFovDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraVerticalFovDegrees"),
+                         value.camera.verticalFovDegrees);
+    m_settings->setValue(group + QStringLiteral("cameraRollDegrees"),
+                         value.camera.rollDegrees);
     m_settings->sync();
 }
 

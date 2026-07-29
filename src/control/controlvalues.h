@@ -2,6 +2,7 @@
 
 #include <array>
 
+#include <QMetaType>
 #include <QtGlobal>
 
 namespace MicArray {
@@ -21,3 +22,5 @@ private:
 };
 
 } // namespace MicArray
+
+Q_DECLARE_METATYPE(MicArray::ControlValues)

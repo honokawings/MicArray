@@ -33,6 +33,7 @@
 #include "ui/arrayheatmapwidget.h"
 #include "ui/audioanalysispage.h"
 #include "ui/livelocalizationpage.h"
+#include "ui/noisereductionpage.h"
 #include "ui/audiowaveformwidget.h"
 #include "ui/trendchartwidget.h"
 #include "ui/uitheme.h"
@@ -80,6 +81,7 @@ private slots:
     void saveControlPreset();
     void deleteControlPreset();
     void restoreLastSentControl();
+    void sendNoiseReductionControl(const ControlValues &values);
     void exportDiagnostics();
     void resetSettingsToDefaults();
     void startRecording();
@@ -228,6 +230,7 @@ private:
     QVector<QLabel *> m_debugSegmentLabels;
     QTabWidget *m_mainTabs = nullptr;
     AudioAnalysisPage *m_audioAnalysisPage = nullptr;
+    NoiseReductionPage *m_noiseReductionPage = nullptr;
     LiveLocalizationPage *m_liveLocalizationPage = nullptr;
     QPushButton *m_presentationButton = nullptr;
     QToolButton *m_themeButton = nullptr;

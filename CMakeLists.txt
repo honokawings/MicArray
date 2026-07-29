@@ -23,6 +23,7 @@ set(MICARRAY_SOURCES
     src/app/appsettings.cpp
     src/app/logger.cpp
     src/control/controlvalues.cpp
+    src/control/directioncontrolmapper.cpp
     src/device/deviceclient.cpp
     src/device/networkworker.cpp
     src/diagnostics/alertcoalescer.cpp
@@ -30,10 +31,15 @@ set(MICARRAY_SOURCES
     src/media/audioframedecoder.cpp
     src/media/audioprocessor.cpp
     src/media/audiorecorder.cpp
+    src/media/bandpassfilter.cpp
     src/media/channelgainprocessor.cpp
     src/media/gainprofilestore.cpp
     src/media/mediaframequeue.cpp
     src/media/multichannelwavwriter.cpp
+    src/media/noisereductionframedecoder.cpp
+    src/media/noisereductiontypes.cpp
+    src/media/noisereductionworker.cpp
+    src/media/wienernoisereducer.cpp
     src/media/videodecoder.cpp
     src/monitoring/healthmonitor.cpp
     src/protocol/protocolcodec.cpp
@@ -44,6 +50,9 @@ set(MICARRAY_SOURCES
     src/ui/directionphotowidget.cpp
     src/ui/livelocalizationview.cpp
     src/ui/livelocalizationpage.cpp
+    src/ui/noisereductionvideowidget.cpp
+    src/ui/noisereductionpage.cpp
+    src/ui/powerspectrumwidget.cpp
     src/ui/displayformat.cpp
     src/ui/mainwindow.cpp
     src/ui/trendchartwidget.cpp
@@ -68,6 +77,7 @@ set(MICARRAY_HEADERS
     src/app/appsettings.h
     src/app/logger.h
     src/control/controlvalues.h
+    src/control/directioncontrolmapper.h
     src/device/deviceclient.h
     src/device/networkworker.h
     src/diagnostics/alertcoalescer.h
@@ -75,10 +85,15 @@ set(MICARRAY_HEADERS
     src/media/audioframedecoder.h
     src/media/audioprocessor.h
     src/media/audiorecorder.h
+    src/media/bandpassfilter.h
     src/media/channelgainprocessor.h
     src/media/gainprofilestore.h
     src/media/mediaframequeue.h
     src/media/multichannelwavwriter.h
+    src/media/noisereductionframedecoder.h
+    src/media/noisereductiontypes.h
+    src/media/noisereductionworker.h
+    src/media/wienernoisereducer.h
     src/media/videodecoder.h
     src/monitoring/healthmonitor.h
     src/protocol/protocolcodec.h
@@ -89,6 +104,9 @@ set(MICARRAY_HEADERS
     src/ui/directionphotowidget.h
     src/ui/livelocalizationview.h
     src/ui/livelocalizationpage.h
+    src/ui/noisereductionvideowidget.h
+    src/ui/noisereductionpage.h
+    src/ui/powerspectrumwidget.h
     src/ui/displayformat.h
     src/ui/mainwindow.h
     src/ui/trendchartwidget.h

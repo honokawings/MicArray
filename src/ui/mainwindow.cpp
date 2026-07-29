@@ -24,6 +24,7 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPropertyAnimation>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStandardPaths>
@@ -117,8 +118,14 @@ MainWindow::~MainWindow()
     if (m_presentationMode) {
         setPresentationMode(false);
     }
+    if (m_mainTabs != nullptr) {
+        disconnect(m_mainTabs, &QTabWidget::currentChanged,
+                   this, nullptr);
+    }
     delete m_liveLocalizationPage;
     m_liveLocalizationPage = nullptr;
+    delete m_noiseReductionPage;
+    m_noiseReductionPage = nullptr;
     delete m_audioAnalysisPage;
     m_audioAnalysisPage = nullptr;
     persistGainConfiguration();
@@ -185,6 +192,8 @@ void MainWindow::buildUi()
     m_mainTabs = new QTabWidget(central);
     m_mainTabs->setObjectName(QStringLiteral("mainTabs"));
     m_mainTabs->addTab(buildMonitorPage(), QStringLiteral("音视频融合"));
+    m_noiseReductionPage = new NoiseReductionPage(&m_settings, m_mainTabs);
+    m_mainTabs->addTab(m_noiseReductionPage, QStringLiteral("降噪处理"));
     m_mainTabs->addTab(buildRecordingPage(), QStringLiteral("音频录制"));
     m_audioAnalysisPage = new AudioAnalysisPage(&m_settings, m_mainTabs);
     m_mainTabs->addTab(m_audioAnalysisPage, QStringLiteral("音频分析"));
@@ -730,6 +739,7 @@ void MainWindow::connectSignals()
     connect(m_dashboardHeatmap, &ArrayHeatmapWidget::loadRequested, this, &MainWindow::loadGainProfile);
     connect(m_lockControlCheck, &QCheckBox::toggled, this, [this](bool locked) {
         setControlsEnabled(!locked && m_client.state() == DeviceState::Connected);
+        m_noiseReductionPage->setControlLocked(locked);
     });
 
     for (QSpinBox *spin : m_controlSpins) {
@@ -743,13 +753,21 @@ void MainWindow::connectSignals()
     connect(m_audioPlaybackCheck, &QCheckBox::toggled, this, &MainWindow::updateAudioSettingsFromUi);
     connect(m_mainTabs, &QTabWidget::currentChanged, this, [this](int index) {
         const bool analysisActive = m_mainTabs->widget(index) == m_audioAnalysisPage;
-        if (analysisActive && m_audioPlaybackCheck->isChecked()) {
+        const bool noiseReductionActive =
+            m_mainTabs->widget(index) == m_noiseReductionPage;
+        if ((analysisActive || noiseReductionActive)
+            && m_audioPlaybackCheck->isChecked()) {
             m_audioPlaybackCheck->setChecked(false);
         }
         m_audioAnalysisPage->setActive(analysisActive);
+        m_noiseReductionPage->setActive(noiseReductionActive);
         m_liveLocalizationPage->setActive(
             m_mainTabs->widget(index) == m_liveLocalizationPage);
     });
+    connect(m_noiseReductionPage,
+            &NoiseReductionPage::controlSendRequested,
+            this,
+            &MainWindow::sendNoiseReductionControl);
 
     connect(&m_client, &DeviceClient::stateChanged, this, &MainWindow::updateConnectionState);
     connect(&m_client, &DeviceClient::statisticsChanged, this, &MainWindow::updateStatistics);
@@ -845,6 +863,7 @@ void MainWindow::loadSettings()
     m_audioPlaybackCheck->setChecked(audio.playbackEnabled);
     m_audioOutputChannel = audio.outputChannel;
     m_audioAverageWindowFrames = audio.averageWindowFrames;
+    m_noiseReductionPage->setSampleRate(audio.sampleRate);
     for (int channel = 0; channel < m_recordingChannelButtons.size(); ++channel) {
         m_recordingChannelButtons.at(channel)->setChecked(channel == audio.outputChannel);
     }
@@ -948,6 +967,50 @@ void MainWindow::sendControl()
     }
 }
 
+void MainWindow::sendNoiseReductionControl(const ControlValues &values)
+{
+    if (m_client.state() != DeviceState::Connected) {
+        m_noiseReductionPage->setControlSendResult(
+            false, QStringLiteral("设备未连接，方向值尚未发送"));
+        return;
+    }
+    if (m_lockControlCheck->isChecked()) {
+        m_noiseReductionPage->setControlSendResult(
+            false, QStringLiteral("控制已锁定，方向值尚未发送"));
+        return;
+    }
+    if (!m_client.sendControl(values)) {
+        m_noiseReductionPage->setControlSendResult(
+            false, QStringLiteral("方向控制发送失败"));
+        return;
+    }
+
+    QVector<qint16> sentValues;
+    sentValues.reserve(ControlValues::ChannelCount);
+    for (int index = 0; index < ControlValues::ChannelCount; ++index) {
+        const QSignalBlocker blocker(m_controlSpins[index]);
+        const qint16 value = values.channelValue(index);
+        m_controlSpins[index]->setValue(value);
+        sentValues.append(value);
+    }
+    m_lastSentControlValues = sentValues;
+    m_hasLastSentControl = true;
+    m_undoControlButton->setEnabled(true);
+    m_controlDirty = false;
+    m_sendControlButton->setText(QStringLiteral("已发送（设备未确认）"));
+    m_noiseReductionPage->setControlSendResult(
+        true,
+        QStringLiteral("A[%1,%2] B1[%3,%4] B2[%5,%6]")
+            .arg(sentValues.at(0))
+            .arg(sentValues.at(1))
+            .arg(sentValues.at(2))
+            .arg(sentValues.at(3))
+            .arg(sentValues.at(4))
+            .arg(sentValues.at(5)));
+    appendAlert(LogLevel::Info,
+                QStringLiteral("降噪方向控制帧已发送，设备协议不提供执行确认"));
+}
+
 void MainWindow::resetControl()
 {
     for (int i = 0; i < ControlValues::ChannelCount; ++i) {
@@ -982,6 +1045,8 @@ void MainWindow::updateConnectionState(DeviceState state)
         m_videoProcessing = false;
     }
     setControlsEnabled(state == DeviceState::Connected && !m_lockControlCheck->isChecked());
+    m_noiseReductionPage->setConnected(state == DeviceState::Connected);
+    m_noiseReductionPage->setControlLocked(m_lockControlCheck->isChecked());
     updateRecordingStartEnabled();
     updateStatistics();
 }
@@ -1203,6 +1268,9 @@ void MainWindow::renderPendingVideoFrame()
     m_liveLocalizationPage->setVideoFrame(m_pendingVideoImage,
                                           m_pendingVideoTimestampSeconds,
                                           m_pendingVideoTimestampMicros);
+    m_noiseReductionPage->setVideoFrame(m_pendingVideoImage,
+                                        m_pendingVideoTimestampSeconds,
+                                        m_pendingVideoTimestampMicros);
     m_videoStatsLabel->setText(QStringLiteral("视频: %1x%2  %3 FPS  时间戳 %4.%5")
                                    .arg(m_pendingVideoImage.width())
                                    .arg(m_pendingVideoImage.height())
@@ -1242,6 +1310,7 @@ void MainWindow::updateAudioSettingsFromUi()
     audio.playbackEnabled = m_audioPlaybackCheck->isChecked();
     m_audioOutputChannel = audio.outputChannel;
     m_audioAverageWindowFrames = audio.averageWindowFrames;
+    m_noiseReductionPage->setSampleRate(audio.sampleRate);
     QMetaObject::invokeMethod(m_audioProcessor,
                               "configure",
                               Qt::QueuedConnection,
@@ -1362,6 +1431,8 @@ void MainWindow::setControlsEnabled(bool enabled)
 
 void MainWindow::enqueueAudioFrame(const HostFrame &frame)
 {
+    m_noiseReductionPage->submitRawAudioFrame(
+        frame.payload, frame.timestampSeconds, frame.timestampMicros);
     if (m_audioFrameQueue.push(frame)) {
         ++m_audioDroppedFrames;
     }

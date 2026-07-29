@@ -44,9 +44,9 @@ bool CameraViewSettings::isValid() const
         && finite(centerElevationDegrees)
         && centerElevationDegrees >= -90.0 && centerElevationDegrees <= 90.0
         && finite(horizontalFovDegrees)
-        && horizontalFovDegrees > 1.0 && horizontalFovDegrees < 179.0
+        && horizontalFovDegrees > 1.0 && horizontalFovDegrees <= 179.0
         && finite(verticalFovDegrees)
-        && verticalFovDegrees > 1.0 && verticalFovDegrees < 179.0
+        && verticalFovDegrees > 1.0 && verticalFovDegrees <= 179.0
         && finite(rollDegrees)
         && rollDegrees >= -180.0 && rollDegrees <= 180.0;
 }

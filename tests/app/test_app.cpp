@@ -3,6 +3,7 @@
 #include "diagnostics/diagnosticexporter.h"
 #include "diagnostics/alertcoalescer.h"
 #include "media/channelgainprocessor.h"
+#include "media/noisereductiontypes.h"
 #include "monitoring/healthmonitor.h"
 
 #include <QSettings>
@@ -41,6 +42,10 @@ private slots:
     void invalidAudioAnalysisFieldsFallBackIndependently();
     void persistsLiveLocalizationSettings();
     void invalidLiveLocalizationFieldsFallBackIndependently();
+    void usesNoiseReductionProcessingDefaults();
+    void persistsNoiseReductionSettings();
+    void migratesLegacyNoiseDirectionCodesToContinuousAngles();
+    void invalidNoiseReductionFieldsFallBackIndependently();
     void healthMonitorClassifiesFreshnessAndCalculatesRates();
     void loggerRotatesAndRetainsBoundedFiles();
     void alertCoalescerSuppressesRepeatedEventsWithinOneSecond();
@@ -593,6 +598,204 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
     QVERIFY(actual.calibrationSamples.isEmpty());
     QCOMPARE(actual.calibrationReferenceVideoSize,
              defaults.calibrationReferenceVideoSize);
+}
+
+void AppTest::persistsNoiseReductionSettings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+
+    NoiseReductionSettings expected;
+    expected.enabled = true;
+    expected.algorithm = NoiseReductionAlgorithm::AdaptiveWiener;
+    expected.mode = NoiseReductionMode::TwoPoint;
+    expected.singleSuppressionCoefficient = 2.5;
+    expected.dualB1SuppressionCoefficient = 4.25;
+    expected.dualB2SuppressionCoefficient = 6.75;
+    expected.monitorEnabled = false;
+    expected.monitorSource = NoiseSignalSource::SuppressionB1;
+    expected.monitorGainDb = 6.5;
+    expected.firstPlotSource = NoiseSignalSource::FirstElement;
+    expected.secondPlotSource = NoiseSignalSource::SuppressionB2;
+    expected.bandPass.enabled = true;
+    expected.bandPass.preset = BandPassPreset::Music;
+    expected.bandPass.lowCutoffHz = 40.0;
+    expected.bandPass.highCutoffHz = 16000.0;
+    expected.showMarkers = false;
+    expected.enhancedA = {11.2, -7.4};
+    expected.suppressionB1 = {-38.8, 12.6};
+    expected.suppressionB2 = {74.9, -29.3};
+    expected.mapping = {-120.0, 120.0, -30.0, 60.0};
+    expected.camera.centerAzimuthDegrees = 12.0;
+    expected.camera.centerElevationDegrees = -4.0;
+    expected.camera.horizontalFovDegrees = 100.0;
+    expected.camera.verticalFovDegrees = 70.0;
+    expected.camera.rollDegrees = 3.0;
+
+    {
+        AppSettings settings(path);
+        settings.saveNoiseReduction(expected);
+    }
+    QCOMPARE(AppSettings(path).noiseReduction(), expected);
+}
+
+void AppTest::usesNoiseReductionProcessingDefaults()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    const NoiseReductionSettings actual =
+        AppSettings(directory.filePath(QStringLiteral("settings.ini")))
+            .noiseReduction();
+    QCOMPARE(actual.algorithm, NoiseReductionAlgorithm::FixedParameterWiener);
+    QCOMPARE(actual.singleSuppressionCoefficient, 3.0);
+    QCOMPARE(actual.dualB1SuppressionCoefficient, 5.0);
+    QCOMPARE(actual.dualB2SuppressionCoefficient, 5.0);
+    QVERIFY(actual.monitorEnabled);
+    QVERIFY(!actual.bandPass.enabled);
+    QCOMPARE(actual.bandPass.preset, BandPassPreset::Voice);
+    QCOMPARE(actual.bandPass.lowCutoffHz, 100.0);
+    QCOMPARE(actual.bandPass.highCutoffHz, 8000.0);
+    QCOMPARE(actual.mapping.azimuthMinimumDegrees, -90.0);
+    QCOMPARE(actual.mapping.azimuthMaximumDegrees, 90.0);
+    QCOMPARE(actual.mapping.elevationMinimumDegrees, -90.0);
+    QCOMPARE(actual.mapping.elevationMaximumDegrees, 90.0);
+    QCOMPARE(actual.camera.horizontalFovDegrees, 180.0);
+    QCOMPARE(actual.camera.verticalFovDegrees, 180.0);
+}
+
+void AppTest::migratesLegacyNoiseDirectionCodesToContinuousAngles()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/mappingAzimuthMinimumDegrees"),
+                     -120.0);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/mappingAzimuthMaximumDegrees"),
+                     120.0);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/mappingElevationMinimumDegrees"),
+                     -30.0);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/mappingElevationMaximumDegrees"),
+                     60.0);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/enhancedAAzimuthCode"),
+                     1);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/enhancedAElevationCode"),
+                     -1);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/suppressionB1AzimuthCode"),
+                     -2);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/suppressionB1ElevationCode"),
+                     2);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/suppressionB2AzimuthCode"),
+                     4);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/suppressionB2ElevationCode"),
+                     -3);
+    }
+
+    NoiseReductionSettings migrated = AppSettings(path).noiseReduction();
+    QCOMPARE(migrated.enhancedA.azimuthDegrees, 30.0);
+    QCOMPARE(migrated.enhancedA.elevationDegrees, 0.0);
+    QCOMPARE(migrated.suppressionB1.azimuthDegrees, -60.0);
+    QCOMPARE(migrated.suppressionB1.elevationDegrees, 45.0);
+    QCOMPARE(migrated.suppressionB2.azimuthDegrees, 120.0);
+    QCOMPARE(migrated.suppressionB2.elevationDegrees, -30.0);
+
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/enhancedAAzimuthDegrees"),
+                     17.3);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/enhancedAElevationDegrees"),
+                     -8.6);
+    }
+    migrated = AppSettings(path).noiseReduction();
+    QCOMPARE(migrated.enhancedA.azimuthDegrees, 17.3);
+    QCOMPARE(migrated.enhancedA.elevationDegrees, -8.6);
+}
+
+void AppTest::invalidNoiseReductionFieldsFallBackIndependently()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("noiseReduction/enabled"), true);
+        raw.setValue(QStringLiteral("noiseReduction/algorithm"),
+                     QStringLiteral("invalid"));
+        raw.setValue(QStringLiteral("noiseReduction/mode"), QStringLiteral("invalid"));
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/singleSuppressionCoefficient"),
+                     -1.0);
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/dualB1SuppressionCoefficient"),
+                     std::numeric_limits<double>::infinity());
+        raw.setValue(QStringLiteral(
+                         "noiseReduction/dualB2SuppressionCoefficient"),
+                     7.0);
+        raw.setValue(QStringLiteral("noiseReduction/monitorEnabled"), false);
+        raw.setValue(QStringLiteral("noiseReduction/monitorSource"), QStringLiteral("missing"));
+        raw.setValue(QStringLiteral("noiseReduction/monitorGainDb"),
+                     std::numeric_limits<double>::infinity());
+        raw.setValue(QStringLiteral("noiseReduction/firstPlotSource"),
+                     QStringLiteral("firstElement"));
+        raw.setValue(QStringLiteral("noiseReduction/secondPlotSource"),
+                     QStringLiteral("suppressionB2"));
+        raw.setValue(QStringLiteral("noiseReduction/bandPassEnabled"), true);
+        raw.setValue(QStringLiteral("noiseReduction/bandPassPreset"),
+                     QStringLiteral("invalid"));
+        raw.setValue(QStringLiteral("noiseReduction/bandPassLowCutoffHz"),
+                     12000.0);
+        raw.setValue(QStringLiteral("noiseReduction/bandPassHighCutoffHz"),
+                     8000.0);
+        raw.setValue(QStringLiteral("noiseReduction/enhancedAAzimuthCode"), 99);
+        raw.setValue(QStringLiteral("noiseReduction/enhancedAElevationCode"), -99);
+        raw.setValue(QStringLiteral("noiseReduction/suppressionB1AzimuthCode"), -2);
+        raw.setValue(QStringLiteral("noiseReduction/suppressionB1ElevationCode"), 2);
+        raw.setValue(QStringLiteral("noiseReduction/mappingAzimuthMinimumDegrees"), 20.0);
+        raw.setValue(QStringLiteral("noiseReduction/mappingAzimuthMaximumDegrees"), -20.0);
+        raw.setValue(QStringLiteral("noiseReduction/cameraCenterAzimuthDegrees"), 15.0);
+        raw.setValue(QStringLiteral("noiseReduction/cameraHorizontalFovDegrees"), 180.0);
+    }
+
+    const NoiseReductionSettings defaults;
+    const NoiseReductionSettings actual = AppSettings(path).noiseReduction();
+    QVERIFY(actual.enabled);
+    QCOMPARE(actual.algorithm, defaults.algorithm);
+    QCOMPARE(actual.mode, defaults.mode);
+    QCOMPARE(actual.singleSuppressionCoefficient,
+             defaults.singleSuppressionCoefficient);
+    QCOMPARE(actual.dualB1SuppressionCoefficient,
+             defaults.dualB1SuppressionCoefficient);
+    QCOMPARE(actual.dualB2SuppressionCoefficient, 7.0);
+    QVERIFY(!actual.monitorEnabled);
+    QCOMPARE(actual.monitorSource, defaults.monitorSource);
+    QCOMPARE(actual.monitorGainDb, defaults.monitorGainDb);
+    QCOMPARE(actual.firstPlotSource, NoiseSignalSource::FirstElement);
+    QCOMPARE(actual.secondPlotSource, NoiseSignalSource::SuppressionB2);
+    QVERIFY(actual.bandPass.enabled);
+    QCOMPARE(actual.bandPass.preset, defaults.bandPass.preset);
+    QCOMPARE(actual.bandPass.lowCutoffHz, defaults.bandPass.lowCutoffHz);
+    QCOMPARE(actual.bandPass.highCutoffHz, defaults.bandPass.highCutoffHz);
+    QCOMPARE(actual.enhancedA, defaults.enhancedA);
+    QCOMPARE(actual.suppressionB1,
+             ContinuousDirectionTarget({-45.0, 60.0}));
+    QCOMPARE(actual.mapping, defaults.mapping);
+    QCOMPARE(actual.camera.centerAzimuthDegrees, 15.0);
+    QCOMPARE(actual.camera.horizontalFovDegrees, 180.0);
 }
 
 void AppTest::healthMonitorClassifiesFreshnessAndCalculatesRates()

@@ -2,6 +2,7 @@
 
 #include "analysis/localizationtypes.h"
 #include "media/channelgainprocessor.h"
+#include "media/noisereductiontypes.h"
 
 #include <QMetaType>
 #include <QObject>
@@ -99,6 +100,7 @@ public:
     AppearanceSettings appearance() const;
     AudioAnalysisSettings audioAnalysis() const;
     LiveLocalizationSettings liveLocalization() const;
+    NoiseReductionSettings noiseReduction() const;
     GainConfiguration gainConfiguration() const;
 
     void saveConnection(const ConnectionSettings &settings);
@@ -107,6 +109,7 @@ public:
     void saveAppearance(const AppearanceSettings &settings);
     void saveAudioAnalysis(const AudioAnalysisSettings &settings);
     void saveLiveLocalization(const LiveLocalizationSettings &settings);
+    void saveNoiseReduction(const NoiseReductionSettings &settings);
     bool saveGainConfiguration(const GainConfiguration &configuration, QString *error = nullptr);
 
     QList<ControlPreset> controlPresets() const;

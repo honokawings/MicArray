@@ -212,6 +212,47 @@ GCC-PHAT 的实时热力图使用高性能纯 CPU 路径：122 个麦克风对�
 
 进入和离开“声源定位”页不会修改实时选中通道播放状态，也不会改变设备连接、视频、录音、增益或控制状态。
 
+### 实时阵列降噪
+
+路径：
+
+- `src/media/noisereductionframedecoder.*`
+- `src/media/wienernoisereducer.*`
+- `src/media/noisereductionworker.*`
+- `src/control/directioncontrolmapper.*`
+- `src/ui/noisereductionpage.*`
+- `src/ui/noisereductionvideowidget.*`
+- `src/ui/powerspectrumwidget.*`
+
+“降噪处理”页位于“音视频融合”右侧，复用设备实时视频，并从进入移位增益、AGC 和常规监听链路之前的原始 48 通道 payload 建立独立旁路。因此调整现有 48 路移位增益不会改变降噪输入：
+
+| 降噪通道 | 原始阵列数据语义 |
+|---|---|
+| CH0 | 第一个阵元原始音频 |
+| CH1 | 阵列指向增强方向 A 的接收音频 |
+| CH2 | 阵列指向抑制方向 B1 的接收音频 |
+| CH3 | 阵列指向抑制方向 B2 的接收音频 |
+| CH4-CH47 | 降噪算法不读取，按无数据处理 |
+
+`NoiseReductionFrameDecoder` 只提取 CH0-CH3。`WienerNoiseReducer` 使用 1024 点 FFT、512 点步长、平方根 Hann 窗和归一化重叠相加，支持两种可切换算法：
+
+- 固定参数维纳（默认）：单点增益为 `Pe/(Pe+C1*Ps1)`，`C1` 默认 3；双点增益为 `Pe/(Pe+CB1*Ps1+CB2*Ps2)`，B1、B2 系数可独立调整且均默认 5。
+- 自适应维纳：单点使用 B1 参考估计干扰传递函数；双点使用 B1、B2 的正则化 2×2 复协方差矩阵，退化矩阵自动回退到稳定的单参考计算。
+
+降噪结果可在进入频谱与音频输出前串联可选的四阶 Butterworth 带通滤波器（二阶高通和二阶低通级联）。内置人声 `100–8000 Hz`、音乐 `40–16000 Hz` 两组预设，也可手动设置上下限；滤波关闭时保持严格旁路。监听输出可独立关闭，关闭后释放音频输出设备，但降噪、波形和频谱处理继续运行。
+
+实际方位角和俯仰角映射默认均为 `-90°～90°`，降噪视频水平/垂直视场角默认显示并保存为 `180°`，投影计算内部安全限制为 `179°`。方向实际角度、映射和视频视角数值不响应鼠标滚轮，仍支持键盘输入和按钮微调。
+
+页面可在第一个阵元、增强 A、抑制 B1、抑制 B2、降噪输出五种信号中选择监听源，并独立设置 `-60..+24 dB` 监听增益。两个对比区可分别选择任一信号，默认显示增强 A 与降噪输出的时域波形及 2048 点、`-120..0 dBFS` 功率谱。
+
+方向控制沿用设备的 6 路控制帧：接口 0/2/4 分别是 A/B1/B2 方位码，范围 `-4..4`；接口 1/3/5 分别是 A/B1/B2 俯仰码，范围 `-3..3`。实际角度范围默认方位 `-90..90°`、俯仰 `-45..45°`，可在页面修改。A、B1、B2 的六个可编辑参数保存未量化的连续实际角度，旁边只读显示对应接口码；接口码仅在显示和发送时按线性映射、四舍五入及范围夹紧生成，不会反向覆盖实际角度。
+
+选择 A、B1 或 B2 后点击任意有效视频位置，会按当前中心方位、中心俯仰、水平/垂直视场角和滚转角反投影并保存连续角度，标记直接使用该连续值投影，因此不会吸附到低分辨率接口码网格；随后仍会一次发送全部 6 路量化控制值。三个标记可统一隐藏。连续方向、映射、视角、模式、监听和对比源均自动保存在本地；如果本地只有早期版本保存的接口码，首次加载时会按当前映射反算为连续角度。
+
+算法、监听和绘图数据在独立 `NoiseReductionThread` 中处理。UI 到工作线程最多保留 32 个待处理原始帧，过载时只丢弃降噪旁路新帧，不阻塞常规播放、录音、实时定位、视频或网络链路。进入降噪页会关闭“音视频融合”的原通道播放，离开后不自动恢复；设备连接、录音、增益、视频和其他功能保持运行。
+
+降噪页的全屏按钮打开独立无边框镜像窗口，不迁移普通页面控件，也不改变主窗口几何或状态。全屏内容严格限制为视频和两张功率谱，可使用 `Esc`、关闭窗口或双击视频退出。
+
 ### 控制层
 
 路径：
@@ -289,6 +330,7 @@ Connecting -> Error
 当前页面：
 
 - `音视频融合`：连接、6 路控制、媒体设置、视频预览、音频电平、阵列幅值与增益、诊断和日志。
+- `降噪处理`：从增益前原始 CH0-CH3 实时执行单点/两点维纳抑制，提供五种监听源、双波形/功率谱对比、视频点击方向控制和独立精简全屏。
 - “演示全屏”会打开独立全屏窗口，主窗口保持进入前的普通或最大化状态，从而避免退出时经过中等窗口；演示窗口保留顶部连接、端点、心跳、接收速率和健康状态，以及视频、滚动波形、阵列幅值热力图和趋势图。视频与右侧实时协议诊断摘要之间的分隔条可手动拖动，实时文本刷新不会改变比例，拖动比例在本次运行期间自动保留。左侧操作区、完整诊断右栏、告警、日志、底部日志状态栏、错误计数、导出诊断和页签栏不会出现在演示窗口，但对应后台功能和数据记录不会停止。可使用“退出全屏”、双击视频或 `Esc` 恢复原布局。
 - 顶部右侧灯泡按钮用于切换浅色/深色模式，主题立即应用到全部页面并自动保存到本地，下次启动自动恢复；恢复全部默认设置会回到浅色模式。
 - 实时监控页的视频预览下方显示当前播放通道的滚动音频波形，用于快速确认选中通道是否有信号、是否削顶或静音。
@@ -384,6 +426,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-release.ps
 - 音频输出格式配置。
 - 多通道 WAV 头、通道交织、自动分段、JSON 清单、不覆盖策略和文件写入异常。
 - 录制工作线程的开始/停止顺序、有界队列、队列溢出、格式错误和启动失败处理。
+- 降噪 CH0-CH3 原始解码、CH4-CH47 隔离、方向码映射、固定/自适应维纳、单点与双点独立系数、静音与退化输入数值稳定性。
+- 四阶带通的通带/阻带和状态重置；降噪工作对象的启停、后处理顺序、监听关闭、绘图节流、监听增益饱和、频谱峰值、页面默认值、防滚轮误操作、视频点击、页面切换和独立全屏生命周期。
 - 自适应字节单位、录制页面交互、持久化默认通道和 1366x768 布局。
 - 帧尾后 16 字节在同一 chunk、跨 chunk 和连接清理场景下的调试预览。
 
@@ -517,6 +561,9 @@ python tools\mock_device_server.py --stress-mode burst --burst-size-mb 64 --burs
 
 | 日期 | 类型 | 影响模块 | 变更摘要 | 验证方式 |
 |---|---|---|---|---|
+| 2026-07-29 | 降噪算法与输出后处理增强 | 音频、UI、配置、线程、测试、文档 | 降噪算法新增默认固定参数维纳并保留自适应维纳；单点系数默认 3，双点 B1/B2 系数可独立设置且默认 5；降噪后新增可选四阶带通及人声/音乐预设，监听可独立关闭；实际角度映射默认 `-90°～90°`、视场角默认显示/保存 `180°` 并以 `179°` 安全投影，方向、映射和视角输入屏蔽滚轮误操作。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
+| 2026-07-28 | 降噪方向连续标记修正 | 控制、UI、配置、测试、文档 | A/B1/B2 改为保存和编辑连续实际角度，视频点击标记不再吸附到接口量化网格；六路接口码改为只读显示并仅在发送边界量化；已有接口码配置可自动迁移为连续角度。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
+| 2026-07-28 | 实时阵列降噪 | 音频、控制、UI、配置、线程、测试、文档 | 新增位于音视频融合右侧的实时降噪页；从增益前原始 CH0-CH3 建立独立有界旁路，支持单点/两点频域维纳抑制、五源监听、双波形/功率谱对比；支持可配置实际角度映射、视频点击设置 A/B1/B2 并发送全部 6 路控制值，以及只包含视频和两张功率谱的独立全屏窗口。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-26 | 独立演示窗口与可拖动视频分隔条 | UI、窗口状态、测试、文档 | 演示模式改用独立顶层全屏窗口，主窗口全程保持原状态，退出时不再经过普通中等窗口；视频与紧凑诊断卡片改用水平分隔器，支持手动拖动并在运行期保存比例，诊断文本刷新不再引发视频区域逐步放大；普通模式下诊断卡片完全移出分隔器，避免隐藏控件的最小宽度撑大主窗口。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-26 | 音视频融合与演示界面修复 | UI、主题、测试、文档 | 移除视频/音频时间戳统计之间无说明的电平进度条，音频峰值继续由统计文本显示；补齐浅色主题下录制通道按钮的未选中、悬停、选中和禁用配色；演示全屏在视频右侧显示紧凑实时协议诊断卡片并继续隐藏告警和日志；退出全屏改为禁用绘制期间一次性恢复进入前窗口状态和布局，避免普通窗口到最大化窗口的中间闪跳。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |
 | 2026-07-26 | 演示全屏与主题增强 | UI、配置、测试、文档 | 演示全屏改为保留顶部连接/健康状态和中心视频、波形、阵列热力图、趋势图的清爽布局，隐藏诊断、告警、日志及操作侧栏并支持 `Esc` 无损恢复；新增代码绘制的灯泡按钮切换全局浅色/深色主题，主题本地持久化并在启动时恢复。 | `cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug`、`ctest --test-dir build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --output-on-failure`、`python -m unittest discover -s tests/tools -p "test_*.py" -v`、`python tools/mock_device_server.py --self-test`、`git diff --check` |

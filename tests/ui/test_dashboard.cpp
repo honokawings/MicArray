@@ -1,6 +1,8 @@
 #include "analysis/calibrationprofile.h"
+#include "control/directioncontrolmapper.h"
 #include "ui/arrayheatmapwidget.h"
 #include "ui/audioanalysispage.h"
+#include "ui/audiowaveformwidget.h"
 #include "ui/directionphotowidget.h"
 #include "ui/livelocalizationview.h"
 #include "ui/livelocalizationpage.h"
@@ -9,9 +11,13 @@
 #include "ui/uitheme.h"
 #include "ui/videopreviewwidget.h"
 #include "ui/mainwindow.h"
+#include "ui/noisereductionpage.h"
+#include "ui/noisereductionvideowidget.h"
+#include "ui/powerspectrumwidget.h"
 
 #include <QSignalSpy>
 #include <QCheckBox>
+#include <QLabel>
 #include <QProgressBar>
 #include <QScrollArea>
 #include <QSettings>
@@ -23,6 +29,7 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QStandardPaths>
+#include <QWheelEvent>
 #include <QWindow>
 #include <QtTest>
 
@@ -127,6 +134,15 @@ private slots:
     void audioVisualizationWaitsForRenderTick();
     void audioPipelineAllowsMultipleFramesInFlight();
     void heatmapAmplitudeRefreshKeepsStyleSheetStable();
+    void powerSpectrumWidgetStoresRealtimeSeries();
+    void noiseReductionVideoAcceptsOnlyVisibleVideoClicks();
+    void waveformWidgetAcceptsNamedFloatSeries();
+    void noiseReductionPageProvidesRealtimeControlsAndDefaults();
+    void noiseReductionCriticalAnglesIgnoreMouseWheel();
+    void noiseReductionVideoClickUpdatesSelectedTargetAndRequestsAllControls();
+    void noiseReductionManualAnglesRemainContinuousAndShowQuantizedCodes();
+    void enteringNoiseReductionDisablesRealtimePlaybackWithoutRestoringIt();
+    void noiseReductionFullscreenUsesIndependentMirrorWidgets();
 };
 
 void DashboardTest::initTestCase()
@@ -134,6 +150,10 @@ void DashboardTest::initTestCase()
     QStandardPaths::setTestModeEnabled(true);
     QCoreApplication::setOrganizationName(QStringLiteral("MicArrayTests"));
     QCoreApplication::setApplicationName(QStringLiteral("MicArrayDashboardTests"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings testSettings;
+    testSettings.clear();
+    testSettings.sync();
 }
 
 void DashboardTest::audioAnalysisPageProvidesOfflineControls()
@@ -408,6 +428,319 @@ void DashboardTest::liveLocalizationViewAcceptsOnlyVideoClicks()
     QVERIFY(QLineF(point, QPointF(0.5, 0.5)).length() < 0.01);
     QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(320, 20));
     QCOMPARE(clicked.count(), 1);
+}
+
+void DashboardTest::powerSpectrumWidgetStoresRealtimeSeries()
+{
+    PowerSpectrumWidget widget;
+    const QVector<float> spectrum {-120.0f, -30.0f, -6.0f};
+    widget.setSpectrum(QStringLiteral("增强 A"), spectrum, 48000);
+    QCOMPARE(widget.sourceName(), QStringLiteral("增强 A"));
+    QCOMPARE(widget.spectrum(), spectrum);
+    QCOMPARE(widget.sampleRate(), 48000);
+}
+
+void DashboardTest::noiseReductionVideoAcceptsOnlyVisibleVideoClicks()
+{
+    NoiseReductionVideoWidget widget;
+    widget.resize(640, 480);
+    widget.setFrame(QImage(1600, 900, QImage::Format_RGB32));
+    widget.setMarkersVisible(false);
+    QVERIFY(!widget.markersVisible());
+    widget.show();
+
+    QSignalSpy clicked(&widget,
+                       &NoiseReductionVideoWidget::videoPointClicked);
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(320, 240));
+    QCOMPARE(clicked.count(), 1);
+    const QPointF point = clicked.first().at(0).toPointF();
+    QVERIFY(QLineF(point, QPointF(0.5, 0.5)).length() < 0.01);
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(320, 20));
+    QCOMPARE(clicked.count(), 1);
+}
+
+void DashboardTest::waveformWidgetAcceptsNamedFloatSeries()
+{
+    AudioWaveformWidget widget;
+    widget.setTitle(QStringLiteral("降噪输出"));
+    widget.setSamples(QVector<float> {-1.0f, -0.5f, 0.5f, 1.0f});
+    QCOMPARE(widget.title(), QStringLiteral("降噪输出"));
+    QCOMPARE(widget.sampleCount(), 4);
+}
+
+void DashboardTest::noiseReductionPageProvidesRealtimeControlsAndDefaults()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+    page.resize(1200, 760);
+    page.show();
+
+    QVERIFY(page.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionEnabledCheck")));
+    auto *mode = page.findChild<QComboBox *>(
+        QStringLiteral("noiseReductionModeCombo"));
+    auto *algorithm = page.findChild<QComboBox *>(
+        QStringLiteral("noiseReductionAlgorithmCombo"));
+    auto *singleCoefficient = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseReductionSingleCoefficientSpin"));
+    auto *dualB1Coefficient = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseReductionDualB1CoefficientSpin"));
+    auto *dualB2Coefficient = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseReductionDualB2CoefficientSpin"));
+    auto *monitorEnabled = page.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionMonitorEnabledCheck"));
+    auto *bandPassEnabled = page.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionBandPassEnabledCheck"));
+    auto *bandPassPreset = page.findChild<QComboBox *>(
+        QStringLiteral("noiseReductionBandPassPresetCombo"));
+    auto *bandPassLow = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseReductionBandPassLowSpin"));
+    auto *bandPassHigh = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseReductionBandPassHighSpin"));
+    auto *monitor = page.findChild<QComboBox *>(
+        QStringLiteral("noiseReductionMonitorSourceCombo"));
+    auto *first = page.findChild<QComboBox *>(
+        QStringLiteral("noisePlotSource1Combo"));
+    auto *second = page.findChild<QComboBox *>(
+        QStringLiteral("noisePlotSource2Combo"));
+    QVERIFY(mode);
+    QVERIFY(algorithm);
+    QVERIFY(singleCoefficient);
+    QVERIFY(dualB1Coefficient);
+    QVERIFY(dualB2Coefficient);
+    QVERIFY(monitorEnabled);
+    QVERIFY(bandPassEnabled);
+    QVERIFY(bandPassPreset);
+    QVERIFY(bandPassLow);
+    QVERIFY(bandPassHigh);
+    QVERIFY(monitor);
+    QVERIFY(first);
+    QVERIFY(second);
+    QCOMPARE(mode->currentData().toInt(),
+             static_cast<int>(NoiseReductionMode::SinglePoint));
+    QCOMPARE(algorithm->currentData().toInt(),
+             static_cast<int>(
+                 NoiseReductionAlgorithm::FixedParameterWiener));
+    QCOMPARE(singleCoefficient->value(), 3.0);
+    QCOMPARE(dualB1Coefficient->value(), 5.0);
+    QCOMPARE(dualB2Coefficient->value(), 5.0);
+    QVERIFY(monitorEnabled->isChecked());
+    QVERIFY(!bandPassEnabled->isChecked());
+    QCOMPARE(bandPassPreset->currentData().toInt(),
+             static_cast<int>(BandPassPreset::Voice));
+    QCOMPARE(bandPassLow->value(), 100.0);
+    QCOMPARE(bandPassHigh->value(), 8000.0);
+    QCOMPARE(monitor->currentData().toInt(),
+             static_cast<int>(NoiseSignalSource::Denoised));
+    QCOMPARE(first->currentData().toInt(),
+             static_cast<int>(NoiseSignalSource::EnhancedA));
+    QCOMPARE(second->currentData().toInt(),
+             static_cast<int>(NoiseSignalSource::Denoised));
+    QCOMPARE(page.findChild<QDoubleSpinBox *>(
+                 QStringLiteral("noiseElevationMinimumSpin"))->value(),
+             -90.0);
+    QCOMPARE(page.findChild<QDoubleSpinBox *>(
+                 QStringLiteral("noiseElevationMaximumSpin"))->value(),
+             90.0);
+    QCOMPARE(page.findChild<QDoubleSpinBox *>(
+                 QStringLiteral("noiseCameraHorizontalFovSpin"))->value(),
+             180.0);
+    QCOMPARE(page.findChild<QDoubleSpinBox *>(
+                 QStringLiteral("noiseCameraVerticalFovSpin"))->value(),
+             180.0);
+    QCOMPARE(page.findChildren<AudioWaveformWidget *>().size(), 2);
+    QCOMPARE(page.findChildren<PowerSpectrumWidget *>().size(), 4);
+    QVERIFY(page.findChild<QPushButton *>(
+        QStringLiteral("noiseReductionFullscreenButton")));
+}
+
+void DashboardTest::noiseReductionCriticalAnglesIgnoreMouseWheel()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+    page.resize(1200, 760);
+    page.show();
+    QCoreApplication::processEvents();
+
+    auto sendWheel = [](QDoubleSpinBox *spin) {
+        spin->setFocus();
+        const QPointF local = spin->rect().center();
+        const QPointF global = spin->mapToGlobal(
+            spin->rect().center());
+        QWheelEvent event(local,
+                          global,
+                          QPoint(),
+                          QPoint(0, 120),
+                          Qt::NoButton,
+                          Qt::NoModifier,
+                          Qt::ScrollUpdate,
+                          false);
+        QCoreApplication::sendEvent(spin, &event);
+    };
+
+    const QStringList protectedNames {
+        QStringLiteral("noiseDirectionAAzimuthDegreesSpin"),
+        QStringLiteral("noiseAzimuthMinimumSpin"),
+        QStringLiteral("noiseCameraHorizontalFovSpin"),
+    };
+    for (const QString &name : protectedNames) {
+        auto *spin = page.findChild<QDoubleSpinBox *>(name);
+        QVERIFY(spin);
+        const double before = spin->value();
+        sendWheel(spin);
+        QCOMPARE(spin->value(), before);
+    }
+
+    auto *coefficient = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseReductionSingleCoefficientSpin"));
+    QVERIFY(coefficient);
+    const double before = coefficient->value();
+    sendWheel(coefficient);
+    QVERIFY(coefficient->value() > before);
+}
+
+void DashboardTest::noiseReductionVideoClickUpdatesSelectedTargetAndRequestsAllControls()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+    page.setConnected(true);
+    page.setControlLocked(false);
+    page.resize(1200, 760);
+    page.show();
+
+    auto *target = page.findChild<QComboBox *>(
+        QStringLiteral("noiseDirectionTargetCombo"));
+    auto *view = page.findChild<NoiseReductionVideoWidget *>(
+        QStringLiteral("noiseReductionVideoView"));
+    QVERIFY(target);
+    QVERIFY(view);
+    target->setCurrentIndex(target->findData(
+        static_cast<int>(NoiseDirectionSelection::SuppressionB1)));
+    page.setVideoFrame(QImage(1600, 900, QImage::Format_RGB32), 1, 2);
+    QCoreApplication::processEvents();
+
+    QSignalSpy requested(&page, &NoiseReductionPage::controlSendRequested);
+    const QRectF video = view->videoRect();
+    const QPoint click(qRound(video.left() + video.width() * 0.63),
+                       qRound(video.center().y()));
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, click);
+    QCOMPARE(requested.count(), 1);
+    const NoiseReductionSettings settingsAfterClick =
+        page.currentSettings();
+    QVERIFY(settingsAfterClick.suppressionB1.azimuthDegrees > 85.0);
+    QVERIFY(settingsAfterClick.suppressionB1.azimuthDegrees < 90.0);
+    QVERIFY(qAbs(settingsAfterClick.suppressionB1.elevationDegrees) < 0.2);
+    const ControlValues values = page.currentControlValues();
+    QCOMPARE(values.channelValue(0), qint16(0));
+    QCOMPARE(values.channelValue(1), qint16(0));
+    QCOMPARE(values.channelValue(2), qint16(4));
+    QCOMPARE(values.channelValue(3), qint16(0));
+    QCOMPARE(values.channelValue(4), qint16(0));
+    QCOMPARE(values.channelValue(5), qint16(0));
+    const double quantizedAzimuth =
+        DirectionControlMapper::azimuthDegrees(
+            values.channelValue(2), settingsAfterClick.mapping);
+    QVERIFY(qAbs(settingsAfterClick.suppressionB1.azimuthDegrees
+                 - quantizedAzimuth)
+            > 0.5);
+}
+
+void DashboardTest::
+    noiseReductionManualAnglesRemainContinuousAndShowQuantizedCodes()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+    page.resize(1200, 760);
+    page.show();
+
+    auto *azimuth = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseDirectionB2AzimuthDegreesSpin"));
+    auto *elevation = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseDirectionB2ElevationDegreesSpin"));
+    auto *azimuthCode = page.findChild<QLabel *>(
+        QStringLiteral("noiseDirectionB2AzimuthCodeLabel"));
+    auto *elevationCode = page.findChild<QLabel *>(
+        QStringLiteral("noiseDirectionB2ElevationCodeLabel"));
+    QVERIFY(azimuth);
+    QVERIFY(elevation);
+    QVERIFY(azimuthCode);
+    QVERIFY(elevationCode);
+
+    azimuth->setValue(17.3);
+    elevation->setValue(-8.6);
+    QCoreApplication::processEvents();
+
+    const NoiseReductionSettings actual = page.currentSettings();
+    QCOMPARE(actual.suppressionB2.azimuthDegrees, 17.3);
+    QCOMPARE(actual.suppressionB2.elevationDegrees, -8.6);
+    QCOMPARE(azimuth->value(), 17.3);
+    QCOMPARE(elevation->value(), -8.6);
+    QCOMPARE(azimuthCode->text(), QStringLiteral("1"));
+    QCOMPARE(elevationCode->text(), QStringLiteral("0"));
+}
+
+void DashboardTest::enteringNoiseReductionDisablesRealtimePlaybackWithoutRestoringIt()
+{
+    MainWindow window;
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *playback = window.findChild<QCheckBox *>(
+        QStringLiteral("audioPlaybackCheck"));
+    auto *page = window.findChild<NoiseReductionPage *>(
+        QStringLiteral("noiseReductionPage"));
+    QVERIFY(tabs);
+    QVERIFY(playback);
+    QVERIFY(page);
+    QCOMPARE(tabs->indexOf(page), 1);
+    QCOMPARE(tabs->tabText(1), QStringLiteral("降噪处理"));
+
+    playback->setChecked(true);
+    tabs->setCurrentWidget(page);
+    QCoreApplication::processEvents();
+    QVERIFY(!playback->isChecked());
+    tabs->setCurrentIndex(0);
+    QVERIFY(!playback->isChecked());
+}
+
+void DashboardTest::noiseReductionFullscreenUsesIndependentMirrorWidgets()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+    page.resize(1200, 760);
+    page.show();
+    auto *normalVideo = page.findChild<NoiseReductionVideoWidget *>(
+        QStringLiteral("noiseReductionVideoView"));
+    auto *button = page.findChild<QPushButton *>(
+        QStringLiteral("noiseReductionFullscreenButton"));
+    auto *presentation = page.findChild<QWidget *>(
+        QStringLiteral("noiseReductionPresentationWindow"));
+    QVERIFY(normalVideo);
+    QVERIFY(button);
+    QVERIFY(presentation);
+    QWidget *normalParent = normalVideo->parentWidget();
+
+    QTest::mouseClick(button, Qt::LeftButton);
+    QTRY_VERIFY(presentation->isFullScreen());
+    QCOMPARE(normalVideo->parentWidget(), normalParent);
+    QCOMPARE(presentation->findChildren<NoiseReductionVideoWidget *>().size(),
+             1);
+    QCOMPARE(presentation->findChildren<PowerSpectrumWidget *>().size(), 2);
+    QVERIFY(presentation->findChildren<AudioWaveformWidget *>().isEmpty());
+    QVERIFY(presentation->findChildren<QPushButton *>().isEmpty());
+
+    QTest::keyClick(presentation, Qt::Key_Escape);
+    QTRY_VERIFY(!presentation->isVisible());
 }
 
 void DashboardTest::liveLocalizationPageProvidesCalibrationControls()

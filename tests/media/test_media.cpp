@@ -11,15 +11,22 @@
 
 #include <limits>
 #include <memory>
+#include <numbers>
+#include <random>
 
+#include "control/directioncontrolmapper.h"
 #include "media/audioframedecoder.h"
 #include "media/audioprocessor.h"
 #include "media/audiorecorder.h"
+#include "media/bandpassfilter.h"
 #include "media/channelgainprocessor.h"
 #include "media/gainprofilestore.h"
 #include "media/videodecoder.h"
 #include "media/mediaframequeue.h"
 #include "media/multichannelwavwriter.h"
+#include "media/noisereductionframedecoder.h"
+#include "media/noisereductionworker.h"
+#include "media/wienernoisereducer.h"
 
 using namespace MicArray;
 
@@ -38,6 +45,42 @@ qint32 readSample(const QByteArray &payload, int samplePoint, int channel)
         + channel * AudioFrameDecoder::BytesPerChannel;
     return qFromLittleEndian<qint32>(
         reinterpret_cast<const uchar *>(payload.constData() + offset));
+}
+
+double rootMeanSquareError(const QVector<float> &actual,
+                           const QVector<float> &expected,
+                           int skipSamples)
+{
+    const int count = std::min(actual.size(), expected.size());
+    double sum = 0.0;
+    int used = 0;
+    for (int index = skipSamples; index < count; ++index) {
+        const double difference =
+            static_cast<double>(actual.at(index) - expected.at(index));
+        sum += difference * difference;
+        ++used;
+    }
+    return used > 0 ? std::sqrt(sum / static_cast<double>(used)) : 0.0;
+}
+
+double toneAmplitude(const QVector<float> &samples,
+                     double frequencyHz,
+                     int sampleRate,
+                     int skipSamples)
+{
+    double sine = 0.0;
+    double cosine = 0.0;
+    int used = 0;
+    for (int index = skipSamples; index < samples.size(); ++index) {
+        const double phase =
+            2.0 * std::numbers::pi * frequencyHz * index / sampleRate;
+        sine += samples.at(index) * std::sin(phase);
+        cosine += samples.at(index) * std::cos(phase);
+        ++used;
+    }
+    return used > 0
+        ? 2.0 * std::hypot(sine, cosine) / static_cast<double>(used)
+        : 0.0;
 }
 
 void fillChannelSamples(QByteArray &payload, int channel, qint32 sample)
@@ -143,6 +186,18 @@ private slots:
     void stopsRecordingOnQueueOverflow();
     void preservesFormatFailureAfterQueuedFramesAndStop();
     void preservesAsynchronousStartFailureAfterImmediateStop();
+    void mapsNoiseReductionDirectionsToSixControlInterfaces();
+    void quantizesContinuousNoiseDirectionsOnlyAtControlBoundary();
+    void clampsAndRejectsInvalidNoiseReductionDirectionMappings();
+    void decodesOnlyFirstFourNoiseReductionChannels();
+    void rejectsInvalidNoiseReductionPayload();
+    void suppressesOneAndTwoReferenceComponentsWithWienerFilter();
+    void appliesFixedWienerCoefficientsIndependently();
+    void keepsWienerOutputFiniteForSilentAndDegenerateReferences();
+    void appliesAndResetsFourthOrderBandPassFilter();
+    void noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources();
+    void filtersDenoisedWorkerOutputWhileMonitoringIsDisabled();
+    void computesNoiseReductionSpectrumAndSaturatingMonitorGain();
 };
 
 void MediaTest::decodesJpegPayload()
@@ -1544,6 +1599,427 @@ void MediaTest::preservesAsynchronousStartFailureAfterImmediateStop()
 
     QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Error, 3000);
     QVERIFY(recorder.statistics().error.contains(QStringLiteral("does not exist")));
+}
+
+void MediaTest::mapsNoiseReductionDirectionsToSixControlInterfaces()
+{
+    const DirectionControlMapping mapping;
+    QCOMPARE(DirectionControlMapper::azimuthCode(-90.0, mapping), qint16(-4));
+    QCOMPARE(DirectionControlMapper::azimuthCode(0.0, mapping), qint16(0));
+    QCOMPARE(DirectionControlMapper::azimuthCode(90.0, mapping), qint16(4));
+    QCOMPARE(DirectionControlMapper::elevationCode(-90.0, mapping), qint16(-3));
+    QCOMPARE(DirectionControlMapper::elevationCode(0.0, mapping), qint16(0));
+    QCOMPARE(DirectionControlMapper::elevationCode(90.0, mapping), qint16(3));
+    QCOMPARE(DirectionControlMapper::azimuthDegrees(1, mapping), 22.5);
+    QCOMPARE(DirectionControlMapper::elevationDegrees(-1, mapping), -30.0);
+
+    const ContinuousDirectionTarget enhancedA {22.5, -30.0};
+    const ContinuousDirectionTarget suppressionB1 {-45.0, 60.0};
+    const ContinuousDirectionTarget suppressionB2 {90.0, -90.0};
+    const ControlValues values = DirectionControlMapper::controlValues(
+        enhancedA, suppressionB1, suppressionB2, mapping);
+    QCOMPARE(values.channelValue(0), qint16(1));
+    QCOMPARE(values.channelValue(1), qint16(-1));
+    QCOMPARE(values.channelValue(2), qint16(-2));
+    QCOMPARE(values.channelValue(3), qint16(2));
+    QCOMPARE(values.channelValue(4), qint16(4));
+    QCOMPARE(values.channelValue(5), qint16(-3));
+}
+
+void MediaTest::quantizesContinuousNoiseDirectionsOnlyAtControlBoundary()
+{
+    const DirectionControlMapping mapping;
+    const ContinuousDirectionTarget enhancedA {11.2, -7.4};
+    const ContinuousDirectionTarget suppressionB1 {-38.8, 12.6};
+    const ContinuousDirectionTarget suppressionB2 {74.9, -33.3};
+
+    const ControlValues values = DirectionControlMapper::controlValues(
+        enhancedA, suppressionB1, suppressionB2, mapping);
+    QCOMPARE(values.channelValue(0), qint16(0));
+    QCOMPARE(values.channelValue(1), qint16(0));
+    QCOMPARE(values.channelValue(2), qint16(-2));
+    QCOMPARE(values.channelValue(3), qint16(0));
+    QCOMPARE(values.channelValue(4), qint16(3));
+    QCOMPARE(values.channelValue(5), qint16(-1));
+    QCOMPARE(enhancedA.azimuthDegrees, 11.2);
+    QCOMPARE(enhancedA.elevationDegrees, -7.4);
+
+    const ContinuousDirectionTarget outside {120.5, -120.25};
+    const ContinuousDirectionTarget clamped =
+        DirectionControlMapper::clampDirection(outside, mapping);
+    QCOMPARE(clamped.azimuthDegrees, 90.0);
+    QCOMPARE(clamped.elevationDegrees, -90.0);
+}
+
+void MediaTest::clampsAndRejectsInvalidNoiseReductionDirectionMappings()
+{
+    DirectionControlMapping mapping;
+    QCOMPARE(DirectionControlMapper::azimuthCode(-1000.0, mapping), qint16(-4));
+    QCOMPARE(DirectionControlMapper::azimuthCode(1000.0, mapping), qint16(4));
+    QCOMPARE(DirectionControlMapper::elevationCode(-1000.0, mapping), qint16(-3));
+    QCOMPARE(DirectionControlMapper::elevationCode(1000.0, mapping), qint16(3));
+
+    mapping.azimuthMinimumDegrees = -80.0;
+    mapping.azimuthMaximumDegrees = 80.0;
+    QCOMPARE(DirectionControlMapper::azimuthCode(10.1, mapping), qint16(1));
+    QCOMPARE(DirectionControlMapper::azimuthCode(-10.1, mapping), qint16(-1));
+
+    mapping.azimuthMaximumDegrees = mapping.azimuthMinimumDegrees;
+    QVERIFY(!mapping.isValid());
+    QCOMPARE(DirectionControlMapper::azimuthCode(30.0, mapping), qint16(0));
+    QCOMPARE(DirectionControlMapper::azimuthDegrees(3, mapping), 0.0);
+}
+
+void MediaTest::decodesOnlyFirstFourNoiseReductionChannels()
+{
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+        fillChannelSamples(payload, channel, (channel + 1) * 100 * 256);
+    }
+
+    const NoiseReductionInputFrame decoded =
+        NoiseReductionFrameDecoder().decode(payload);
+    QVERIFY(decoded.valid);
+    for (int channel = 0; channel < 4; ++channel) {
+        QCOMPARE(decoded.channels.at(channel).size(),
+                 AudioFrameDecoder::SamplesPerFrame);
+        QVERIFY(qAbs(decoded.channels.at(channel).first()
+                     - static_cast<float>((channel + 1) * 100) / 32768.0f)
+                < 1.0e-6f);
+    }
+
+    QByteArray changed = payload;
+    for (int channel = 4; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+        fillChannelSamples(changed, channel, -(channel + 1) * 1000 * 256);
+    }
+    const NoiseReductionInputFrame changedDecoded =
+        NoiseReductionFrameDecoder().decode(changed);
+    QVERIFY(changedDecoded.valid);
+    QCOMPARE(changedDecoded.channels, decoded.channels);
+}
+
+void MediaTest::rejectsInvalidNoiseReductionPayload()
+{
+    const NoiseReductionInputFrame decoded =
+        NoiseReductionFrameDecoder().decode(QByteArray(128, char(0)));
+    QVERIFY(!decoded.valid);
+    QVERIFY(decoded.error.contains(QStringLiteral("38400")));
+}
+
+void MediaTest::suppressesOneAndTwoReferenceComponentsWithWienerFilter()
+{
+    constexpr int SampleRate = 48000;
+    constexpr int SampleCount = SampleRate * 2;
+    QVector<float> target(SampleCount);
+    QVector<float> b1(SampleCount);
+    QVector<float> b2(SampleCount);
+    QVector<float> enhanced(SampleCount);
+    std::mt19937 generator(7319);
+    std::normal_distribution<float> noise(0.0f, 0.16f);
+    for (int index = 0; index < SampleCount; ++index) {
+        target[index] = 0.20f * std::sin(
+            2.0 * std::numbers::pi * 1000.0 * index / SampleRate);
+        b1[index] = noise(generator);
+        b2[index] = noise(generator);
+        enhanced[index] =
+            target.at(index) + 0.85f * b1.at(index) + 0.65f * b2.at(index);
+    }
+
+    WienerNoiseReducer single;
+    single.setAlgorithm(NoiseReductionAlgorithm::AdaptiveWiener);
+    single.setMode(NoiseReductionMode::SinglePoint);
+    const QVector<float> singleOutput = single.process(enhanced, b1, b2);
+
+    WienerNoiseReducer dual;
+    dual.setAlgorithm(NoiseReductionAlgorithm::AdaptiveWiener);
+    dual.setMode(NoiseReductionMode::TwoPoint);
+    const QVector<float> dualOutput = dual.process(enhanced, b1, b2);
+
+    constexpr int SettlingSamples = 12000;
+    const double inputError =
+        rootMeanSquareError(enhanced, target, SettlingSamples);
+    const double singleError =
+        rootMeanSquareError(singleOutput, target, SettlingSamples);
+    const double dualError =
+        rootMeanSquareError(dualOutput, target, SettlingSamples);
+    QVERIFY2(singleError < inputError * 0.82,
+             qPrintable(QStringLiteral("single=%1 input=%2")
+                            .arg(singleError)
+                            .arg(inputError)));
+    QVERIFY2(dualError < singleError * 0.78,
+             qPrintable(QStringLiteral("dual=%1 single=%2")
+                            .arg(dualError)
+                            .arg(singleError)));
+}
+
+void MediaTest::appliesFixedWienerCoefficientsIndependently()
+{
+    constexpr int SampleRate = 48000;
+    constexpr int SampleCount = SampleRate;
+    constexpr int SettlingSamples = 4096;
+    QVector<float> b1(SampleCount);
+    QVector<float> b2(SampleCount);
+    QVector<float> enhancedSingle(SampleCount);
+    QVector<float> enhancedDual(SampleCount);
+    for (int index = 0; index < SampleCount; ++index) {
+        b1[index] = 0.3f * std::sin(
+            2.0 * std::numbers::pi * 750.0 * index / SampleRate);
+        b2[index] = 0.3f * std::sin(
+            2.0 * std::numbers::pi * 3000.0 * index / SampleRate);
+        enhancedSingle[index] = b1.at(index);
+        enhancedDual[index] = b1.at(index) + b2.at(index);
+    }
+
+    WienerNoiseReducer bypass;
+    bypass.setAlgorithm(NoiseReductionAlgorithm::FixedParameterWiener);
+    bypass.setMode(NoiseReductionMode::SinglePoint);
+    bypass.setSuppressionCoefficients(0.0, 5.0, 5.0);
+    const QVector<float> bypassOutput =
+        bypass.process(enhancedSingle, b1, b2);
+
+    WienerNoiseReducer single;
+    single.setAlgorithm(NoiseReductionAlgorithm::FixedParameterWiener);
+    single.setMode(NoiseReductionMode::SinglePoint);
+    single.setSuppressionCoefficients(3.0, 5.0, 5.0);
+    const QVector<float> singleOutput =
+        single.process(enhancedSingle, b1, b2);
+    const double bypassAmplitude =
+        toneAmplitude(bypassOutput, 750.0, SampleRate, SettlingSamples);
+    const double singleAmplitude =
+        toneAmplitude(singleOutput, 750.0, SampleRate, SettlingSamples);
+    QVERIFY(bypassAmplitude > 0.28);
+    QVERIFY(singleAmplitude > bypassAmplitude * 0.22);
+    QVERIFY(singleAmplitude < bypassAmplitude * 0.28);
+
+    WienerNoiseReducer suppressB1;
+    suppressB1.setAlgorithm(NoiseReductionAlgorithm::FixedParameterWiener);
+    suppressB1.setMode(NoiseReductionMode::TwoPoint);
+    suppressB1.setSuppressionCoefficients(3.0, 9.0, 0.0);
+    const QVector<float> b1Output =
+        suppressB1.process(enhancedDual, b1, b2);
+    QVERIFY(toneAmplitude(b1Output, 750.0, SampleRate, SettlingSamples)
+            < toneAmplitude(b1Output, 3000.0, SampleRate, SettlingSamples)
+                * 0.2);
+
+    WienerNoiseReducer suppressB2;
+    suppressB2.setAlgorithm(NoiseReductionAlgorithm::FixedParameterWiener);
+    suppressB2.setMode(NoiseReductionMode::TwoPoint);
+    suppressB2.setSuppressionCoefficients(3.0, 0.0, 9.0);
+    const QVector<float> b2Output =
+        suppressB2.process(enhancedDual, b1, b2);
+    QVERIFY(toneAmplitude(b2Output, 3000.0, SampleRate, SettlingSamples)
+            < toneAmplitude(b2Output, 750.0, SampleRate, SettlingSamples)
+                * 0.2);
+}
+
+void MediaTest::keepsWienerOutputFiniteForSilentAndDegenerateReferences()
+{
+    QVector<float> silence(8192, 0.0f);
+    WienerNoiseReducer reducer;
+    reducer.setAlgorithm(NoiseReductionAlgorithm::AdaptiveWiener);
+    reducer.setMode(NoiseReductionMode::TwoPoint);
+    const QVector<float> silentOutput =
+        reducer.process(silence, silence, silence);
+    QVERIFY(!silentOutput.isEmpty());
+    for (float sample : silentOutput) {
+        QVERIFY(std::isfinite(sample));
+        QCOMPARE(sample, 0.0f);
+    }
+
+    reducer.reset();
+    QVector<float> enhanced(8192);
+    QVector<float> reference(8192);
+    for (int index = 0; index < enhanced.size(); ++index) {
+        reference[index] = 0.2f * std::sin(
+            2.0 * std::numbers::pi * 700.0 * index / 48000.0);
+        enhanced[index] = 0.5f * reference.at(index);
+    }
+    const QVector<float> output =
+        reducer.process(enhanced, reference, reference);
+    QVERIFY(!output.isEmpty());
+    for (float sample : output) {
+        QVERIFY(std::isfinite(sample));
+        QVERIFY(sample >= -1.0f && sample <= 1.0f);
+    }
+}
+
+void MediaTest::appliesAndResetsFourthOrderBandPassFilter()
+{
+    constexpr int SampleRate = 48000;
+    constexpr int SampleCount = SampleRate * 2;
+    constexpr int SettlingSamples = SampleRate / 2;
+    QVector<float> input(SampleCount);
+    for (int index = 0; index < input.size(); ++index) {
+        input[index] =
+            0.15f * std::sin(
+                2.0 * std::numbers::pi * 40.0 * index / SampleRate)
+            + 0.15f * std::sin(
+                2.0 * std::numbers::pi * 1000.0 * index / SampleRate)
+            + 0.15f * std::sin(
+                2.0 * std::numbers::pi * 12000.0 * index / SampleRate);
+    }
+
+    BandPassFilter filter;
+    QVERIFY(filter.configure(SampleRate, 100.0, 8000.0));
+    const QVector<float> output = filter.process(input);
+    QCOMPARE(output.size(), input.size());
+    const double inputMid =
+        toneAmplitude(input, 1000.0, SampleRate, SettlingSamples);
+    const double outputLow =
+        toneAmplitude(output, 40.0, SampleRate, SettlingSamples);
+    const double outputMid =
+        toneAmplitude(output, 1000.0, SampleRate, SettlingSamples);
+    const double outputHigh =
+        toneAmplitude(output, 12000.0, SampleRate, SettlingSamples);
+    QVERIFY(outputMid > inputMid * 0.9);
+    QVERIFY(outputLow < outputMid * 0.2);
+    QVERIFY(outputHigh < outputMid * 0.5);
+
+    filter.reset();
+    const QVector<float> repeated = filter.process(input);
+    QCOMPARE(repeated, output);
+    QVERIFY(filter.process({}).isEmpty());
+    QVERIFY(!filter.configure(SampleRate, 0.0, 8000.0));
+    QVERIFY(!filter.configure(SampleRate, 8000.0, 100.0));
+    QVERIFY(!filter.configure(SampleRate, 100.0, SampleRate / 2.0));
+}
+
+void MediaTest::noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.firstPlotSource = NoiseSignalSource::FirstElement;
+    settings.secondPlotSource = NoiseSignalSource::Denoised;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    QSignalSpy consumed(&worker, &NoiseReductionWorker::frameConsumed);
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    qint64 globalSample = 0;
+    for (int frame = 0; frame < 20; ++frame) {
+        for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame;
+             ++sample, ++globalSample) {
+            const qint32 desired = static_cast<qint32>(
+                std::sin(2.0 * std::numbers::pi * 1000.0
+                         * globalSample / 48000.0)
+                * 5000.0) << 8;
+            const qint32 reference = static_cast<qint32>(
+                std::sin(2.0 * std::numbers::pi * 3000.0
+                         * globalSample / 48000.0)
+                * 2500.0) << 8;
+            putSample(payload, sample, 0, desired);
+            putSample(payload, sample, 1, desired + reference);
+            putSample(payload, sample, 2, reference);
+            putSample(payload, sample, 3, 0);
+        }
+        worker.processRawFrame(payload, 1, static_cast<quint32>(frame * 4167));
+    }
+
+    QCOMPARE(consumed.count(), 20);
+    QVERIFY(!plots.isEmpty());
+    const NoiseReductionPlotFrame plot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    QCOMPARE(plot.first.source, NoiseSignalSource::FirstElement);
+    QCOMPARE(plot.second.source, NoiseSignalSource::Denoised);
+    QVERIFY(!plot.first.waveform.isEmpty());
+    QVERIFY(!plot.second.waveform.isEmpty());
+    QCOMPARE(plot.first.spectrumDbfs.size(), 1025);
+    QCOMPARE(plot.second.spectrumDbfs.size(), 1025);
+    for (float value : plot.second.spectrumDbfs) {
+        QVERIFY(std::isfinite(value));
+        QVERIFY(value >= -120.0f && value <= 0.0f);
+    }
+
+    worker.setActive(false);
+    const int previousPlots = plots.count();
+    worker.processRawFrame(payload, 2, 0);
+    QCOMPARE(consumed.count(), 21);
+    QCOMPARE(plots.count(), previousPlots);
+}
+
+void MediaTest::filtersDenoisedWorkerOutputWhileMonitoringIsDisabled()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.monitorEnabled = false;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::Denoised;
+    settings.bandPass.enabled = true;
+    settings.bandPass.preset = BandPassPreset::Voice;
+    settings.bandPass.lowCutoffHz = 100.0;
+    settings.bandPass.highCutoffHz = 8000.0;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    QSignalSpy warnings(&worker, &NoiseReductionWorker::warningRaised);
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    qint64 globalSample = 0;
+    for (int frame = 0; frame < 40; ++frame) {
+        for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame;
+             ++sample, ++globalSample) {
+            const double mixed =
+                0.25 * std::sin(2.0 * std::numbers::pi * 1000.0
+                                * globalSample / 48000.0)
+                + 0.25 * std::sin(2.0 * std::numbers::pi * 12000.0
+                                  * globalSample / 48000.0);
+            const qint32 value =
+                static_cast<qint32>(mixed * 8388607.0) << 8;
+            putSample(payload, sample, 1, value);
+            putSample(payload, sample, 2, 0);
+            putSample(payload, sample, 3, 0);
+        }
+        worker.processRawFrame(
+            payload, 1, static_cast<quint32>(frame * 4167));
+    }
+
+    QVERIFY(!plots.isEmpty());
+    QCOMPARE(warnings.count(), 0);
+    const NoiseReductionPlotFrame plot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    constexpr int MidBin = 43;
+    constexpr int HighBin = 512;
+    QVERIFY(plot.second.spectrumDbfs.at(MidBin)
+            > plot.first.spectrumDbfs.at(MidBin) - 2.0f);
+    QVERIFY(plot.second.spectrumDbfs.at(HighBin)
+            < plot.first.spectrumDbfs.at(HighBin) - 5.0f);
+}
+
+void MediaTest::computesNoiseReductionSpectrumAndSaturatingMonitorGain()
+{
+    QVector<float> tone(2048);
+    for (int index = 0; index < tone.size(); ++index) {
+        tone[index] = 0.5f * std::sin(
+            2.0 * std::numbers::pi * 1000.0 * index / 48000.0);
+    }
+    const QVector<float> spectrum =
+        NoiseReductionWorker::powerSpectrumDbfs(tone, 48000);
+    QCOMPARE(spectrum.size(), 1025);
+    const auto peak = std::max_element(spectrum.cbegin(), spectrum.cend());
+    QVERIFY(peak != spectrum.cend());
+    const int peakBin = static_cast<int>(peak - spectrum.cbegin());
+    QVERIFY(qAbs(peakBin - 43) <= 1);
+
+    const QByteArray pcm = NoiseReductionWorker::pcm16WithGain(
+        QVector<float> {0.5f, -0.5f, 1.0f, -1.0f}, 12.0);
+    QCOMPARE(pcm.size(), 8);
+    QCOMPARE(qFromLittleEndian<qint16>(
+                 reinterpret_cast<const uchar *>(pcm.constData())),
+             qint16(32767));
+    QCOMPARE(qFromLittleEndian<qint16>(
+                 reinterpret_cast<const uchar *>(pcm.constData() + 2)),
+             qint16(-32768));
+    QCOMPARE(qFromLittleEndian<qint16>(
+                 reinterpret_cast<const uchar *>(pcm.constData() + 4)),
+             qint16(32767));
+    QCOMPARE(qFromLittleEndian<qint16>(
+                 reinterpret_cast<const uchar *>(pcm.constData() + 6)),
+             qint16(-32768));
 }
 
 QTEST_MAIN(MediaTest)
