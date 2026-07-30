@@ -12,6 +12,7 @@
 #include "ui/videopreviewwidget.h"
 #include "ui/mainwindow.h"
 #include "ui/noisereductionpage.h"
+#include "ui/processingnodelistwidget.h"
 #include "ui/noisereductionvideowidget.h"
 #include "ui/powerspectrumwidget.h"
 
@@ -25,6 +26,8 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStackedWidget>
+#include <QTabWidget>
 #include <QToolButton>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -137,10 +140,13 @@ private slots:
     void heatmapAmplitudeRefreshKeepsStyleSheetStable();
     void powerSpectrumWidgetStoresRealtimeSeries();
     void noiseReductionVideoAcceptsOnlyVisibleVideoClicks();
+    void noiseReductionVideoDragsMarkerAndFinishesOnce();
     void waveformWidgetAcceptsNamedFloatSeries();
     void noiseReductionPageProvidesRealtimeControlsAndDefaults();
+    void noiseReductionPageUsesTabbedReorderableDataFlow();
     void noiseReductionCriticalAnglesIgnoreMouseWheel();
     void noiseReductionVideoClickUpdatesSelectedTargetAndRequestsAllControls();
+    void noiseReductionPageSendsDraggedMarkerOnlyOnRelease();
     void noiseReductionManualAnglesRemainContinuousAndShowQuantizedCodes();
     void enteringNoiseReductionDisablesRealtimePlaybackWithoutRestoringIt();
     void noiseReductionFullscreenUsesIndependentMirrorWidgets();
@@ -462,6 +468,41 @@ void DashboardTest::noiseReductionVideoAcceptsOnlyVisibleVideoClicks()
     QCOMPARE(clicked.count(), 1);
 }
 
+void DashboardTest::noiseReductionVideoDragsMarkerAndFinishesOnce()
+{
+    NoiseReductionVideoWidget widget;
+    widget.resize(640, 480);
+    widget.setFrame(QImage(1600, 900, QImage::Format_RGB32));
+    widget.setCameraView({0.0, 0.0, 120.0, 90.0, 0.0});
+    widget.setDirectionTargets({0.0, 0.0},
+                               {30.0, 0.0},
+                               {-30.0, 0.0});
+    widget.setCurrentSelection(NoiseDirectionSelection::EnhancedA);
+    widget.show();
+    QCoreApplication::processEvents();
+
+    QSignalSpy started(
+        &widget, &NoiseReductionVideoWidget::directionDragStarted);
+    QSignalSpy dragged(
+        &widget, &NoiseReductionVideoWidget::directionDragged);
+    QSignalSpy finished(
+        &widget, &NoiseReductionVideoWidget::directionDragFinished);
+    QSignalSpy clicked(
+        &widget, &NoiseReductionVideoWidget::videoPointClicked);
+    const QPoint start = widget.videoRect().center().toPoint();
+    const QPoint end = start + QPoint(60, -20);
+    QTest::mousePress(
+        &widget, Qt::LeftButton, Qt::NoModifier, start);
+    QCOMPARE(started.count(), 1);
+    QCOMPARE(clicked.count(), 0);
+    QTest::mouseMove(&widget, end);
+    QVERIFY(dragged.count() >= 1);
+    QCOMPARE(finished.count(), 0);
+    QTest::mouseRelease(
+        &widget, Qt::LeftButton, Qt::NoModifier, end);
+    QCOMPARE(finished.count(), 1);
+}
+
 void DashboardTest::waveformWidgetAcceptsNamedFloatSeries()
 {
     AudioWaveformWidget widget;
@@ -557,6 +598,98 @@ void DashboardTest::noiseReductionPageProvidesRealtimeControlsAndDefaults()
     QCOMPARE(page.findChildren<PowerSpectrumWidget *>().size(), 4);
     QVERIFY(page.findChild<QPushButton *>(
         QStringLiteral("noiseReductionFullscreenButton")));
+    QCOMPARE(page.findChild<QDoubleSpinBox *>(
+                 QStringLiteral("noiseReductionMonitorGainSpin"))
+                 ->maximum(),
+             48.0);
+}
+
+void DashboardTest::noiseReductionPageUsesTabbedReorderableDataFlow()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+    page.resize(1400, 800);
+    page.show();
+    QCoreApplication::processEvents();
+
+    auto *panel = page.findChild<QWidget *>(
+        QStringLiteral("noiseReductionControlPanel"));
+    auto *tabs = page.findChild<QTabWidget *>(
+        QStringLiteral("noiseReductionControlTabs"));
+    auto *nodes = page.findChild<ProcessingNodeListWidget *>(
+        QStringLiteral("noiseReductionProcessingNodeList"));
+    auto *stack = page.findChild<QStackedWidget *>(
+        QStringLiteral("noiseReductionNodeParameterStack"));
+    QVERIFY(panel);
+    QVERIFY(tabs);
+    QVERIFY(nodes);
+    QVERIFY(stack);
+    QVERIFY(panel->minimumWidth() >= 440);
+    QCOMPARE(tabs->count(), 3);
+    QCOMPARE(tabs->tabText(0), QStringLiteral("数据流"));
+    QCOMPARE(tabs->tabText(1), QStringLiteral("监听"));
+    QCOMPARE(tabs->tabText(2), QStringLiteral("方向控制"));
+    QCOMPARE(nodes->count(), 4);
+    QCOMPARE(nodes->flow(), QListView::LeftToRight);
+    QVERIFY(!nodes->isWrapping());
+    QCOMPARE(nodes->horizontalScrollBarPolicy(),
+             Qt::ScrollBarAlwaysOff);
+    QCOMPARE(nodes->verticalScrollBarPolicy(),
+             Qt::ScrollBarAlwaysOff);
+    QVERIFY(!(nodes->item(0)->flags() & Qt::ItemIsDragEnabled));
+    for (int row = 1; row < nodes->count(); ++row) {
+        QVERIFY(nodes->item(row)->flags() & Qt::ItemIsDragEnabled);
+    }
+    QCoreApplication::processEvents();
+    const QRect viewportRectangle = nodes->viewport()->rect();
+    for (int row = 0; row < nodes->count(); ++row) {
+        const QRect itemRectangle =
+            nodes->visualItemRect(nodes->item(row));
+        QVERIFY2(!itemRectangle.isEmpty(),
+                 "processing node card has empty geometry");
+        QVERIFY2(viewportRectangle.contains(itemRectangle),
+                 "processing node card requires scrolling");
+    }
+    QCOMPARE(nodes->postProcessingOrder(),
+             QVector<NoisePostProcessingNode>({
+                 NoisePostProcessingNode::BandPass,
+                 NoisePostProcessingNode::LogMmse,
+                 NoisePostProcessingNode::AutomaticGainControl,
+             }));
+
+    nodes->setPostProcessingOrder({
+        NoisePostProcessingNode::AutomaticGainControl,
+        NoisePostProcessingNode::LogMmse,
+        NoisePostProcessingNode::BandPass,
+    });
+    QCOMPARE(nodes->postProcessingOrder(),
+             QVector<NoisePostProcessingNode>({
+                 NoisePostProcessingNode::AutomaticGainControl,
+                 NoisePostProcessingNode::LogMmse,
+                 NoisePostProcessingNode::BandPass,
+             }));
+    nodes->setCurrentRow(1);
+    QCOMPARE(stack->currentWidget()->objectName(),
+             QStringLiteral("noiseReductionAgcParameters"));
+
+    auto *logMmseEnabled = page.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionLogMmseEnabledCheck"));
+    auto *agcEnabled = page.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionAgcEnabledCheck"));
+    auto *fftSize = page.findChild<QComboBox *>(
+        QStringLiteral("noiseReductionLogMmseFftSizeCombo"));
+    auto *agcTarget = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseReductionAgcTargetSpin"));
+    QVERIFY(logMmseEnabled);
+    QVERIFY(agcEnabled);
+    QVERIFY(fftSize);
+    QVERIFY(agcTarget);
+    QVERIFY(!logMmseEnabled->isChecked());
+    QVERIFY(!agcEnabled->isChecked());
+    QCOMPARE(fftSize->currentData().toInt(), 512);
+    QCOMPARE(agcTarget->value(), -18.0);
 }
 
 void DashboardTest::noiseReductionCriticalAnglesIgnoreMouseWheel()
@@ -630,28 +763,102 @@ void DashboardTest::noiseReductionVideoClickUpdatesSelectedTargetAndRequestsAllC
 
     QSignalSpy requested(&page, &NoiseReductionPage::controlSendRequested);
     const QRectF video = view->videoRect();
-    const QPoint click(qRound(video.left() + video.width() * 0.63),
+    const QPoint click(qRound(video.left() + video.width() * 0.75),
                        qRound(video.center().y()));
     QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, click);
     QCOMPARE(requested.count(), 1);
     const NoiseReductionSettings settingsAfterClick =
         page.currentSettings();
-    QVERIFY(settingsAfterClick.suppressionB1.azimuthDegrees > 85.0);
-    QVERIFY(settingsAfterClick.suppressionB1.azimuthDegrees < 90.0);
-    QVERIFY(qAbs(settingsAfterClick.suppressionB1.elevationDegrees) < 0.2);
+    QVERIFY(qAbs(settingsAfterClick.suppressionB1.azimuthDegrees - 45.0)
+            < 0.5);
+    QVERIFY(qAbs(settingsAfterClick.suppressionB1.elevationDegrees) < 0.5);
     const ControlValues values = page.currentControlValues();
     QCOMPARE(values.channelValue(0), qint16(0));
     QCOMPARE(values.channelValue(1), qint16(0));
-    QCOMPARE(values.channelValue(2), qint16(4));
+    QCOMPARE(values.channelValue(2), qint16(2));
     QCOMPARE(values.channelValue(3), qint16(0));
     QCOMPARE(values.channelValue(4), qint16(0));
     QCOMPARE(values.channelValue(5), qint16(0));
-    const double quantizedAzimuth =
-        DirectionControlMapper::azimuthDegrees(
-            values.channelValue(2), settingsAfterClick.mapping);
-    QVERIFY(qAbs(settingsAfterClick.suppressionB1.azimuthDegrees
-                 - quantizedAzimuth)
-            > 0.5);
+}
+
+void DashboardTest::noiseReductionPageSendsDraggedMarkerOnlyOnRelease()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+    page.setConnected(true);
+    page.setControlLocked(false);
+    page.resize(1200, 760);
+    page.show();
+    page.setVideoFrame(
+        QImage(1600, 900, QImage::Format_RGB32), 1, 2);
+    QCoreApplication::processEvents();
+
+    auto dragCenterMarker = [](NoiseReductionVideoWidget *view,
+                               QSignalSpy *requested,
+                               QPointF *releasePoint) {
+        const QRectF video = view->videoRect();
+        const QPoint start = view->videoRect().center().toPoint();
+        const QPoint end = start + QPoint(45, 0);
+        QTest::mousePress(
+            view, Qt::LeftButton, Qt::NoModifier, start);
+        QTest::mouseMove(view, end);
+        QCOMPARE(requested->count(), 0);
+        QTest::mouseRelease(
+            view, Qt::LeftButton, Qt::NoModifier, end);
+        QCOMPARE(requested->count(), 1);
+        *releasePoint = QPointF(
+            (end.x() - video.left()) / video.width(),
+            (end.y() - video.top()) / video.height());
+    };
+
+    auto *normalVideo = page.findChild<NoiseReductionVideoWidget *>(
+        QStringLiteral("noiseReductionVideoView"));
+    QVERIFY(normalVideo);
+    QSignalSpy normalRequested(
+        &page, &NoiseReductionPage::controlSendRequested);
+    QPointF normalRelease;
+    dragCenterMarker(
+        normalVideo, &normalRequested, &normalRelease);
+    const double normalExpectedAzimuth =
+        (normalRelease.x() - 0.5) * 180.0;
+    QVERIFY(qAbs(page.currentSettings().enhancedA.azimuthDegrees
+                 - normalExpectedAzimuth)
+            < 0.5);
+
+    QTemporaryDir presentationDirectory;
+    QVERIFY(presentationDirectory.isValid());
+    AppSettings presentationSettings(
+        presentationDirectory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage presentationPage(&presentationSettings);
+    presentationPage.setConnected(true);
+    presentationPage.setControlLocked(false);
+    presentationPage.resize(1200, 760);
+    presentationPage.show();
+    presentationPage.setVideoFrame(
+        QImage(1600, 900, QImage::Format_RGB32), 1, 2);
+    QSignalSpy presentationRequested(
+        &presentationPage,
+        &NoiseReductionPage::controlSendRequested);
+    presentationPage.showPresentation();
+    auto *presentationVideo =
+        presentationPage.findChild<NoiseReductionVideoWidget *>(
+            QStringLiteral("noiseReductionPresentationVideo"));
+    QVERIFY(presentationVideo);
+    QTRY_VERIFY(presentationVideo->isVisible());
+    QPointF presentationRelease;
+    dragCenterMarker(
+        presentationVideo,
+        &presentationRequested,
+        &presentationRelease);
+    const double presentationExpectedAzimuth =
+        (presentationRelease.x() - 0.5) * 180.0;
+    QVERIFY(qAbs(
+                presentationPage.currentSettings()
+                    .enhancedA.azimuthDegrees
+                - presentationExpectedAzimuth)
+            < 0.5);
 }
 
 void DashboardTest::

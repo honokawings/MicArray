@@ -18,5 +18,11 @@ ProjectionResult projectDirection(const SoundSourceDirection &direction,
                                   const CameraViewSettings &camera);
 ScanDirection unprojectVideoPoint(const QPointF &normalizedPoint,
                                   const CameraViewSettings &camera);
+ProjectionResult projectDirectionAngular(
+    const SoundSourceDirection &direction,
+    const CameraViewSettings &camera);
+ScanDirection unprojectVideoPointAngular(
+    const QPointF &normalizedPoint,
+    const CameraViewSettings &camera);
 
 } // namespace MicArray

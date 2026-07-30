@@ -322,6 +322,37 @@ BandPassPreset bandPassPresetFromKey(const QString &key)
     return BandPassPreset::Voice;
 }
 
+QString postProcessingNodeKey(NoisePostProcessingNode node)
+{
+    switch (node) {
+    case NoisePostProcessingNode::BandPass:
+        return QStringLiteral("bandPass");
+    case NoisePostProcessingNode::LogMmse:
+        return QStringLiteral("logMmse");
+    case NoisePostProcessingNode::AutomaticGainControl:
+        return QStringLiteral("agc");
+    }
+    return {};
+}
+
+bool postProcessingNodeFromKey(
+    const QString &key, NoisePostProcessingNode *node)
+{
+    if (key == QStringLiteral("bandPass")) {
+        *node = NoisePostProcessingNode::BandPass;
+        return true;
+    }
+    if (key == QStringLiteral("logMmse")) {
+        *node = NoisePostProcessingNode::LogMmse;
+        return true;
+    }
+    if (key == QStringLiteral("agc")) {
+        *node = NoisePostProcessingNode::AutomaticGainControl;
+        return true;
+    }
+    return false;
+}
+
 NoiseReductionMode noiseModeFromKey(const QString &key)
 {
     if (key == QStringLiteral("twoPoint")) {
@@ -403,7 +434,7 @@ NoiseReductionSettings sanitizeNoiseReductionSettings(
         value.secondPlotSource = defaults.secondPlotSource;
     }
     if (!std::isfinite(value.monitorGainDb)
-        || value.monitorGainDb < -60.0 || value.monitorGainDb > 24.0) {
+        || value.monitorGainDb < -60.0 || value.monitorGainDb > 48.0) {
         value.monitorGainDb = defaults.monitorGainDb;
     }
     if (value.bandPass.preset != BandPassPreset::Voice
@@ -417,6 +448,79 @@ NoiseReductionSettings sanitizeNoiseReductionSettings(
         || value.bandPass.lowCutoffHz >= value.bandPass.highCutoffHz) {
         value.bandPass.lowCutoffHz = defaults.bandPass.lowCutoffHz;
         value.bandPass.highCutoffHz = defaults.bandPass.highCutoffHz;
+    }
+    value.postProcessingOrder =
+        normalizedPostProcessingOrder(value.postProcessingOrder);
+    const bool validFftSize =
+        value.logMmse.fftSize >= 256
+        && value.logMmse.fftSize <= 2048
+        && (value.logMmse.fftSize
+            & (value.logMmse.fftSize - 1)) == 0;
+    if (!validFftSize) {
+        value.logMmse.fftSize = defaults.logMmse.fftSize;
+    }
+    auto validUnitInterval = [](double candidate) {
+        return std::isfinite(candidate)
+            && candidate >= 0.0 && candidate < 1.0;
+    };
+    if (!validUnitInterval(value.logMmse.overlapRatio)) {
+        value.logMmse.overlapRatio = defaults.logMmse.overlapRatio;
+    }
+    if (!validUnitInterval(value.logMmse.priorSnrSmoothing)) {
+        value.logMmse.priorSnrSmoothing =
+            defaults.logMmse.priorSnrSmoothing;
+    }
+    if (!validUnitInterval(value.logMmse.noisePowerSmoothing)) {
+        value.logMmse.noisePowerSmoothing =
+            defaults.logMmse.noisePowerSmoothing;
+    }
+    if (!std::isfinite(value.logMmse.minimumGainDb)
+        || value.logMmse.minimumGainDb < -80.0
+        || value.logMmse.minimumGainDb > 0.0) {
+        value.logMmse.minimumGainDb =
+            defaults.logMmse.minimumGainDb;
+    }
+    auto sanitizeRange = [](double candidate,
+                            double minimum,
+                            double maximum,
+                            double fallback) {
+        return std::isfinite(candidate)
+                && candidate >= minimum && candidate <= maximum
+            ? candidate : fallback;
+    };
+    value.automaticGainControl.targetLevelDbfs = sanitizeRange(
+        value.automaticGainControl.targetLevelDbfs,
+        -60.0, 0.0,
+        defaults.automaticGainControl.targetLevelDbfs);
+    value.automaticGainControl.maximumGainDb = sanitizeRange(
+        value.automaticGainControl.maximumGainDb,
+        0.0, 60.0,
+        defaults.automaticGainControl.maximumGainDb);
+    value.automaticGainControl.maximumAttenuationDb = sanitizeRange(
+        value.automaticGainControl.maximumAttenuationDb,
+        -60.0, 0.0,
+        defaults.automaticGainControl.maximumAttenuationDb);
+    value.automaticGainControl.attackMilliseconds = sanitizeRange(
+        value.automaticGainControl.attackMilliseconds,
+        1.0, 1000.0,
+        defaults.automaticGainControl.attackMilliseconds);
+    value.automaticGainControl.releaseMilliseconds = sanitizeRange(
+        value.automaticGainControl.releaseMilliseconds,
+        1.0, 5000.0,
+        defaults.automaticGainControl.releaseMilliseconds);
+    value.automaticGainControl.limiterLevelDbfs = sanitizeRange(
+        value.automaticGainControl.limiterLevelDbfs,
+        -20.0, 0.0,
+        defaults.automaticGainControl.limiterLevelDbfs);
+    if (value.controlTabIndex < 0 || value.controlTabIndex > 2) {
+        value.controlTabIndex = defaults.controlTabIndex;
+    }
+    if (value.selectedDataFlowNode < -1
+        || value.selectedDataFlowNode
+               > static_cast<int>(
+                   NoisePostProcessingNode::AutomaticGainControl)) {
+        value.selectedDataFlowNode =
+            defaults.selectedDataFlowNode;
     }
     if (!value.mapping.isValid()) {
         value.mapping = defaults.mapping;
@@ -810,6 +914,45 @@ NoiseReductionSettings AppSettings::noiseReduction() const
         m_settings->value(group + QStringLiteral("bandPassPreset"),
                           bandPassPresetKey(defaults.bandPass.preset))
             .toString());
+    value.logMmse.enabled =
+        m_settings->value(group + QStringLiteral("logMmseEnabled"),
+                          defaults.logMmse.enabled).toBool();
+    value.automaticGainControl.enabled =
+        m_settings->value(group + QStringLiteral("agcEnabled"),
+                          defaults.automaticGainControl.enabled).toBool();
+    const QStringList orderKeys =
+        m_settings->value(
+            group + QStringLiteral("postProcessingOrder"),
+            QStringList({
+                postProcessingNodeKey(
+                    NoisePostProcessingNode::BandPass),
+                postProcessingNodeKey(
+                    NoisePostProcessingNode::LogMmse),
+                postProcessingNodeKey(
+                    NoisePostProcessingNode::AutomaticGainControl),
+            })).toStringList();
+    value.postProcessingOrder.clear();
+    for (const QString &key : orderKeys) {
+        NoisePostProcessingNode node;
+        if (postProcessingNodeFromKey(key, &node)) {
+            value.postProcessingOrder.append(node);
+        }
+    }
+    if (!readIntegerSetting(
+            m_settings->value(
+                group + QStringLiteral("controlTabIndex"),
+                defaults.controlTabIndex),
+            &value.controlTabIndex)) {
+        value.controlTabIndex = defaults.controlTabIndex;
+    }
+    if (!readIntegerSetting(
+            m_settings->value(
+                group + QStringLiteral("selectedDataFlowNode"),
+                defaults.selectedDataFlowNode),
+            &value.selectedDataFlowNode)) {
+        value.selectedDataFlowNode =
+            defaults.selectedDataFlowNode;
+    }
 
     auto readDouble = [this, &group](const QString &key,
                                      double fallback,
@@ -837,6 +980,45 @@ NoiseReductionSettings AppSettings::noiseReduction() const
     readDouble(QStringLiteral("bandPassHighCutoffHz"),
                defaults.bandPass.highCutoffHz,
                &value.bandPass.highCutoffHz);
+    int logMmseFftSize = defaults.logMmse.fftSize;
+    if (!readIntegerSetting(
+            m_settings->value(
+                group + QStringLiteral("logMmseFftSize"),
+                defaults.logMmse.fftSize),
+            &logMmseFftSize)) {
+        logMmseFftSize = defaults.logMmse.fftSize;
+    }
+    value.logMmse.fftSize = logMmseFftSize;
+    readDouble(QStringLiteral("logMmseOverlapRatio"),
+               defaults.logMmse.overlapRatio,
+               &value.logMmse.overlapRatio);
+    readDouble(QStringLiteral("logMmsePriorSnrSmoothing"),
+               defaults.logMmse.priorSnrSmoothing,
+               &value.logMmse.priorSnrSmoothing);
+    readDouble(QStringLiteral("logMmseNoisePowerSmoothing"),
+               defaults.logMmse.noisePowerSmoothing,
+               &value.logMmse.noisePowerSmoothing);
+    readDouble(QStringLiteral("logMmseMinimumGainDb"),
+               defaults.logMmse.minimumGainDb,
+               &value.logMmse.minimumGainDb);
+    readDouble(QStringLiteral("agcTargetLevelDbfs"),
+               defaults.automaticGainControl.targetLevelDbfs,
+               &value.automaticGainControl.targetLevelDbfs);
+    readDouble(QStringLiteral("agcMaximumGainDb"),
+               defaults.automaticGainControl.maximumGainDb,
+               &value.automaticGainControl.maximumGainDb);
+    readDouble(QStringLiteral("agcMaximumAttenuationDb"),
+               defaults.automaticGainControl.maximumAttenuationDb,
+               &value.automaticGainControl.maximumAttenuationDb);
+    readDouble(QStringLiteral("agcAttackMilliseconds"),
+               defaults.automaticGainControl.attackMilliseconds,
+               &value.automaticGainControl.attackMilliseconds);
+    readDouble(QStringLiteral("agcReleaseMilliseconds"),
+               defaults.automaticGainControl.releaseMilliseconds,
+               &value.automaticGainControl.releaseMilliseconds);
+    readDouble(QStringLiteral("agcLimiterLevelDbfs"),
+               defaults.automaticGainControl.limiterLevelDbfs,
+               &value.automaticGainControl.limiterLevelDbfs);
 
     readDouble(QStringLiteral("mappingAzimuthMinimumDegrees"),
                defaults.mapping.azimuthMinimumDegrees,
@@ -1152,6 +1334,44 @@ void AppSettings::saveNoiseReduction(
                          value.bandPass.lowCutoffHz);
     m_settings->setValue(group + QStringLiteral("bandPassHighCutoffHz"),
                          value.bandPass.highCutoffHz);
+    QStringList orderKeys;
+    orderKeys.reserve(value.postProcessingOrder.size());
+    for (NoisePostProcessingNode node : value.postProcessingOrder) {
+        orderKeys.append(postProcessingNodeKey(node));
+    }
+    m_settings->setValue(group + QStringLiteral("postProcessingOrder"),
+                         orderKeys);
+    m_settings->setValue(group + QStringLiteral("controlTabIndex"),
+                         value.controlTabIndex);
+    m_settings->setValue(group + QStringLiteral("selectedDataFlowNode"),
+                         value.selectedDataFlowNode);
+    m_settings->setValue(group + QStringLiteral("logMmseEnabled"),
+                         value.logMmse.enabled);
+    m_settings->setValue(group + QStringLiteral("logMmseFftSize"),
+                         value.logMmse.fftSize);
+    m_settings->setValue(group + QStringLiteral("logMmseOverlapRatio"),
+                         value.logMmse.overlapRatio);
+    m_settings->setValue(group + QStringLiteral("logMmsePriorSnrSmoothing"),
+                         value.logMmse.priorSnrSmoothing);
+    m_settings->setValue(group + QStringLiteral("logMmseNoisePowerSmoothing"),
+                         value.logMmse.noisePowerSmoothing);
+    m_settings->setValue(group + QStringLiteral("logMmseMinimumGainDb"),
+                         value.logMmse.minimumGainDb);
+    m_settings->setValue(group + QStringLiteral("agcEnabled"),
+                         value.automaticGainControl.enabled);
+    m_settings->setValue(group + QStringLiteral("agcTargetLevelDbfs"),
+                         value.automaticGainControl.targetLevelDbfs);
+    m_settings->setValue(group + QStringLiteral("agcMaximumGainDb"),
+                         value.automaticGainControl.maximumGainDb);
+    m_settings->setValue(
+        group + QStringLiteral("agcMaximumAttenuationDb"),
+        value.automaticGainControl.maximumAttenuationDb);
+    m_settings->setValue(group + QStringLiteral("agcAttackMilliseconds"),
+                         value.automaticGainControl.attackMilliseconds);
+    m_settings->setValue(group + QStringLiteral("agcReleaseMilliseconds"),
+                         value.automaticGainControl.releaseMilliseconds);
+    m_settings->setValue(group + QStringLiteral("agcLimiterLevelDbfs"),
+                         value.automaticGainControl.limiterLevelDbfs);
     auto saveTarget = [this, &group](
                           const QString &prefix,
                           const ContinuousDirectionTarget &target) {

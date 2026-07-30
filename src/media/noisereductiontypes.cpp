@@ -19,4 +19,27 @@ QString noiseSignalSourceName(NoiseSignalSource source)
     return QStringLiteral("未知音频源");
 }
 
+QVector<NoisePostProcessingNode> normalizedPostProcessingOrder(
+    const QVector<NoisePostProcessingNode> &order)
+{
+    const QVector<NoisePostProcessingNode> defaults {
+        NoisePostProcessingNode::BandPass,
+        NoisePostProcessingNode::LogMmse,
+        NoisePostProcessingNode::AutomaticGainControl,
+    };
+    QVector<NoisePostProcessingNode> result;
+    result.reserve(defaults.size());
+    for (NoisePostProcessingNode node : order) {
+        if (defaults.contains(node) && !result.contains(node)) {
+            result.append(node);
+        }
+    }
+    for (NoisePostProcessingNode node : defaults) {
+        if (!result.contains(node)) {
+            result.append(node);
+        }
+    }
+    return result;
+}
+
 } // namespace MicArray

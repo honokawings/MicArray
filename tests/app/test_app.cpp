@@ -622,6 +622,29 @@ void AppTest::persistsNoiseReductionSettings()
     expected.bandPass.preset = BandPassPreset::Music;
     expected.bandPass.lowCutoffHz = 40.0;
     expected.bandPass.highCutoffHz = 16000.0;
+    expected.postProcessingOrder = {
+        NoisePostProcessingNode::AutomaticGainControl,
+        NoisePostProcessingNode::BandPass,
+        NoisePostProcessingNode::LogMmse,
+    };
+    expected.logMmse.enabled = true;
+    expected.logMmse.fftSize = 1024;
+    expected.logMmse.overlapRatio = 0.75;
+    expected.logMmse.priorSnrSmoothing = 0.97;
+    expected.logMmse.noisePowerSmoothing = 0.91;
+    expected.logMmse.minimumGainDb = -24.0;
+    expected.automaticGainControl.enabled = true;
+    expected.automaticGainControl.targetLevelDbfs = -16.0;
+    expected.automaticGainControl.maximumGainDb = 28.0;
+    expected.automaticGainControl.maximumAttenuationDb = -18.0;
+    expected.automaticGainControl.attackMilliseconds = 15.0;
+    expected.automaticGainControl.releaseMilliseconds = 420.0;
+    expected.automaticGainControl.limiterLevelDbfs = -1.5;
+    expected.monitorGainDb = 48.0;
+    expected.controlTabIndex = 2;
+    expected.selectedDataFlowNode =
+        static_cast<int>(
+            NoisePostProcessingNode::AutomaticGainControl);
     expected.showMarkers = false;
     expected.enhancedA = {11.2, -7.4};
     expected.suppressionB1 = {-38.8, 12.6};
@@ -657,6 +680,27 @@ void AppTest::usesNoiseReductionProcessingDefaults()
     QCOMPARE(actual.bandPass.preset, BandPassPreset::Voice);
     QCOMPARE(actual.bandPass.lowCutoffHz, 100.0);
     QCOMPARE(actual.bandPass.highCutoffHz, 8000.0);
+    QCOMPARE(actual.postProcessingOrder,
+             QVector<NoisePostProcessingNode>({
+                 NoisePostProcessingNode::BandPass,
+                 NoisePostProcessingNode::LogMmse,
+                 NoisePostProcessingNode::AutomaticGainControl,
+             }));
+    QVERIFY(!actual.logMmse.enabled);
+    QCOMPARE(actual.logMmse.fftSize, 512);
+    QCOMPARE(actual.logMmse.overlapRatio, 0.5);
+    QCOMPARE(actual.logMmse.priorSnrSmoothing, 0.98);
+    QCOMPARE(actual.logMmse.noisePowerSmoothing, 0.95);
+    QCOMPARE(actual.logMmse.minimumGainDb, -20.0);
+    QVERIFY(!actual.automaticGainControl.enabled);
+    QCOMPARE(actual.automaticGainControl.targetLevelDbfs, -18.0);
+    QCOMPARE(actual.automaticGainControl.maximumGainDb, 30.0);
+    QCOMPARE(actual.automaticGainControl.maximumAttenuationDb, -20.0);
+    QCOMPARE(actual.automaticGainControl.attackMilliseconds, 20.0);
+    QCOMPARE(actual.automaticGainControl.releaseMilliseconds, 300.0);
+    QCOMPARE(actual.automaticGainControl.limiterLevelDbfs, -1.0);
+    QCOMPARE(actual.controlTabIndex, 0);
+    QCOMPARE(actual.selectedDataFlowNode, -1);
     QCOMPARE(actual.mapping.azimuthMinimumDegrees, -90.0);
     QCOMPARE(actual.mapping.azimuthMaximumDegrees, 90.0);
     QCOMPARE(actual.mapping.elevationMinimumDegrees, -90.0);
@@ -761,6 +805,34 @@ void AppTest::invalidNoiseReductionFieldsFallBackIndependently()
                      12000.0);
         raw.setValue(QStringLiteral("noiseReduction/bandPassHighCutoffHz"),
                      8000.0);
+        raw.setValue(QStringLiteral("noiseReduction/postProcessingOrder"),
+                     QStringList({
+                         QStringLiteral("agc"),
+                         QStringLiteral("agc"),
+                         QStringLiteral("unknown"),
+                         QStringLiteral("bandPass"),
+                     }));
+        raw.setValue(QStringLiteral("noiseReduction/logMmseEnabled"), true);
+        raw.setValue(QStringLiteral("noiseReduction/logMmseFftSize"), 300);
+        raw.setValue(QStringLiteral("noiseReduction/logMmseOverlapRatio"), 1.0);
+        raw.setValue(QStringLiteral("noiseReduction/logMmsePriorSnrSmoothing"),
+                     -0.1);
+        raw.setValue(QStringLiteral("noiseReduction/logMmseNoisePowerSmoothing"),
+                     0.91);
+        raw.setValue(QStringLiteral("noiseReduction/logMmseMinimumGainDb"),
+                     std::numeric_limits<double>::infinity());
+        raw.setValue(QStringLiteral("noiseReduction/agcEnabled"), true);
+        raw.setValue(QStringLiteral("noiseReduction/agcTargetLevelDbfs"),
+                     -16.0);
+        raw.setValue(QStringLiteral("noiseReduction/agcMaximumGainDb"), 1000.0);
+        raw.setValue(QStringLiteral("noiseReduction/agcMaximumAttenuationDb"),
+                     -18.0);
+        raw.setValue(QStringLiteral("noiseReduction/agcAttackMilliseconds"),
+                     0.0);
+        raw.setValue(QStringLiteral("noiseReduction/agcReleaseMilliseconds"),
+                     420.0);
+        raw.setValue(QStringLiteral("noiseReduction/agcLimiterLevelDbfs"),
+                     1.0);
         raw.setValue(QStringLiteral("noiseReduction/enhancedAAzimuthCode"), 99);
         raw.setValue(QStringLiteral("noiseReduction/enhancedAElevationCode"), -99);
         raw.setValue(QStringLiteral("noiseReduction/suppressionB1AzimuthCode"), -2);
@@ -790,6 +862,30 @@ void AppTest::invalidNoiseReductionFieldsFallBackIndependently()
     QCOMPARE(actual.bandPass.preset, defaults.bandPass.preset);
     QCOMPARE(actual.bandPass.lowCutoffHz, defaults.bandPass.lowCutoffHz);
     QCOMPARE(actual.bandPass.highCutoffHz, defaults.bandPass.highCutoffHz);
+    QCOMPARE(actual.postProcessingOrder,
+             QVector<NoisePostProcessingNode>({
+                 NoisePostProcessingNode::AutomaticGainControl,
+                 NoisePostProcessingNode::BandPass,
+                 NoisePostProcessingNode::LogMmse,
+             }));
+    QVERIFY(actual.logMmse.enabled);
+    QCOMPARE(actual.logMmse.fftSize, defaults.logMmse.fftSize);
+    QCOMPARE(actual.logMmse.overlapRatio, defaults.logMmse.overlapRatio);
+    QCOMPARE(actual.logMmse.priorSnrSmoothing,
+             defaults.logMmse.priorSnrSmoothing);
+    QCOMPARE(actual.logMmse.noisePowerSmoothing, 0.91);
+    QCOMPARE(actual.logMmse.minimumGainDb,
+             defaults.logMmse.minimumGainDb);
+    QVERIFY(actual.automaticGainControl.enabled);
+    QCOMPARE(actual.automaticGainControl.targetLevelDbfs, -16.0);
+    QCOMPARE(actual.automaticGainControl.maximumGainDb,
+             defaults.automaticGainControl.maximumGainDb);
+    QCOMPARE(actual.automaticGainControl.maximumAttenuationDb, -18.0);
+    QCOMPARE(actual.automaticGainControl.attackMilliseconds,
+             defaults.automaticGainControl.attackMilliseconds);
+    QCOMPARE(actual.automaticGainControl.releaseMilliseconds, 420.0);
+    QCOMPARE(actual.automaticGainControl.limiterLevelDbfs,
+             defaults.automaticGainControl.limiterLevelDbfs);
     QCOMPARE(actual.enhancedA, defaults.enhancedA);
     QCOMPARE(actual.suppressionB1,
              ContinuousDirectionTarget({-45.0, 60.0}));

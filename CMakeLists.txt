@@ -29,11 +29,13 @@ set(MICARRAY_SOURCES
     src/diagnostics/alertcoalescer.cpp
     src/diagnostics/diagnosticexporter.cpp
     src/media/audioframedecoder.cpp
+    src/media/automaticgaincontrol.cpp
     src/media/audioprocessor.cpp
     src/media/audiorecorder.cpp
     src/media/bandpassfilter.cpp
     src/media/channelgainprocessor.cpp
     src/media/gainprofilestore.cpp
+    src/media/logmmseprocessor.cpp
     src/media/mediaframequeue.cpp
     src/media/multichannelwavwriter.cpp
     src/media/noisereductionframedecoder.cpp
@@ -53,6 +55,7 @@ set(MICARRAY_SOURCES
     src/ui/noisereductionvideowidget.cpp
     src/ui/noisereductionpage.cpp
     src/ui/powerspectrumwidget.cpp
+    src/ui/processingnodelistwidget.cpp
     src/ui/displayformat.cpp
     src/ui/mainwindow.cpp
     src/ui/trendchartwidget.cpp
@@ -83,11 +86,13 @@ set(MICARRAY_HEADERS
     src/diagnostics/alertcoalescer.h
     src/diagnostics/diagnosticexporter.h
     src/media/audioframedecoder.h
+    src/media/automaticgaincontrol.h
     src/media/audioprocessor.h
     src/media/audiorecorder.h
     src/media/bandpassfilter.h
     src/media/channelgainprocessor.h
     src/media/gainprofilestore.h
+    src/media/logmmseprocessor.h
     src/media/mediaframequeue.h
     src/media/multichannelwavwriter.h
     src/media/noisereductionframedecoder.h
@@ -107,6 +112,7 @@ set(MICARRAY_HEADERS
     src/ui/noisereductionvideowidget.h
     src/ui/noisereductionpage.h
     src/ui/powerspectrumwidget.h
+    src/ui/processingnodelistwidget.h
     src/ui/displayformat.h
     src/ui/mainwindow.h
     src/ui/trendchartwidget.h

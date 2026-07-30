@@ -38,6 +38,12 @@ enum class BandPassPreset {
     Custom,
 };
 
+enum class NoisePostProcessingNode {
+    BandPass,
+    LogMmse,
+    AutomaticGainControl,
+};
+
 struct BandPassFilterSettings {
     bool enabled = false;
     BandPassPreset preset = BandPassPreset::Voice;
@@ -45,6 +51,29 @@ struct BandPassFilterSettings {
     double highCutoffHz = 8000.0;
 
     bool operator==(const BandPassFilterSettings &) const = default;
+};
+
+struct LogMmseSettings {
+    bool enabled = false;
+    int fftSize = 512;
+    double overlapRatio = 0.5;
+    double priorSnrSmoothing = 0.98;
+    double noisePowerSmoothing = 0.95;
+    double minimumGainDb = -20.0;
+
+    bool operator==(const LogMmseSettings &) const = default;
+};
+
+struct AutomaticGainControlSettings {
+    bool enabled = false;
+    double targetLevelDbfs = -18.0;
+    double maximumGainDb = 30.0;
+    double maximumAttenuationDb = -20.0;
+    double attackMilliseconds = 20.0;
+    double releaseMilliseconds = 300.0;
+    double limiterLevelDbfs = -1.0;
+
+    bool operator==(const AutomaticGainControlSettings &) const = default;
 };
 
 struct ContinuousDirectionTarget {
@@ -78,6 +107,15 @@ struct NoiseReductionSettings {
     NoiseSignalSource firstPlotSource = NoiseSignalSource::EnhancedA;
     NoiseSignalSource secondPlotSource = NoiseSignalSource::Denoised;
     BandPassFilterSettings bandPass;
+    QVector<NoisePostProcessingNode> postProcessingOrder {
+        NoisePostProcessingNode::BandPass,
+        NoisePostProcessingNode::LogMmse,
+        NoisePostProcessingNode::AutomaticGainControl,
+    };
+    LogMmseSettings logMmse;
+    AutomaticGainControlSettings automaticGainControl;
+    int controlTabIndex = 0;
+    int selectedDataFlowNode = -1;
     bool showMarkers = true;
     ContinuousDirectionTarget enhancedA;
     ContinuousDirectionTarget suppressionB1;
@@ -102,11 +140,15 @@ struct NoiseReductionPlotFrame {
 };
 
 QString noiseSignalSourceName(NoiseSignalSource source);
+QVector<NoisePostProcessingNode> normalizedPostProcessingOrder(
+    const QVector<NoisePostProcessingNode> &order);
 
 } // namespace MicArray
 
 Q_DECLARE_METATYPE(MicArray::NoiseReductionMode)
 Q_DECLARE_METATYPE(MicArray::NoiseReductionAlgorithm)
 Q_DECLARE_METATYPE(MicArray::NoiseSignalSource)
+Q_DECLARE_METATYPE(MicArray::NoiseDirectionSelection)
+Q_DECLARE_METATYPE(MicArray::NoisePostProcessingNode)
 Q_DECLARE_METATYPE(MicArray::NoiseReductionSettings)
 Q_DECLARE_METATYPE(MicArray::NoiseReductionPlotFrame)

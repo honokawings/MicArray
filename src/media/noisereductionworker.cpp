@@ -57,7 +57,7 @@ QVector<float> NoiseReductionWorker::powerSpectrumDbfs(
 QByteArray NoiseReductionWorker::pcm16WithGain(
     const QVector<float> &samples, double gainDb)
 {
-    const double clampedGainDb = std::clamp(gainDb, -60.0, 24.0);
+    const double clampedGainDb = std::clamp(gainDb, -60.0, 48.0);
     const double gain = std::pow(10.0, clampedGainDb / 20.0);
     QByteArray pcm;
     pcm.resize(samples.size() * 2);
@@ -90,14 +90,25 @@ void NoiseReductionWorker::configure(
             != settings.dualB2SuppressionCoefficient;
     const bool bandPassChanged =
         m_settings.bandPass != settings.bandPass;
+    const bool logMmseChanged =
+        m_settings.logMmse != settings.logMmse;
+    const bool automaticGainControlChanged =
+        m_settings.automaticGainControl
+            != settings.automaticGainControl;
+    const bool postProcessingOrderChanged =
+        m_settings.postProcessingOrder
+            != settings.postProcessingOrder;
     const bool enabledChanged = m_settings.enabled != settings.enabled;
     const bool monitorEnabledChanged =
         m_settings.monitorEnabled != settings.monitorEnabled;
     const bool monitorChanged =
         m_settings.monitorSource != settings.monitorSource;
     m_settings = settings;
+    m_settings.postProcessingOrder =
+        normalizedPostProcessingOrder(
+            m_settings.postProcessingOrder);
     m_settings.monitorGainDb =
-        std::clamp(m_settings.monitorGainDb, -60.0, 24.0);
+        std::clamp(m_settings.monitorGainDb, -60.0, 48.0);
     m_sampleRate = std::clamp(sampleRate, 8000, 192000);
     if (algorithmChanged) {
         m_reducer.setAlgorithm(m_settings.algorithm);
@@ -127,8 +138,36 @@ void NoiseReductionWorker::configure(
     } else if (!m_settings.bandPass.enabled && bandPassChanged) {
         m_bandPassFilter.reset();
     }
+    if (m_settings.logMmse.enabled
+        && (sampleRateChanged || logMmseChanged
+            || postProcessingOrderChanged)) {
+        if (!m_logMmseProcessor.configure(
+                m_sampleRate, m_settings.logMmse)) {
+            m_settings.logMmse.enabled = false;
+            emit warningRaised(
+                QStringLiteral("LogMMSE 参数无效，已自动旁路"));
+        }
+    } else if (!m_settings.logMmse.enabled && logMmseChanged) {
+        m_logMmseProcessor.reset();
+    }
+    if (m_settings.automaticGainControl.enabled
+        && (sampleRateChanged || automaticGainControlChanged
+            || postProcessingOrderChanged)) {
+        if (!m_automaticGainControl.configure(
+                m_sampleRate,
+                m_settings.automaticGainControl)) {
+            m_settings.automaticGainControl.enabled = false;
+            emit warningRaised(
+                QStringLiteral("AGC 参数无效，已自动旁路"));
+        }
+    } else if (!m_settings.automaticGainControl.enabled
+               && automaticGainControlChanged) {
+        m_automaticGainControl.reset();
+    }
     if (sampleRateChanged || enabledChanged || algorithmChanged
-        || modeChanged || coefficientChanged || bandPassChanged) {
+        || modeChanged || coefficientChanged || bandPassChanged
+        || logMmseChanged || automaticGainControlChanged
+        || postProcessingOrderChanged) {
         resetProcessing();
     }
     if (!m_settings.enabled || !m_settings.monitorEnabled
@@ -177,9 +216,7 @@ void NoiseReductionWorker::processRawFrame(
         m_reducer.process(input.channels.at(1),
                           input.channels.at(2),
                           input.channels.at(3));
-    if (m_settings.bandPass.enabled && !denoised.isEmpty()) {
-        denoised = m_bandPassFilter.process(denoised);
-    }
+    denoised = applyPostProcessing(std::move(denoised));
     appendHistory(NoiseSignalSource::Denoised, denoised);
     writeMonitorSamples(input, denoised);
 
@@ -319,10 +356,41 @@ void NoiseReductionWorker::resetProcessing()
 {
     m_reducer.reset();
     m_bandPassFilter.reset();
+    m_logMmseProcessor.reset();
+    m_automaticGainControl.reset();
     for (QVector<float> &history : m_history) {
         history.clear();
     }
     m_lastPlotTimestamp = -1;
+}
+
+QVector<float> NoiseReductionWorker::applyPostProcessing(
+    QVector<float> samples)
+{
+    for (NoisePostProcessingNode node
+         : m_settings.postProcessingOrder) {
+        if (samples.isEmpty()) {
+            break;
+        }
+        switch (node) {
+        case NoisePostProcessingNode::BandPass:
+            if (m_settings.bandPass.enabled) {
+                samples = m_bandPassFilter.process(samples);
+            }
+            break;
+        case NoisePostProcessingNode::LogMmse:
+            if (m_settings.logMmse.enabled) {
+                samples = m_logMmseProcessor.process(samples);
+            }
+            break;
+        case NoisePostProcessingNode::AutomaticGainControl:
+            if (m_settings.automaticGainControl.enabled) {
+                samples = m_automaticGainControl.process(samples);
+            }
+            break;
+        }
+    }
+    return samples;
 }
 
 } // namespace MicArray

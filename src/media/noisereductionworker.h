@@ -2,7 +2,9 @@
 
 #include "media/noisereductionframedecoder.h"
 #include "media/noisereductiontypes.h"
+#include "media/automaticgaincontrol.h"
 #include "media/bandpassfilter.h"
+#include "media/logmmseprocessor.h"
 #include "media/wienernoisereducer.h"
 
 #include <QAudioFormat>
@@ -58,6 +60,7 @@ private:
     void ensureAudioOutput();
     void closeAudioOutput();
     void resetProcessing();
+    QVector<float> applyPostProcessing(QVector<float> samples);
 
     NoiseReductionSettings m_settings;
     int m_sampleRate = 48000;
@@ -67,6 +70,8 @@ private:
     NoiseReductionFrameDecoder m_decoder;
     WienerNoiseReducer m_reducer;
     BandPassFilter m_bandPassFilter;
+    LogMmseProcessor m_logMmseProcessor;
+    AutomaticGainControl m_automaticGainControl;
     std::array<QVector<float>, 5> m_history;
     QAudioFormat m_audioFormat;
     std::unique_ptr<QAudioSink> m_audioSink;

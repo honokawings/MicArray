@@ -280,6 +280,8 @@ private slots:
     void appliesCameraOrientationAndRoll();
     void rejectsInvalidCameraAndDirectionBehindView();
     void unprojectsVideoPointBackToDirection();
+    void projectsDirectionsLinearlyAcrossWideAngleView();
+    void roundTripsAngularProjectionWithOrientationAndRoll();
     void fitsCameraViewFromFourDirectionPoints();
     void rejectsDegenerateCameraCalibration();
     void roundTripsCompleteCalibrationProfile();
@@ -538,6 +540,69 @@ void AudioAnalysisTest::unprojectsVideoPointBackToDirection()
     const ScanDirection restored = unprojectVideoPoint(projected.normalizedPoint, camera);
     QVERIFY(std::abs(restored.azimuthDegrees - source.azimuthDegrees) < 1.0e-5);
     QVERIFY(std::abs(restored.elevationDegrees - source.elevationDegrees) < 1.0e-5);
+}
+
+void AudioAnalysisTest::projectsDirectionsLinearlyAcrossWideAngleView()
+{
+    CameraViewSettings camera;
+    camera.horizontalFovDegrees = 180.0;
+    camera.verticalFovDegrees = 180.0;
+
+    const ProjectionResult left =
+        projectDirectionAngular({-90.0, 0.0}, camera);
+    const ProjectionResult center =
+        projectDirectionAngular({0.0, 0.0}, camera);
+    const ProjectionResult middleRight =
+        projectDirectionAngular({45.0, 0.0}, camera);
+    const ProjectionResult right =
+        projectDirectionAngular({90.0, 0.0}, camera);
+    for (const ProjectionResult &result :
+         {left, center, middleRight, right}) {
+        QVERIFY(result.valid);
+        QVERIFY(result.inFront);
+        QVERIFY(result.inView);
+    }
+    QVERIFY(QLineF(left.normalizedPoint,
+                   QPointF(0.0, 0.5)).length() < 1.0e-6);
+    QVERIFY(QLineF(center.normalizedPoint,
+                   QPointF(0.5, 0.5)).length() < 1.0e-6);
+    QVERIFY(QLineF(middleRight.normalizedPoint,
+                   QPointF(0.75, 0.5)).length() < 1.0e-6);
+    QVERIFY(QLineF(right.normalizedPoint,
+                   QPointF(1.0, 0.5)).length() < 1.0e-6);
+}
+
+void AudioAnalysisTest::
+    roundTripsAngularProjectionWithOrientationAndRoll()
+{
+    CameraViewSettings camera;
+    camera.centerAzimuthDegrees = 20.0;
+    camera.centerElevationDegrees = -10.0;
+    camera.horizontalFovDegrees = 180.0;
+    camera.verticalFovDegrees = 120.0;
+    camera.rollDegrees = 15.0;
+    const QVector<SoundSourceDirection> sources {
+        {20.0, -10.0},
+        {35.0, 5.0},
+        {-20.0, -25.0},
+        {60.0, -5.0},
+    };
+    for (const SoundSourceDirection &source : sources) {
+        const ProjectionResult projected =
+            projectDirectionAngular(source, camera);
+        QVERIFY(projected.valid);
+        QVERIFY(projected.inFront);
+        QVERIFY(projected.inView);
+        const ScanDirection restored =
+            unprojectVideoPointAngular(
+                projected.normalizedPoint, camera);
+        QVERIFY(std::abs(restored.azimuthDegrees
+                         - source.azimuthDegrees)
+                < 1.0e-5);
+        QVERIFY(std::abs(restored.elevationDegrees
+                         - source.elevationDegrees)
+                < 1.0e-5);
+    }
 }
 
 void AudioAnalysisTest::fitsCameraViewFromFourDirectionPoints()

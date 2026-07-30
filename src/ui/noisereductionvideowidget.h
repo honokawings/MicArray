@@ -3,6 +3,8 @@
 #include "media/noisereductiontypes.h"
 #include "ui/videopreviewwidget.h"
 
+#include <optional>
+
 class QColor;
 class QPainter;
 
@@ -26,14 +28,26 @@ public:
 
 signals:
     void videoPointClicked(const QPointF &normalizedPoint);
+    void directionDragStarted(NoiseDirectionSelection selection);
+    void directionDragged(NoiseDirectionSelection selection,
+                          const QPointF &normalizedPoint);
+    void directionDragFinished(NoiseDirectionSelection selection,
+                               const QPointF &normalizedPoint);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
+    std::optional<QPointF> targetPoint(
+        const ContinuousDirectionTarget &target) const;
+    std::optional<NoiseDirectionSelection> hitTarget(
+        const QPointF &point) const;
+    std::optional<QPointF> clampedNormalizedPoint(
+        const QPointF &point) const;
     void drawTarget(QPainter &painter,
-                    const QRectF &videoRectangle,
                     const QString &name,
                     const QColor &color,
                     const ContinuousDirectionTarget &target,
@@ -46,6 +60,7 @@ private:
     ContinuousDirectionTarget m_suppressionB2;
     NoiseDirectionSelection m_selection =
         NoiseDirectionSelection::EnhancedA;
+    std::optional<NoiseDirectionSelection> m_dragSelection;
     bool m_markersVisible = true;
 };
 

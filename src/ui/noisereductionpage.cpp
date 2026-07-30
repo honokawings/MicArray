@@ -5,6 +5,7 @@
 #include "ui/audiowaveformwidget.h"
 #include "ui/noisereductionvideowidget.h"
 #include "ui/powerspectrumwidget.h"
+#include "ui/processingnodelistwidget.h"
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -21,6 +22,8 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStackedWidget>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -66,15 +69,6 @@ QDoubleSpinBox *coefficientSpin(
     spin->setDecimals(2);
     spin->setSingleStep(0.25);
     return spin;
-}
-
-CameraViewSettings projectionSafeCamera(CameraViewSettings camera)
-{
-    camera.horizontalFovDegrees =
-        std::min(camera.horizontalFovDegrees, 179.0);
-    camera.verticalFovDegrees =
-        std::min(camera.verticalFovDegrees, 179.0);
-    return camera;
 }
 
 void selectData(QComboBox *combo, int value)
@@ -260,6 +254,11 @@ bool NoiseReductionPage::eventFilter(QObject *watched, QEvent *event)
                 return true;
             }
         }
+        if (m_wheelBlockedControls.contains(
+                qobject_cast<QWidget *>(watched))) {
+            event->accept();
+            return true;
+        }
     }
     if (watched == m_presentationWindow) {
         if (event->type() == QEvent::KeyPress
@@ -289,15 +288,54 @@ void NoiseReductionPage::buildUi()
     m_videoView = new NoiseReductionVideoWidget(topSplitter);
     topSplitter->addWidget(m_videoView);
 
-    auto *scroll = new QScrollArea(topSplitter);
-    scroll->setWidgetResizable(true);
-    scroll->setMinimumWidth(320);
-    scroll->setMaximumWidth(430);
-    auto *panel = new QWidget(scroll);
-    auto *panelLayout = new QVBoxLayout(panel);
+    auto *controlPanel = new QWidget(topSplitter);
+    controlPanel->setObjectName(
+        QStringLiteral("noiseReductionControlPanel"));
+    controlPanel->setMinimumWidth(440);
+    auto *controlPanelLayout = new QVBoxLayout(controlPanel);
+    controlPanelLayout->setContentsMargins(0, 0, 0, 0);
+    m_controlTabs = new QTabWidget(controlPanel);
+    m_controlTabs->setObjectName(
+        QStringLiteral("noiseReductionControlTabs"));
+    controlPanelLayout->addWidget(m_controlTabs);
+
+    auto createTab = [this](
+                         const QString &title,
+                         QWidget **content,
+                         QVBoxLayout **contentLayout) {
+        auto *scroll = new QScrollArea(m_controlTabs);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        *content = new QWidget(scroll);
+        *contentLayout = new QVBoxLayout(*content);
+        (*contentLayout)->setContentsMargins(8, 8, 8, 8);
+        scroll->setWidget(*content);
+        m_controlTabs->addTab(scroll, title);
+    };
+    QWidget *panel = nullptr;
+    QWidget *monitorPanel = nullptr;
+    QWidget *directionPanel = nullptr;
+    QVBoxLayout *panelLayout = nullptr;
+    QVBoxLayout *monitorPanelLayout = nullptr;
+    QVBoxLayout *directionPanelLayout = nullptr;
+    createTab(QStringLiteral("数据流"), &panel, &panelLayout);
+    createTab(QStringLiteral("监听"),
+              &monitorPanel, &monitorPanelLayout);
+    createTab(QStringLiteral("方向控制"),
+              &directionPanel, &directionPanelLayout);
+
+    m_processingNodeList =
+        new ProcessingNodeListWidget(panel);
+    m_nodeParameterStack = new QStackedWidget(panel);
+    m_nodeParameterStack->setObjectName(
+        QStringLiteral("noiseReductionNodeParameterStack"));
+    panelLayout->addWidget(m_processingNodeList);
+    panelLayout->addWidget(m_nodeParameterStack, 1);
 
     auto *processingGroup =
         new QGroupBox(QStringLiteral("降噪处理"), panel);
+    processingGroup->setObjectName(
+        QStringLiteral("noiseReductionSuppressionParameters"));
     auto *processingLayout = new QFormLayout(processingGroup);
     m_enabledCheck =
         new QCheckBox(QStringLiteral("启用降噪处理"), processingGroup);
@@ -340,9 +378,10 @@ void NoiseReductionPage::buildUi()
     processingLayout->addRow(QStringLiteral("双点 B2 系数"),
                              m_dualB2CoefficientSpin);
     processingLayout->addRow(QStringLiteral("状态"), m_statusLabel);
-    panelLayout->addWidget(processingGroup);
+    m_nodeParameterStack->addWidget(processingGroup);
 
-    auto *monitorGroup = new QGroupBox(QStringLiteral("监听"), panel);
+    auto *monitorGroup =
+        new QGroupBox(QStringLiteral("监听"), monitorPanel);
     auto *monitorLayout = new QFormLayout(monitorGroup);
     m_monitorEnabledCheck =
         new QCheckBox(QStringLiteral("启用监听输出"), monitorGroup);
@@ -355,16 +394,19 @@ void NoiseReductionPage::buildUi()
     m_monitorGainSpin = new QDoubleSpinBox(monitorGroup);
     m_monitorGainSpin->setObjectName(
         QStringLiteral("noiseReductionMonitorGainSpin"));
-    m_monitorGainSpin->setRange(-60.0, 24.0);
+    m_monitorGainSpin->setRange(-60.0, 48.0);
     m_monitorGainSpin->setDecimals(1);
     m_monitorGainSpin->setSuffix(QStringLiteral(" dB"));
     monitorLayout->addRow(m_monitorEnabledCheck);
     monitorLayout->addRow(QStringLiteral("监听源"), m_monitorSourceCombo);
     monitorLayout->addRow(QStringLiteral("监听增益"), m_monitorGainSpin);
-    panelLayout->addWidget(monitorGroup);
+    monitorPanelLayout->addWidget(monitorGroup);
+    monitorPanelLayout->addStretch();
 
     auto *bandPassGroup =
         new QGroupBox(QStringLiteral("输出带通滤波"), panel);
+    bandPassGroup->setObjectName(
+        QStringLiteral("noiseReductionBandPassParameters"));
     auto *bandPassLayout = new QFormLayout(bandPassGroup);
     m_bandPassEnabledCheck =
         new QCheckBox(QStringLiteral("启用带通滤波"), bandPassGroup);
@@ -403,10 +445,129 @@ void NoiseReductionPage::buildUi()
                            m_bandPassLowSpin);
     bandPassLayout->addRow(QStringLiteral("上限频率"),
                            m_bandPassHighSpin);
-    panelLayout->addWidget(bandPassGroup);
+    m_nodeParameterStack->addWidget(bandPassGroup);
+
+    auto *logMmseGroup =
+        new QGroupBox(QStringLiteral("LogMMSE 降噪"), panel);
+    logMmseGroup->setObjectName(
+        QStringLiteral("noiseReductionLogMmseParameters"));
+    auto *logMmseLayout = new QFormLayout(logMmseGroup);
+    m_logMmseEnabledCheck =
+        new QCheckBox(QStringLiteral("启用 LogMMSE"), logMmseGroup);
+    m_logMmseEnabledCheck->setObjectName(
+        QStringLiteral("noiseReductionLogMmseEnabledCheck"));
+    m_logMmseFftSizeCombo = new QComboBox(logMmseGroup);
+    m_logMmseFftSizeCombo->setObjectName(
+        QStringLiteral("noiseReductionLogMmseFftSizeCombo"));
+    for (int fftSize : {256, 512, 1024, 2048}) {
+        m_logMmseFftSizeCombo->addItem(
+            QString::number(fftSize), fftSize);
+    }
+    m_logMmseOverlapSpin = new QDoubleSpinBox(logMmseGroup);
+    m_logMmseOverlapSpin->setObjectName(
+        QStringLiteral("noiseReductionLogMmseOverlapSpin"));
+    m_logMmseOverlapSpin->setRange(0.0, 0.875);
+    m_logMmseOverlapSpin->setDecimals(3);
+    m_logMmseOverlapSpin->setSingleStep(0.125);
+    m_logMmsePriorSnrSpin = new QDoubleSpinBox(logMmseGroup);
+    m_logMmsePriorSnrSpin->setObjectName(
+        QStringLiteral("noiseReductionLogMmsePriorSnrSpin"));
+    m_logMmsePriorSnrSpin->setRange(0.0, 0.999);
+    m_logMmsePriorSnrSpin->setDecimals(3);
+    m_logMmsePriorSnrSpin->setSingleStep(0.01);
+    m_logMmseNoiseSmoothingSpin =
+        new QDoubleSpinBox(logMmseGroup);
+    m_logMmseNoiseSmoothingSpin->setObjectName(
+        QStringLiteral("noiseReductionLogMmseNoiseSmoothingSpin"));
+    m_logMmseNoiseSmoothingSpin->setRange(0.0, 0.999);
+    m_logMmseNoiseSmoothingSpin->setDecimals(3);
+    m_logMmseNoiseSmoothingSpin->setSingleStep(0.01);
+    m_logMmseMinimumGainSpin =
+        new QDoubleSpinBox(logMmseGroup);
+    m_logMmseMinimumGainSpin->setObjectName(
+        QStringLiteral("noiseReductionLogMmseMinimumGainSpin"));
+    m_logMmseMinimumGainSpin->setRange(-80.0, 0.0);
+    m_logMmseMinimumGainSpin->setDecimals(1);
+    m_logMmseMinimumGainSpin->setSuffix(QStringLiteral(" dB"));
+    logMmseLayout->addRow(m_logMmseEnabledCheck);
+    logMmseLayout->addRow(QStringLiteral("FFT 点数"),
+                          m_logMmseFftSizeCombo);
+    logMmseLayout->addRow(QStringLiteral("重叠比例"),
+                          m_logMmseOverlapSpin);
+    logMmseLayout->addRow(QStringLiteral("先验 SNR 平滑"),
+                          m_logMmsePriorSnrSpin);
+    logMmseLayout->addRow(QStringLiteral("噪声功率平滑"),
+                          m_logMmseNoiseSmoothingSpin);
+    logMmseLayout->addRow(QStringLiteral("最小增益"),
+                          m_logMmseMinimumGainSpin);
+    m_nodeParameterStack->addWidget(logMmseGroup);
+
+    auto *agcGroup =
+        new QGroupBox(QStringLiteral("自动增益控制"), panel);
+    agcGroup->setObjectName(
+        QStringLiteral("noiseReductionAgcParameters"));
+    auto *agcLayout = new QFormLayout(agcGroup);
+    m_agcEnabledCheck =
+        new QCheckBox(QStringLiteral("启用 AGC"), agcGroup);
+    m_agcEnabledCheck->setObjectName(
+        QStringLiteral("noiseReductionAgcEnabledCheck"));
+    auto createAgcSpin = [this, agcGroup](
+                             const QString &objectName,
+                             double minimum,
+                             double maximum,
+                             const QString &suffix) {
+        auto *spin = new QDoubleSpinBox(agcGroup);
+        spin->setObjectName(objectName);
+        spin->setRange(minimum, maximum);
+        spin->setDecimals(1);
+        spin->setSingleStep(1.0);
+        spin->setSuffix(suffix);
+        spin->installEventFilter(this);
+        m_wheelBlockedControls.append(spin);
+        return spin;
+    };
+    m_agcTargetSpin = createAgcSpin(
+        QStringLiteral("noiseReductionAgcTargetSpin"),
+        -60.0, 0.0, QStringLiteral(" dBFS"));
+    m_agcMaximumGainSpin = createAgcSpin(
+        QStringLiteral("noiseReductionAgcMaximumGainSpin"),
+        0.0, 60.0, QStringLiteral(" dB"));
+    m_agcMaximumAttenuationSpin = createAgcSpin(
+        QStringLiteral("noiseReductionAgcMaximumAttenuationSpin"),
+        -60.0, 0.0, QStringLiteral(" dB"));
+    m_agcAttackSpin = createAgcSpin(
+        QStringLiteral("noiseReductionAgcAttackSpin"),
+        1.0, 1000.0, QStringLiteral(" ms"));
+    m_agcReleaseSpin = createAgcSpin(
+        QStringLiteral("noiseReductionAgcReleaseSpin"),
+        1.0, 5000.0, QStringLiteral(" ms"));
+    m_agcLimiterSpin = createAgcSpin(
+        QStringLiteral("noiseReductionAgcLimiterSpin"),
+        -20.0, 0.0, QStringLiteral(" dBFS"));
+    agcLayout->addRow(m_agcEnabledCheck);
+    agcLayout->addRow(QStringLiteral("目标电平"), m_agcTargetSpin);
+    agcLayout->addRow(QStringLiteral("最大增益"),
+                      m_agcMaximumGainSpin);
+    agcLayout->addRow(QStringLiteral("最大衰减"),
+                      m_agcMaximumAttenuationSpin);
+    agcLayout->addRow(QStringLiteral("启动时间"), m_agcAttackSpin);
+    agcLayout->addRow(QStringLiteral("释放时间"), m_agcReleaseSpin);
+    agcLayout->addRow(QStringLiteral("限幅电平"), m_agcLimiterSpin);
+    m_nodeParameterStack->addWidget(agcGroup);
+
+    for (QWidget *control : {
+             static_cast<QWidget *>(m_logMmseFftSizeCombo),
+             static_cast<QWidget *>(m_logMmseOverlapSpin),
+             static_cast<QWidget *>(m_logMmsePriorSnrSpin),
+             static_cast<QWidget *>(m_logMmseNoiseSmoothingSpin),
+             static_cast<QWidget *>(m_logMmseMinimumGainSpin),
+         }) {
+        control->installEventFilter(this);
+        m_wheelBlockedControls.append(control);
+    }
 
     auto *directionGroup =
-        new QGroupBox(QStringLiteral("方向控制"), panel);
+        new QGroupBox(QStringLiteral("方向控制"), directionPanel);
     auto *directionLayout = new QFormLayout(directionGroup);
     m_directionSelectionCombo = new QComboBox(directionGroup);
     m_directionSelectionCombo->setObjectName(
@@ -479,10 +640,10 @@ void NoiseReductionPage::buildUi()
         QStringLiteral("noiseReductionShowMarkersCheck"));
     directionLayout->addRow(m_sendDirectionButton);
     directionLayout->addRow(m_showMarkersCheck);
-    panelLayout->addWidget(directionGroup);
+    directionPanelLayout->addWidget(directionGroup);
 
     auto *mappingGroup =
-        new QGroupBox(QStringLiteral("实际角度映射"), panel);
+        new QGroupBox(QStringLiteral("实际角度映射"), directionPanel);
     auto *mappingLayout = new QFormLayout(mappingGroup);
     m_mappingSpins[0] = angleSpin(
         mappingGroup, QStringLiteral("noiseAzimuthMinimumSpin"),
@@ -503,10 +664,10 @@ void NoiseReductionPage::buildUi()
     mappingLayout->addRow(QStringLiteral("方位最大"), m_mappingSpins[1]);
     mappingLayout->addRow(QStringLiteral("俯仰最小"), m_mappingSpins[2]);
     mappingLayout->addRow(QStringLiteral("俯仰最大"), m_mappingSpins[3]);
-    panelLayout->addWidget(mappingGroup);
+    directionPanelLayout->addWidget(mappingGroup);
 
     auto *cameraGroup =
-        new QGroupBox(QStringLiteral("视频视角参数"), panel);
+        new QGroupBox(QStringLiteral("视频视角参数"), directionPanel);
     auto *cameraLayout = new QFormLayout(cameraGroup);
     m_cameraSpins[0] = angleSpin(
         cameraGroup, QStringLiteral("noiseCameraCenterAzimuthSpin"),
@@ -531,17 +692,16 @@ void NoiseReductionPage::buildUi()
     cameraLayout->addRow(QStringLiteral("水平视场角"), m_cameraSpins[2]);
     cameraLayout->addRow(QStringLiteral("垂直视场角"), m_cameraSpins[3]);
     cameraLayout->addRow(QStringLiteral("滚转角"), m_cameraSpins[4]);
-    panelLayout->addWidget(cameraGroup);
+    directionPanelLayout->addWidget(cameraGroup);
 
     m_fullscreenButton =
-        new QPushButton(QStringLiteral("全屏显示"), panel);
+        new QPushButton(QStringLiteral("全屏显示"), directionPanel);
     m_fullscreenButton->setObjectName(
         QStringLiteral("noiseReductionFullscreenButton"));
-    panelLayout->addWidget(m_fullscreenButton);
-    panelLayout->addStretch();
-    scroll->setWidget(panel);
-    topSplitter->addWidget(scroll);
-    topSplitter->setSizes({800, 360});
+    directionPanelLayout->addWidget(m_fullscreenButton);
+    directionPanelLayout->addStretch();
+    topSplitter->addWidget(controlPanel);
+    topSplitter->setSizes({880, 520});
     verticalSplitter->addWidget(topSplitter);
 
     auto *comparisons = new QWidget(verticalSplitter);
@@ -667,6 +827,49 @@ void NoiseReductionPage::connectUi()
             this, customBandPassChanged);
     connect(m_bandPassHighSpin, &QDoubleSpinBox::valueChanged,
             this, customBandPassChanged);
+    connect(m_processingNodeList,
+            &ProcessingNodeListWidget::postProcessingOrderChanged,
+            this, [this](const QVector<NoisePostProcessingNode> &) {
+                applySettingsFromUi();
+            });
+    connect(m_processingNodeList,
+            &ProcessingNodeListWidget::currentNodeChanged,
+            this, [this](int nodeId) {
+                showNodeParameters(nodeId);
+                m_settings.selectedDataFlowNode = nodeId;
+                if (m_settingsStore != nullptr) {
+                    m_settingsStore->saveNoiseReduction(m_settings);
+                }
+            });
+    connect(m_controlTabs, &QTabWidget::currentChanged,
+            this, [this](int index) {
+                m_settings.controlTabIndex = index;
+                if (m_settingsStore != nullptr) {
+                    m_settingsStore->saveNoiseReduction(m_settings);
+                }
+            });
+    connect(m_logMmseEnabledCheck, &QCheckBox::toggled,
+            this, settingsChanged);
+    connect(m_logMmseFftSizeCombo,
+            &QComboBox::currentIndexChanged,
+            this, settingsChanged);
+    for (QDoubleSpinBox *spin : {
+             m_logMmseOverlapSpin,
+             m_logMmsePriorSnrSpin,
+             m_logMmseNoiseSmoothingSpin,
+             m_logMmseMinimumGainSpin,
+             m_agcTargetSpin,
+             m_agcMaximumGainSpin,
+             m_agcMaximumAttenuationSpin,
+             m_agcAttackSpin,
+             m_agcReleaseSpin,
+             m_agcLimiterSpin,
+         }) {
+        connect(spin, &QDoubleSpinBox::valueChanged,
+                this, settingsChanged);
+    }
+    connect(m_agcEnabledCheck, &QCheckBox::toggled,
+            this, settingsChanged);
     connect(m_firstPlotSourceCombo, &QComboBox::currentIndexChanged,
             this, settingsChanged);
     connect(m_secondPlotSourceCombo, &QComboBox::currentIndexChanged,
@@ -691,6 +894,36 @@ void NoiseReductionPage::connectUi()
             });
     connect(m_videoView, &NoiseReductionVideoWidget::videoPointClicked,
             this, &NoiseReductionPage::handleVideoPoint);
+    for (NoiseReductionVideoWidget *view :
+         {m_videoView, m_presentationVideo}) {
+        connect(view,
+                &NoiseReductionVideoWidget::directionDragStarted,
+                this,
+                [this](NoiseDirectionSelection selection) {
+                    const QSignalBlocker blocker(
+                        m_directionSelectionCombo);
+                    selectData(
+                        m_directionSelectionCombo,
+                        static_cast<int>(selection));
+                    refreshDirectionViews();
+                });
+        connect(view,
+                &NoiseReductionVideoWidget::directionDragged,
+                this,
+                [this](NoiseDirectionSelection selection,
+                       const QPointF &point) {
+                    handleDirectionDragPoint(
+                        selection, point, false);
+                });
+        connect(view,
+                &NoiseReductionVideoWidget::directionDragFinished,
+                this,
+                [this](NoiseDirectionSelection selection,
+                       const QPointF &point) {
+                    handleDirectionDragPoint(
+                        selection, point, true);
+                });
+    }
     connect(m_sendDirectionButton, &QPushButton::clicked,
             this, &NoiseReductionPage::requestControlSend);
     connect(m_fullscreenButton, &QPushButton::clicked,
@@ -706,6 +939,9 @@ void NoiseReductionPage::connectUi()
             this, [this] {
                 setPresentationMode(false);
             });
+    showNodeParameters(
+        m_processingNodeList->nodeIdAtRow(
+            m_processingNodeList->currentRow()));
 }
 
 void NoiseReductionPage::restoreSettings()
@@ -730,6 +966,43 @@ void NoiseReductionPage::restoreSettings()
                static_cast<int>(m_settings.bandPass.preset));
     m_bandPassLowSpin->setValue(m_settings.bandPass.lowCutoffHz);
     m_bandPassHighSpin->setValue(m_settings.bandPass.highCutoffHz);
+    m_processingNodeList->setPostProcessingOrder(
+        m_settings.postProcessingOrder);
+    m_controlTabs->setCurrentIndex(m_settings.controlTabIndex);
+    for (int row = 0;
+         row < m_processingNodeList->count(); ++row) {
+        if (m_processingNodeList->nodeIdAtRow(row)
+            == m_settings.selectedDataFlowNode) {
+            m_processingNodeList->setCurrentRow(row);
+            break;
+        }
+    }
+    m_logMmseEnabledCheck->setChecked(
+        m_settings.logMmse.enabled);
+    selectData(m_logMmseFftSizeCombo,
+               m_settings.logMmse.fftSize);
+    m_logMmseOverlapSpin->setValue(
+        m_settings.logMmse.overlapRatio);
+    m_logMmsePriorSnrSpin->setValue(
+        m_settings.logMmse.priorSnrSmoothing);
+    m_logMmseNoiseSmoothingSpin->setValue(
+        m_settings.logMmse.noisePowerSmoothing);
+    m_logMmseMinimumGainSpin->setValue(
+        m_settings.logMmse.minimumGainDb);
+    m_agcEnabledCheck->setChecked(
+        m_settings.automaticGainControl.enabled);
+    m_agcTargetSpin->setValue(
+        m_settings.automaticGainControl.targetLevelDbfs);
+    m_agcMaximumGainSpin->setValue(
+        m_settings.automaticGainControl.maximumGainDb);
+    m_agcMaximumAttenuationSpin->setValue(
+        m_settings.automaticGainControl.maximumAttenuationDb);
+    m_agcAttackSpin->setValue(
+        m_settings.automaticGainControl.attackMilliseconds);
+    m_agcReleaseSpin->setValue(
+        m_settings.automaticGainControl.releaseMilliseconds);
+    m_agcLimiterSpin->setValue(
+        m_settings.automaticGainControl.limiterLevelDbfs);
     selectData(m_firstPlotSourceCombo,
                static_cast<int>(m_settings.firstPlotSource));
     selectData(m_secondPlotSourceCombo,
@@ -756,6 +1029,7 @@ void NoiseReductionPage::restoreSettings()
     m_cameraSpins[3]->setValue(m_settings.camera.verticalFovDegrees);
     m_cameraSpins[4]->setValue(m_settings.camera.rollDegrees);
     refreshProcessingAvailability();
+    refreshNodeSummaries();
     refreshDirectionViews();
     refreshControlAvailability();
 }
@@ -783,6 +1057,38 @@ NoiseReductionSettings NoiseReductionPage::settingsFromUi() const
         m_bandPassPresetCombo->currentData().toInt());
     value.bandPass.lowCutoffHz = m_bandPassLowSpin->value();
     value.bandPass.highCutoffHz = m_bandPassHighSpin->value();
+    value.postProcessingOrder =
+        m_processingNodeList->postProcessingOrder();
+    value.controlTabIndex = m_controlTabs->currentIndex();
+    value.selectedDataFlowNode =
+        m_processingNodeList->nodeIdAtRow(
+            m_processingNodeList->currentRow());
+    value.logMmse.enabled =
+        m_logMmseEnabledCheck->isChecked();
+    value.logMmse.fftSize =
+        m_logMmseFftSizeCombo->currentData().toInt();
+    value.logMmse.overlapRatio =
+        m_logMmseOverlapSpin->value();
+    value.logMmse.priorSnrSmoothing =
+        m_logMmsePriorSnrSpin->value();
+    value.logMmse.noisePowerSmoothing =
+        m_logMmseNoiseSmoothingSpin->value();
+    value.logMmse.minimumGainDb =
+        m_logMmseMinimumGainSpin->value();
+    value.automaticGainControl.enabled =
+        m_agcEnabledCheck->isChecked();
+    value.automaticGainControl.targetLevelDbfs =
+        m_agcTargetSpin->value();
+    value.automaticGainControl.maximumGainDb =
+        m_agcMaximumGainSpin->value();
+    value.automaticGainControl.maximumAttenuationDb =
+        m_agcMaximumAttenuationSpin->value();
+    value.automaticGainControl.attackMilliseconds =
+        m_agcAttackSpin->value();
+    value.automaticGainControl.releaseMilliseconds =
+        m_agcReleaseSpin->value();
+    value.automaticGainControl.limiterLevelDbfs =
+        m_agcLimiterSpin->value();
     value.firstPlotSource = static_cast<NoiseSignalSource>(
         m_firstPlotSourceCombo->currentData().toInt());
     value.secondPlotSource = static_cast<NoiseSignalSource>(
@@ -830,6 +1136,7 @@ void NoiseReductionPage::applySettingsFromUi()
         m_settingsStore->saveNoiseReduction(m_settings);
     }
     refreshProcessingAvailability();
+    refreshNodeSummaries();
     refreshDirectionViews();
     emit configureWorkerRequested(m_settings, m_sampleRate);
     emit workerActiveRequested(m_active && m_settings.enabled);
@@ -863,6 +1170,63 @@ void NoiseReductionPage::refreshProcessingAvailability()
     m_bandPassPresetCombo->setEnabled(bandPassEnabled);
     m_bandPassLowSpin->setEnabled(bandPassEnabled);
     m_bandPassHighSpin->setEnabled(bandPassEnabled);
+
+    const bool logMmseEnabled = m_logMmseEnabledCheck->isChecked();
+    m_logMmseFftSizeCombo->setEnabled(logMmseEnabled);
+    m_logMmseOverlapSpin->setEnabled(logMmseEnabled);
+    m_logMmsePriorSnrSpin->setEnabled(logMmseEnabled);
+    m_logMmseNoiseSmoothingSpin->setEnabled(logMmseEnabled);
+    m_logMmseMinimumGainSpin->setEnabled(logMmseEnabled);
+
+    const bool agcEnabled = m_agcEnabledCheck->isChecked();
+    for (QDoubleSpinBox *spin : {
+             m_agcTargetSpin,
+             m_agcMaximumGainSpin,
+             m_agcMaximumAttenuationSpin,
+             m_agcAttackSpin,
+             m_agcReleaseSpin,
+             m_agcLimiterSpin,
+         }) {
+        spin->setEnabled(agcEnabled);
+    }
+}
+
+void NoiseReductionPage::refreshNodeSummaries()
+{
+    m_processingNodeList->setNodeSummary(
+        ProcessingNodeListWidget::SuppressionNodeId,
+        m_enabledCheck->isChecked(),
+        m_modeCombo->currentText());
+    m_processingNodeList->setNodeSummary(
+        static_cast<int>(NoisePostProcessingNode::BandPass),
+        m_bandPassEnabledCheck->isChecked(),
+        QStringLiteral("%1–%2 Hz")
+            .arg(m_bandPassLowSpin->value(), 0, 'f', 0)
+            .arg(m_bandPassHighSpin->value(), 0, 'f', 0));
+    m_processingNodeList->setNodeSummary(
+        static_cast<int>(NoisePostProcessingNode::LogMmse),
+        m_logMmseEnabledCheck->isChecked(),
+        QStringLiteral("%1 点 · %2% 重叠")
+            .arg(m_logMmseFftSizeCombo->currentData().toInt())
+            .arg(m_logMmseOverlapSpin->value() * 100.0,
+                 0, 'f', 0));
+    m_processingNodeList->setNodeSummary(
+        static_cast<int>(
+            NoisePostProcessingNode::AutomaticGainControl),
+        m_agcEnabledCheck->isChecked(),
+        QStringLiteral("目标 %1 dBFS")
+            .arg(m_agcTargetSpin->value(), 0, 'f', 1));
+}
+
+void NoiseReductionPage::showNodeParameters(int nodeId)
+{
+    const int pageIndex =
+        nodeId == ProcessingNodeListWidget::SuppressionNodeId
+        ? 0 : nodeId + 1;
+    if (pageIndex >= 0
+        && pageIndex < m_nodeParameterStack->count()) {
+        m_nodeParameterStack->setCurrentIndex(pageIndex);
+    }
 }
 
 void NoiseReductionPage::refreshDirectionViews()
@@ -924,8 +1288,8 @@ void NoiseReductionPage::handleVideoPoint(
     const QPointF &normalizedPoint)
 {
     const ScanDirection direction =
-        unprojectVideoPoint(
-            normalizedPoint, projectionSafeCamera(m_settings.camera));
+        unprojectVideoPointAngular(
+            normalizedPoint, m_settings.camera);
     const ContinuousDirectionTarget target =
         DirectionControlMapper::clampDirection(
             {direction.azimuthDegrees, direction.elevationDegrees},
@@ -943,6 +1307,42 @@ void NoiseReductionPage::handleVideoPoint(
     }
     applySettingsFromUi();
     requestControlSend();
+}
+
+void NoiseReductionPage::handleDirectionDragPoint(
+    NoiseDirectionSelection selection,
+    const QPointF &normalizedPoint,
+    bool finished)
+{
+    const ScanDirection direction =
+        unprojectVideoPointAngular(
+            normalizedPoint, m_settings.camera);
+    const ContinuousDirectionTarget target =
+        DirectionControlMapper::clampDirection(
+            {direction.azimuthDegrees, direction.elevationDegrees},
+            m_settings.mapping);
+    {
+        const QSignalBlocker selectionBlocker(
+            m_directionSelectionCombo);
+        selectData(m_directionSelectionCombo,
+                   static_cast<int>(selection));
+    }
+    const int base = selection == NoiseDirectionSelection::EnhancedA
+        ? 0 : (selection == NoiseDirectionSelection::SuppressionB1
+                   ? 2 : 4);
+    {
+        const QSignalBlocker first(m_directionSpins[base]);
+        const QSignalBlocker second(m_directionSpins[base + 1]);
+        m_directionSpins[base]->setValue(target.azimuthDegrees);
+        m_directionSpins[base + 1]->setValue(target.elevationDegrees);
+    }
+    if (finished) {
+        applySettingsFromUi();
+        requestControlSend();
+        return;
+    }
+    m_settings = settingsFromUi();
+    refreshDirectionViews();
 }
 
 void NoiseReductionPage::requestControlSend()

@@ -13,12 +13,15 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
+class QStackedWidget;
+class QTabWidget;
 
 namespace MicArray {
 
 class AudioWaveformWidget;
 class NoiseReductionVideoWidget;
 class PowerSpectrumWidget;
+class ProcessingNodeListWidget;
 
 class NoiseReductionPage : public QWidget
 {
@@ -69,9 +72,15 @@ private:
     NoiseReductionSettings settingsFromUi() const;
     void applySettingsFromUi();
     void refreshProcessingAvailability();
+    void refreshNodeSummaries();
+    void showNodeParameters(int nodeId);
     void refreshDirectionViews();
     void refreshControlAvailability();
     void handleVideoPoint(const QPointF &normalizedPoint);
+    void handleDirectionDragPoint(
+        NoiseDirectionSelection selection,
+        const QPointF &normalizedPoint,
+        bool finished);
     void requestControlSend();
     void showPlotFrame(const NoiseReductionPlotFrame &frame);
     void setPresentationMode(bool enabled);
@@ -123,6 +132,23 @@ private:
     QPushButton *m_sendDirectionButton = nullptr;
     QPushButton *m_fullscreenButton = nullptr;
     QLabel *m_statusLabel = nullptr;
+    QTabWidget *m_controlTabs = nullptr;
+    ProcessingNodeListWidget *m_processingNodeList = nullptr;
+    QStackedWidget *m_nodeParameterStack = nullptr;
+    QCheckBox *m_logMmseEnabledCheck = nullptr;
+    QComboBox *m_logMmseFftSizeCombo = nullptr;
+    QDoubleSpinBox *m_logMmseOverlapSpin = nullptr;
+    QDoubleSpinBox *m_logMmsePriorSnrSpin = nullptr;
+    QDoubleSpinBox *m_logMmseNoiseSmoothingSpin = nullptr;
+    QDoubleSpinBox *m_logMmseMinimumGainSpin = nullptr;
+    QCheckBox *m_agcEnabledCheck = nullptr;
+    QDoubleSpinBox *m_agcTargetSpin = nullptr;
+    QDoubleSpinBox *m_agcMaximumGainSpin = nullptr;
+    QDoubleSpinBox *m_agcMaximumAttenuationSpin = nullptr;
+    QDoubleSpinBox *m_agcAttackSpin = nullptr;
+    QDoubleSpinBox *m_agcReleaseSpin = nullptr;
+    QDoubleSpinBox *m_agcLimiterSpin = nullptr;
+    QVector<QWidget *> m_wheelBlockedControls;
 };
 
 } // namespace MicArray

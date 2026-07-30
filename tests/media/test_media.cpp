@@ -16,11 +16,13 @@
 
 #include "control/directioncontrolmapper.h"
 #include "media/audioframedecoder.h"
+#include "media/automaticgaincontrol.h"
 #include "media/audioprocessor.h"
 #include "media/audiorecorder.h"
 #include "media/bandpassfilter.h"
 #include "media/channelgainprocessor.h"
 #include "media/gainprofilestore.h"
+#include "media/logmmseprocessor.h"
 #include "media/videodecoder.h"
 #include "media/mediaframequeue.h"
 #include "media/multichannelwavwriter.h"
@@ -81,6 +83,19 @@ double toneAmplitude(const QVector<float> &samples,
     return used > 0
         ? 2.0 * std::hypot(sine, cosine) / static_cast<double>(used)
         : 0.0;
+}
+
+double rootMeanSquare(const QVector<float> &samples, int skipSamples)
+{
+    double power = 0.0;
+    int count = 0;
+    for (int index = skipSamples; index < samples.size(); ++index) {
+        const double sample = samples.at(index);
+        power += sample * sample;
+        ++count;
+    }
+    return count > 0
+        ? std::sqrt(power / static_cast<double>(count)) : 0.0;
 }
 
 void fillChannelSamples(QByteArray &payload, int channel, qint32 sample)
@@ -195,8 +210,13 @@ private slots:
     void appliesFixedWienerCoefficientsIndependently();
     void keepsWienerOutputFiniteForSilentAndDegenerateReferences();
     void appliesAndResetsFourthOrderBandPassFilter();
+    void logMmseProducesFiniteChunkIndependentStreamingOutput();
+    void logMmseRejectsInvalidConfigurationAndKeepsSilenceStable();
+    void automaticGainControlConvergesAndLimitsOutput();
+    void automaticGainControlRejectsInvalidConfiguration();
     void noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources();
     void filtersDenoisedWorkerOutputWhileMonitoringIsDisabled();
+    void noiseReductionWorkerHonorsPostProcessingOrder();
     void computesNoiseReductionSpectrumAndSaturatingMonitorGain();
 };
 
@@ -1884,6 +1904,115 @@ void MediaTest::appliesAndResetsFourthOrderBandPassFilter()
     QVERIFY(!filter.configure(SampleRate, 100.0, SampleRate / 2.0));
 }
 
+void MediaTest::logMmseProducesFiniteChunkIndependentStreamingOutput()
+{
+    constexpr int SampleRate = 48000;
+    QVector<float> input(8192);
+    std::mt19937 generator(20260729);
+    std::normal_distribution<float> noise(0.0f, 0.035f);
+    for (int index = 0; index < input.size(); ++index) {
+        input[index] =
+            0.12f * std::sin(
+                2.0 * std::numbers::pi * 900.0 * index / SampleRate)
+            + noise(generator);
+    }
+
+    LogMmseSettings settings;
+    settings.enabled = true;
+    LogMmseProcessor wholeProcessor;
+    QVERIFY(wholeProcessor.configure(SampleRate, settings));
+    const QVector<float> whole = wholeProcessor.process(input);
+    QCOMPARE(whole.size(), input.size());
+
+    LogMmseProcessor chunkedProcessor;
+    QVERIFY(chunkedProcessor.configure(SampleRate, settings));
+    QVector<float> chunked;
+    const QVector<int> chunkSizes {73, 511, 19, 1024, 257, 333};
+    int inputOffset = 0;
+    int chunkIndex = 0;
+    while (inputOffset < input.size()) {
+        const int count = std::min(
+            chunkSizes.at(chunkIndex % chunkSizes.size()),
+            static_cast<int>(input.size()) - inputOffset);
+        chunked += chunkedProcessor.process(input.mid(inputOffset, count));
+        inputOffset += count;
+        ++chunkIndex;
+    }
+
+    QCOMPARE(chunked.size(), input.size());
+    for (int index = 0; index < whole.size(); ++index) {
+        QVERIFY(std::isfinite(whole.at(index)));
+        QVERIFY(std::isfinite(chunked.at(index)));
+        QVERIFY(qAbs(whole.at(index) - chunked.at(index)) < 1.0e-6f);
+    }
+}
+
+void MediaTest::logMmseRejectsInvalidConfigurationAndKeepsSilenceStable()
+{
+    LogMmseSettings settings;
+    LogMmseProcessor processor;
+    settings.fftSize = 300;
+    QVERIFY(!processor.configure(48000, settings));
+    settings.fftSize = 512;
+    settings.overlapRatio = 1.0;
+    QVERIFY(!processor.configure(48000, settings));
+    settings.overlapRatio = 0.5;
+    QVERIFY(processor.configure(48000, settings));
+
+    const QVector<float> output =
+        processor.process(QVector<float>(4096, 0.0f));
+    QCOMPARE(output.size(), 4096);
+    for (float sample : output) {
+        QVERIFY(std::isfinite(sample));
+        QVERIFY(qAbs(sample) < 1.0e-7f);
+    }
+}
+
+void MediaTest::automaticGainControlConvergesAndLimitsOutput()
+{
+    AutomaticGainControlSettings settings;
+    settings.enabled = true;
+    AutomaticGainControl control;
+    constexpr int SampleRate = 48000;
+    QVERIFY(control.configure(SampleRate, settings));
+    QVector<float> quiet(SampleRate * 4);
+    for (int index = 0; index < quiet.size(); ++index) {
+        quiet[index] = 0.01f * std::sin(
+            2.0 * std::numbers::pi * 1000.0 * index / SampleRate);
+    }
+    const QVector<float> raised = control.process(quiet);
+    QCOMPARE(raised.size(), quiet.size());
+    const double tailRms = rootMeanSquare(raised, SampleRate * 3);
+    QVERIFY(tailRms > 0.1059);
+    QVERIFY(tailRms < 0.1496);
+
+    control.reset();
+    const QVector<float> limited =
+        control.process(QVector<float>(SampleRate, 1.0f));
+    constexpr double LimiterAmplitude = 0.8912509381337456;
+    for (float sample : limited) {
+        QVERIFY(std::isfinite(sample));
+        QVERIFY(qAbs(sample) <= LimiterAmplitude + 1.0e-6);
+    }
+}
+
+void MediaTest::automaticGainControlRejectsInvalidConfiguration()
+{
+    AutomaticGainControl control;
+    AutomaticGainControlSettings settings;
+    settings.attackMilliseconds = 0.0;
+    QVERIFY(!control.configure(48000, settings));
+    settings.attackMilliseconds = 20.0;
+    settings.releaseMilliseconds = -1.0;
+    QVERIFY(!control.configure(48000, settings));
+    settings.releaseMilliseconds = 300.0;
+    settings.maximumAttenuationDb = 1.0;
+    QVERIFY(!control.configure(48000, settings));
+    settings.maximumAttenuationDb = -20.0;
+    settings.limiterLevelDbfs = 1.0;
+    QVERIFY(!control.configure(48000, settings));
+}
+
 void MediaTest::noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources()
 {
     NoiseReductionWorker worker;
@@ -1990,6 +2119,75 @@ void MediaTest::filtersDenoisedWorkerOutputWhileMonitoringIsDisabled()
             < plot.first.spectrumDbfs.at(HighBin) - 5.0f);
 }
 
+void MediaTest::noiseReductionWorkerHonorsPostProcessingOrder()
+{
+    auto runPipeline = [](const QVector<NoisePostProcessingNode> &order) {
+        NoiseReductionWorker worker;
+        NoiseReductionSettings settings;
+        settings.enabled = true;
+        settings.algorithm =
+            NoiseReductionAlgorithm::FixedParameterWiener;
+        settings.singleSuppressionCoefficient = 0.0;
+        settings.monitorEnabled = false;
+        settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+        settings.secondPlotSource = NoiseSignalSource::Denoised;
+        settings.bandPass.enabled = true;
+        settings.bandPass.lowCutoffHz = 100.0;
+        settings.bandPass.highCutoffHz = 8000.0;
+        settings.logMmse.enabled = false;
+        settings.automaticGainControl.enabled = true;
+        settings.postProcessingOrder = order;
+        worker.configure(settings, 48000);
+        worker.setActive(true);
+
+        QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+        QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+        qint64 globalSample = 0;
+        for (int frame = 0; frame < 80; ++frame) {
+            for (int sample = 0;
+                 sample < AudioFrameDecoder::SamplesPerFrame;
+                 ++sample, ++globalSample) {
+                const double mixed =
+                    0.30 * std::sin(
+                        2.0 * std::numbers::pi * 50.0
+                        * globalSample / 48000.0)
+                    + 0.01 * std::sin(
+                        2.0 * std::numbers::pi * 1000.0
+                        * globalSample / 48000.0);
+                const qint32 value =
+                    static_cast<qint32>(mixed * 8388607.0) << 8;
+                putSample(payload, sample, 1, value);
+            }
+            worker.processRawFrame(
+                payload, 1, static_cast<quint32>(frame * 5000));
+        }
+        if (plots.isEmpty()) {
+            return QVector<float> {};
+        }
+        return qvariant_cast<NoiseReductionPlotFrame>(
+                   plots.last().at(0))
+            .second.waveform;
+    };
+
+    const QVector<float> filterThenAgc = runPipeline({
+        NoisePostProcessingNode::BandPass,
+        NoisePostProcessingNode::AutomaticGainControl,
+        NoisePostProcessingNode::LogMmse,
+    });
+    const QVector<float> agcThenFilter = runPipeline({
+        NoisePostProcessingNode::AutomaticGainControl,
+        NoisePostProcessingNode::BandPass,
+        NoisePostProcessingNode::LogMmse,
+    });
+    const double filterThenAgcTone =
+        toneAmplitude(filterThenAgc, 1000.0, 48000, 1000);
+    const double agcThenFilterTone =
+        toneAmplitude(agcThenFilter, 1000.0, 48000, 1000);
+    QVERIFY(!filterThenAgc.isEmpty());
+    QVERIFY(!agcThenFilter.isEmpty());
+    QVERIFY(filterThenAgcTone > agcThenFilterTone * 2.0);
+}
+
 void MediaTest::computesNoiseReductionSpectrumAndSaturatingMonitorGain()
 {
     QVector<float> tone(2048);
@@ -2020,6 +2218,17 @@ void MediaTest::computesNoiseReductionSpectrumAndSaturatingMonitorGain()
     QCOMPARE(qFromLittleEndian<qint16>(
                  reinterpret_cast<const uchar *>(pcm.constData() + 6)),
              qint16(-32768));
+
+    const QVector<float> quiet {0.001f};
+    const QByteArray gain24 =
+        NoiseReductionWorker::pcm16WithGain(quiet, 24.0);
+    const QByteArray gain48 =
+        NoiseReductionWorker::pcm16WithGain(quiet, 48.0);
+    const qint16 sample24 = qFromLittleEndian<qint16>(
+        reinterpret_cast<const uchar *>(gain24.constData()));
+    const qint16 sample48 = qFromLittleEndian<qint16>(
+        reinterpret_cast<const uchar *>(gain48.constData()));
+    QVERIFY(sample48 > sample24 * 10);
 }
 
 QTEST_MAIN(MediaTest)
