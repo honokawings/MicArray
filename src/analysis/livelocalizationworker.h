@@ -49,6 +49,7 @@ private:
     bool rebuildLocator();
     MultiChannelAudioWindow latestWindow() const;
     void analyzeLatest(qint64 timestampMicroseconds);
+    void publishEmptySpatialResponse(qint64 timestampMicroseconds);
 
     SoundSourceLocatorRegistry m_registry;
     std::unique_ptr<ISoundSourceLocator> m_locator;
@@ -57,7 +58,6 @@ private:
     SpatialResponseGrid m_grid;
     QVector<QVector<float>> m_channels;
     QVector<TimedDirection> m_directionHistory;
-    QVector<float> m_smoothedSpatialValues;
     quint64 m_gridGeneration = 0;
     qint64 m_totalSamples = 0;
     qint64 m_lastAnalysisTimestamp = -1;

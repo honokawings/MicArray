@@ -21,6 +21,11 @@ struct LocatorDescriptor {
     QString description;
 };
 
+enum class SpatialResolutionMode {
+    RealtimeEnhanced,
+    HighPrecision,
+};
+
 struct LocatorConfiguration {
     QVector<MicrophonePosition> microphones;
     int sampleRate = 48000;
@@ -28,6 +33,8 @@ struct LocatorConfiguration {
     double soundSpeedMetersPerSecond = 343.0;
     double confidenceThreshold = 0.45;
     double smoothingFactor = 0.35;
+    SpatialResolutionMode spatialResolutionMode =
+        SpatialResolutionMode::RealtimeEnhanced;
 };
 
 struct MultiChannelAudioWindow {
@@ -72,12 +79,19 @@ struct SpatialResponseGrid {
 struct SpatialResponseResult {
     QVector<float> values;
     double reliability = 0.0;
+    bool hasRefinedPeak = false;
+    ScanDirection refinedPeak;
+    double azimuthStandardDeviationDegrees = 0.0;
+    double elevationStandardDeviationDegrees = 0.0;
+    double azimuthElevationCorrelation = 0.0;
+    double peakToSidelobeRatio = 0.0;
 };
 
 struct LiveLocalizationResult {
     QVector<SoundSourceDirection> directions;
     qint64 timestampMicroseconds = 0;
     qint64 elapsedMilliseconds = 0;
+    quint64 generation = 0;
 };
 
 struct LiveSpatialResponse {
@@ -87,6 +101,12 @@ struct LiveSpatialResponse {
     qint64 timestampMicroseconds = 0;
     quint64 generation = 0;
     double reliability = 0.0;
+    bool hasRefinedPeak = false;
+    ScanDirection refinedPeak;
+    double azimuthStandardDeviationDegrees = 0.0;
+    double elevationStandardDeviationDegrees = 0.0;
+    double azimuthElevationCorrelation = 0.0;
+    double peakToSidelobeRatio = 0.0;
 };
 
 struct VideoCalibrationSample {
@@ -101,6 +121,7 @@ struct VideoCalibrationSample {
 } // namespace MicArray
 
 Q_DECLARE_METATYPE(MicArray::LocatorConfiguration)
+Q_DECLARE_METATYPE(MicArray::SpatialResolutionMode)
 Q_DECLARE_METATYPE(MicArray::MultiChannelAudioWindow)
 Q_DECLARE_METATYPE(MicArray::SoundSourceDirection)
 Q_DECLARE_METATYPE(QVector<MicArray::SoundSourceDirection>)

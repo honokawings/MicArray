@@ -316,6 +316,8 @@ bool AudioAnalysisWorker::configureLocator()
     configuration.soundSpeedMetersPerSecond = m_settings.soundSpeedMetersPerSecond;
     configuration.confidenceThreshold = m_settings.confidenceThreshold;
     configuration.smoothingFactor = m_settings.smoothingFactor;
+    configuration.spatialResolutionMode =
+        SpatialResolutionMode::HighPrecision;
     QString error;
     if (!m_locator->configure(configuration, &error)) {
         emit errorOccurred(error);

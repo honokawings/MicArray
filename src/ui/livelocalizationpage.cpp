@@ -53,6 +53,7 @@ LiveLocalizationPage::LiveLocalizationPage(AppSettings *settings, QWidget *paren
 {
     setObjectName(QStringLiteral("liveLocalizationPage"));
     buildUi();
+    m_view->setSpatialResponseActive(false);
     restoreSettings();
     m_workerThread.setObjectName(QStringLiteral("LiveSourceLocalizationThread"));
     m_worker->moveToThread(&m_workerThread);
@@ -71,8 +72,10 @@ LiveLocalizationPage::LiveLocalizationPage(AppSettings *settings, QWidget *paren
     connect(this, &LiveLocalizationPage::calibrationSampleRequested,
             m_worker, &LiveLocalizationWorker::captureStableDirection, Qt::QueuedConnection);
     connect(m_worker, &LiveLocalizationWorker::localizationReady, this,
-            [this](const LiveLocalizationResult &result) {
-                if (!m_active) {
+             [this](const LiveLocalizationResult &result) {
+                 if (!m_active || !m_settings.enabled
+                     || result.generation
+                         != m_gridGeneration) {
                     return;
                 }
                 m_view->setDirections(result.directions);
@@ -129,12 +132,15 @@ LiveLocalizationPage::~LiveLocalizationPage()
 
 void LiveLocalizationPage::setActive(bool active)
 {
-    m_active = active;
-    emit workerActiveRequested(active && m_settings.enabled);
-    if (!active) {
-        m_view->setDirections({});
-        m_view->setSpatialResponse({});
+    if (m_active == active) {
+        return;
     }
+    m_active = active;
+    startNewProcessingEpoch();
+    const bool processingActive =
+        active && m_settings.enabled;
+    m_view->setSpatialResponseActive(processingActive);
+    emit workerActiveRequested(processingActive);
 }
 
 void LiveLocalizationPage::setVideoFrame(const QImage &image,
@@ -237,6 +243,18 @@ void LiveLocalizationPage::buildUi()
     m_displayModeCombo->addItem(QStringLiteral("纯标记"), QStringLiteral("marker"));
     m_displayModeCombo->addItem(QStringLiteral("真实空间响应热力图"),
                                 QStringLiteral("heatmap"));
+    m_spatialResolutionModeCombo =
+        new QComboBox(localizationGroup);
+    m_spatialResolutionModeCombo->setObjectName(
+        QStringLiteral("liveSpatialResolutionModeCombo"));
+    m_spatialResolutionModeCombo->addItem(
+        QStringLiteral("实时增强（约 10 FPS）"),
+        static_cast<int>(
+            SpatialResolutionMode::RealtimeEnhanced));
+    m_spatialResolutionModeCombo->addItem(
+        QStringLiteral("高精度（约 5 FPS）"),
+        static_cast<int>(
+            SpatialResolutionMode::HighPrecision));
     m_heatmapOpacitySpin = new QDoubleSpinBox(localizationGroup);
     m_heatmapOpacitySpin->setObjectName(QStringLiteral("liveHeatmapOpacitySpin"));
     m_heatmapOpacitySpin->setRange(0.0, 1.0);
@@ -249,14 +267,21 @@ void LiveLocalizationPage::buildUi()
     m_heatmapGridRowsSpin->setObjectName(QStringLiteral("liveHeatmapGridRowsSpin"));
     m_heatmapGridRowsSpin->setRange(9, 360);
     m_updateIntervalSpin = new QSpinBox(localizationGroup);
+    m_updateIntervalSpin->setObjectName(
+        QStringLiteral("liveLocalizationUpdateIntervalSpin"));
     m_updateIntervalSpin->setRange(20, 1000);
     m_updateIntervalSpin->setSuffix(QStringLiteral(" ms"));
     m_confidenceSpin = new QDoubleSpinBox(localizationGroup);
+    m_confidenceSpin->setObjectName(
+        QStringLiteral("liveLocalizationConfidenceSpin"));
     m_confidenceSpin->setRange(0.0, 1.0);
     m_confidenceSpin->setSingleStep(0.05);
     localizationLayout->addRow(m_enabledCheck);
     localizationLayout->addRow(QStringLiteral("算法"), m_locatorCombo);
     localizationLayout->addRow(QStringLiteral("显示方式"), m_displayModeCombo);
+    localizationLayout->addRow(
+        QStringLiteral("空间精度"),
+        m_spatialResolutionModeCombo);
     localizationLayout->addRow(QStringLiteral("热力图透明度"), m_heatmapOpacitySpin);
     localizationLayout->addRow(QStringLiteral("方向网格宽度"), m_heatmapGridColumnsSpin);
     localizationLayout->addRow(QStringLiteral("方向网格高度"), m_heatmapGridRowsSpin);
@@ -371,11 +396,15 @@ void LiveLocalizationPage::connectUi()
 {
     connect(m_enabledCheck, &QCheckBox::toggled, this, [this](bool enabled) {
         m_settings.enabled = enabled;
+        startNewProcessingEpoch();
+        m_view->setSpatialResponseActive(
+            m_active && enabled);
         persistSettings();
         emit workerActiveRequested(m_active && enabled);
     });
     connect(m_locatorCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
         m_settings.locatorId = m_locatorCombo->itemData(index).toString();
+        startNewProcessingEpoch();
         persistSettings();
         emit configureWorkerRequested(m_settings);
     });
@@ -383,6 +412,17 @@ void LiveLocalizationPage::connectUi()
         m_settings.displayMode = m_displayModeCombo->itemData(index).toString();
         m_view->setDisplayMode(m_settings.displayMode);
         persistSettings();
+    });
+    connect(m_spatialResolutionModeCombo,
+            &QComboBox::currentIndexChanged,
+            this, [this](int index) {
+        m_settings.spatialResolutionMode =
+            static_cast<SpatialResolutionMode>(
+                m_spatialResolutionModeCombo->itemData(
+                    index).toInt());
+        startNewProcessingEpoch();
+        persistSettings();
+        emit configureWorkerRequested(m_settings);
     });
     connect(m_heatmapOpacitySpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         m_settings.heatmapOpacity = value;
@@ -401,11 +441,13 @@ void LiveLocalizationPage::connectUi()
     });
     connect(m_updateIntervalSpin, &QSpinBox::valueChanged, this, [this](int value) {
         m_settings.updateIntervalMs = value;
+        startNewProcessingEpoch();
         emit configureWorkerRequested(m_settings);
         persistSettings();
     });
     connect(m_confidenceSpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         m_settings.confidenceThreshold = value;
+        startNewProcessingEpoch();
         emit configureWorkerRequested(m_settings);
         persistSettings();
     });
@@ -490,6 +532,10 @@ void LiveLocalizationPage::restoreSettings()
         std::max(0, m_locatorCombo->findData(m_settings.locatorId)));
     m_displayModeCombo->setCurrentIndex(
         std::max(0, m_displayModeCombo->findData(m_settings.displayMode)));
+    m_spatialResolutionModeCombo->setCurrentIndex(
+        std::max(0, m_spatialResolutionModeCombo->findData(
+            static_cast<int>(
+                m_settings.spatialResolutionMode))));
     m_heatmapOpacitySpin->setValue(m_settings.heatmapOpacity);
     m_heatmapGridColumnsSpin->setValue(m_settings.heatmapGridColumns);
     m_heatmapGridRowsSpin->setValue(m_settings.heatmapGridRows);
@@ -544,12 +590,24 @@ void LiveLocalizationPage::updateCameraFromUi(bool persist)
     }
 }
 
+void LiveLocalizationPage::startNewProcessingEpoch()
+{
+    m_view->setDirections({});
+    m_view->setSpatialResponse({});
+    m_resultLabel->setText(
+        QStringLiteral("方位角 --　俯仰角 --"));
+    rebuildSpatialGrid();
+}
+
 void LiveLocalizationPage::rebuildSpatialGrid()
 {
+    const quint64 generation = ++m_gridGeneration;
+    m_view->setExpectedSpatialResponseGeneration(generation);
+    SpatialResponseGrid grid;
     if (m_videoFrame.isNull()) {
+        emit spatialGridRequested(grid, generation);
         return;
     }
-    SpatialResponseGrid grid;
     grid.columns = m_settings.heatmapGridColumns;
     grid.rows = m_settings.heatmapGridRows;
     grid.directions.reserve(grid.columns * grid.rows);
@@ -561,7 +619,7 @@ void LiveLocalizationPage::rebuildSpatialGrid()
                 m_settings.camera));
         }
     }
-    emit spatialGridRequested(grid, ++m_gridGeneration);
+    emit spatialGridRequested(grid, generation);
 }
 
 void LiveLocalizationPage::startCalibration()

@@ -35,14 +35,21 @@ LiveLocalizationWorker::LiveLocalizationWorker(QObject *parent)
 
 void LiveLocalizationWorker::configure(const LiveLocalizationSettings &settings)
 {
+    const bool updateIntervalChanged =
+        settings.updateIntervalMs
+        != m_settings.updateIntervalMs;
     const bool locatorChanged = settings.locatorId != m_settings.locatorId
         || settings.windowSamples != m_settings.windowSamples
         || settings.soundSpeedMetersPerSecond != m_settings.soundSpeedMetersPerSecond
         || settings.smoothingFactor != m_settings.smoothingFactor
-        || settings.confidenceThreshold != m_settings.confidenceThreshold;
+        || settings.confidenceThreshold != m_settings.confidenceThreshold
+        || settings.spatialResolutionMode
+            != m_settings.spatialResolutionMode;
     m_settings = settings;
     if (locatorChanged || m_locator == nullptr) {
         rebuildLocator();
+    }
+    if (locatorChanged || updateIntervalChanged) {
         clearStreamState();
     }
 }
@@ -63,7 +70,6 @@ void LiveLocalizationWorker::setSpatialGrid(const SpatialResponseGrid &grid,
 {
     m_grid = grid;
     m_gridGeneration = generation;
-    m_smoothedSpatialValues.clear();
     if (m_spatialProvider != nullptr) {
         m_spatialProvider->prepareSpatialResponseGrid(m_grid);
     }
@@ -82,6 +88,14 @@ void LiveLocalizationWorker::pushAdjustedFrame(const QByteArray &payload,
     if (payload.size() != AudioFrameDecoder::FramePayloadBytes) {
         emit statusChanged(QStringLiteral("实时音频帧长度无效"));
         return;
+    }
+    const qint64 timestamp =
+        static_cast<qint64>(timestampSeconds) * 1'000'000
+        + timestampMicros;
+    if (m_lastAnalysisTimestamp >= 0
+        && timestamp < m_lastAnalysisTimestamp) {
+        clearStreamState();
+        publishEmptySpatialResponse(timestamp);
     }
     for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame; ++sample) {
         for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
@@ -104,8 +118,6 @@ void LiveLocalizationWorker::pushAdjustedFrame(const QByteArray &payload,
     if (m_channels.first().size() < m_settings.windowSamples) {
         return;
     }
-    const qint64 timestamp = static_cast<qint64>(timestampSeconds) * 1'000'000
-        + timestampMicros;
     m_latestFrameTimestamp = timestamp;
     if (m_lastAnalysisTimestamp >= 0
         && timestamp - m_lastAnalysisTimestamp
@@ -184,7 +196,6 @@ void LiveLocalizationWorker::clearStreamState()
         channel.clear();
     }
     m_directionHistory.clear();
-    m_smoothedSpatialValues.clear();
     m_totalSamples = 0;
     m_lastAnalysisTimestamp = -1;
     m_latestFrameTimestamp = -1;
@@ -206,6 +217,8 @@ bool LiveLocalizationWorker::rebuildLocator()
     configuration.soundSpeedMetersPerSecond = m_settings.soundSpeedMetersPerSecond;
     configuration.confidenceThreshold = m_settings.confidenceThreshold;
     configuration.smoothingFactor = m_settings.smoothingFactor;
+    configuration.spatialResolutionMode =
+        m_settings.spatialResolutionMode;
     QString error;
     if (!m_locator->configure(configuration, &error)) {
         m_locator.reset();
@@ -248,56 +261,78 @@ void LiveLocalizationWorker::analyzeLatest(qint64 timestampMicroseconds)
     result.directions = directions;
     result.timestampMicroseconds = timestampMicroseconds;
     result.elapsedMilliseconds = elapsed.elapsed();
+    result.generation = m_gridGeneration;
     emit localizationReady(result);
-    if (directions.isEmpty()) {
-        emit statusChanged(QStringLiteral("未检测到可信声源"));
-        return;
-    }
-    m_directionHistory.append({timestampMicroseconds, directions.first()});
-    while (!m_directionHistory.isEmpty()
-           && timestampMicroseconds - m_directionHistory.first().timestampMicroseconds
-               > 1'000'000) {
-        m_directionHistory.removeFirst();
+    if (!directions.isEmpty()) {
+        m_directionHistory.append({
+            timestampMicroseconds, directions.first(),
+        });
+        while (!m_directionHistory.isEmpty()
+               && timestampMicroseconds
+                       - m_directionHistory.first().timestampMicroseconds
+                   > 1'000'000) {
+            m_directionHistory.removeFirst();
+        }
+    } else {
+        m_directionHistory.clear();
     }
     if (m_spatialProvider == nullptr || m_grid.directions.isEmpty()) {
-        emit statusChanged(QStringLiteral("实时声源定位正常"));
+        emit statusChanged(
+            directions.isEmpty()
+                ? QStringLiteral("未检测到可信声源")
+                : QStringLiteral("实时声源定位正常"));
         return;
     }
     const SpatialResponseResult spatial =
         m_spatialProvider->evaluateSpatialResponse(window, m_grid);
     if (spatial.values.size() != m_grid.directions.size()
         || spatial.reliability <= 0.0) {
+        publishEmptySpatialResponse(timestampMicroseconds);
         emit statusChanged(QStringLiteral("空间响应不足"));
         return;
     }
-    const auto [minimum, maximum] = std::minmax_element(
-        spatial.values.cbegin(), spatial.values.cend());
-    const double range = *maximum - *minimum;
-    if (range <= 1.0e-12) {
+    if (!std::all_of(
+            spatial.values.cbegin(),
+            spatial.values.cend(),
+            [](float value) {
+        return std::isfinite(value)
+            && value >= 0.0f && value <= 1.0f;
+    })) {
+        publishEmptySpatialResponse(timestampMicroseconds);
+        emit statusChanged(QStringLiteral("空间响应数值无效"));
         return;
     }
-    QVector<float> normalized;
-    normalized.reserve(spatial.values.size());
-    for (float value : spatial.values) {
-        normalized.append(static_cast<float>((value - *minimum) / range));
-    }
-    if (m_smoothedSpatialValues.size() == normalized.size()) {
-        const float factor = static_cast<float>(m_settings.smoothingFactor);
-        for (int index = 0; index < normalized.size(); ++index) {
-            normalized[index] = m_smoothedSpatialValues.at(index) * (1.0f - factor)
-                + normalized.at(index) * factor;
-        }
-    }
-    m_smoothedSpatialValues = normalized;
     LiveSpatialResponse response;
     response.columns = m_grid.columns;
     response.rows = m_grid.rows;
-    response.normalizedValues = normalized;
+    response.normalizedValues = spatial.values;
     response.timestampMicroseconds = timestampMicroseconds;
     response.generation = m_gridGeneration;
     response.reliability = spatial.reliability;
+    response.hasRefinedPeak = spatial.hasRefinedPeak;
+    response.refinedPeak = spatial.refinedPeak;
+    response.azimuthStandardDeviationDegrees =
+        spatial.azimuthStandardDeviationDegrees;
+    response.elevationStandardDeviationDegrees =
+        spatial.elevationStandardDeviationDegrees;
+    response.azimuthElevationCorrelation =
+        spatial.azimuthElevationCorrelation;
+    response.peakToSidelobeRatio =
+        spatial.peakToSidelobeRatio;
     emit spatialResponseReady(response);
-    emit statusChanged(QStringLiteral("实时声源定位正常"));
+    emit statusChanged(
+        directions.isEmpty()
+            ? QStringLiteral("未检测到可信声源")
+            : QStringLiteral("实时声源定位正常"));
+}
+
+void LiveLocalizationWorker::publishEmptySpatialResponse(
+    qint64 timestampMicroseconds)
+{
+    LiveSpatialResponse response;
+    response.timestampMicroseconds = timestampMicroseconds;
+    response.generation = m_gridGeneration;
+    emit spatialResponseReady(response);
 }
 
 } // namespace MicArray

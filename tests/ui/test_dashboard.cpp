@@ -1,4 +1,5 @@
 #include "analysis/calibrationprofile.h"
+#include "analysis/directionprojection.h"
 #include "control/directioncontrolmapper.h"
 #include "ui/arrayheatmapwidget.h"
 #include "ui/audioanalysispage.h"
@@ -18,6 +19,7 @@
 
 #include <QSignalSpy>
 #include <QCheckBox>
+#include <QElapsedTimer>
 #include <QLabel>
 #include <QProgressBar>
 #include <QScrollArea>
@@ -114,7 +116,14 @@ private slots:
     void videoDoubleClickRequestsFullScreen();
     void videoPreviewReportsActualVideoRectangle();
     void liveLocalizationViewAcceptsOnlyVideoClicks();
+    void liveHeatmapRendersRefinedPeakAtSubgridCenter();
+    void liveHeatmapRejectsStaleGeneration();
+    void liveHeatmapRejectsResponseWhileInactive();
+    void liveHeatmapProjectsAngularAxesWithCameraRoll();
+    void liveHeatmapRendersCorrelatedHessianShape();
+    void liveHeatmapCachesUnchangedResponse();
     void liveLocalizationPageProvidesCalibrationControls();
+    void liveLocalizationConfigurationStartsNewGeneration();
     void liveLocalizationPageLoadsCalibrationProfile();
     void trendChartRetainsSixtySamples();
     void uiThemeProvidesDistinctPalettesAndBulbIcons();
@@ -435,6 +444,301 @@ void DashboardTest::liveLocalizationViewAcceptsOnlyVideoClicks()
     QVERIFY(QLineF(point, QPointF(0.5, 0.5)).length() < 0.01);
     QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(320, 20));
     QCOMPARE(clicked.count(), 1);
+}
+
+void DashboardTest::liveHeatmapRendersRefinedPeakAtSubgridCenter()
+{
+    LiveLocalizationView widget;
+    widget.resize(640, 360);
+    QImage frame(640, 360, QImage::Format_RGB32);
+    frame.fill(Qt::black);
+    widget.setFrame(frame);
+    widget.setDisplayMode(QStringLiteral("heatmap"));
+    widget.setHeatmapOpacity(1.0);
+
+    LiveSpatialResponse response;
+    response.columns = 4;
+    response.rows = 3;
+    response.normalizedValues.fill(0.0f, 12);
+    response.normalizedValues[7] = 1.0f;
+    response.reliability = 0.9;
+    response.hasRefinedPeak = true;
+    response.refinedPeak = {0.0, 0.0};
+    response.azimuthStandardDeviationDegrees = 0.6;
+    response.elevationStandardDeviationDegrees = 0.6;
+    widget.setSpatialResponse(response);
+    widget.show();
+    QCoreApplication::processEvents();
+
+    const QImage rendered = widget.grab().toImage();
+    const QColor center = rendered.pixelColor(320, 180);
+    QVERIFY2(center.red() > 200
+                 && center.red() > center.blue() + 80,
+             qPrintable(QStringLiteral(
+                 "center color=(%1,%2,%3)")
+                 .arg(center.red())
+                 .arg(center.green())
+                 .arg(center.blue())));
+
+    response.hasRefinedPeak = false;
+    widget.setSpatialResponse(response);
+    QCoreApplication::processEvents();
+    const QColor withoutRefinedPeak =
+        widget.grab().toImage().pixelColor(320, 180);
+    QVERIFY(withoutRefinedPeak.blue()
+                > withoutRefinedPeak.red() + 80);
+}
+
+void DashboardTest::liveHeatmapRejectsStaleGeneration()
+{
+    LiveLocalizationView widget;
+    widget.resize(640, 360);
+    QImage frame(640, 360, QImage::Format_RGB32);
+    frame.fill(Qt::black);
+    widget.setFrame(frame);
+    widget.setDisplayMode(QStringLiteral("heatmap"));
+    widget.setHeatmapOpacity(1.0);
+    widget.setExpectedSpatialResponseGeneration(2);
+
+    LiveSpatialResponse response;
+    response.columns = 4;
+    response.rows = 3;
+    response.normalizedValues.fill(0.0f, 12);
+    response.normalizedValues[5] = 1.0f;
+    response.normalizedValues[6] = 1.0f;
+    response.generation = 1;
+    widget.setSpatialResponse(response);
+    widget.show();
+    QCoreApplication::processEvents();
+    const QColor staleCenter =
+        widget.grab().toImage().pixelColor(320, 180);
+    QVERIFY(staleCenter.red() < 40
+            && staleCenter.green() < 40
+            && staleCenter.blue() < 40);
+
+    response.generation = 2;
+    widget.setSpatialResponse(response);
+    QCoreApplication::processEvents();
+    const QColor currentCenter =
+        widget.grab().toImage().pixelColor(320, 180);
+    QVERIFY(currentCenter.red() > 200);
+}
+
+void DashboardTest::liveHeatmapRejectsResponseWhileInactive()
+{
+    LiveLocalizationView widget;
+    widget.resize(640, 360);
+    QImage frame(640, 360, QImage::Format_RGB32);
+    frame.fill(Qt::black);
+    widget.setFrame(frame);
+    widget.setDisplayMode(QStringLiteral("heatmap"));
+    widget.setHeatmapOpacity(1.0);
+    widget.setSpatialResponseActive(false);
+
+    LiveSpatialResponse response;
+    response.columns = 2;
+    response.rows = 1;
+    response.normalizedValues = {1.0f, 1.0f};
+    widget.setSpatialResponse(response);
+    widget.show();
+    QCoreApplication::processEvents();
+    const QColor inactiveCenter =
+        widget.grab().toImage().pixelColor(320, 180);
+    QVERIFY(inactiveCenter.red() < 40
+            && inactiveCenter.green() < 40
+            && inactiveCenter.blue() < 40);
+
+    widget.setSpatialResponseActive(true);
+    widget.setSpatialResponse(response);
+    QCoreApplication::processEvents();
+    const QColor activeCenter =
+        widget.grab().toImage().pixelColor(320, 180);
+    QVERIFY(activeCenter.red() > 200);
+}
+
+void DashboardTest::liveHeatmapProjectsAngularAxesWithCameraRoll()
+{
+    LiveLocalizationView widget;
+    widget.resize(640, 360);
+    QImage frame(640, 360, QImage::Format_RGB32);
+    frame.fill(Qt::black);
+    widget.setFrame(frame);
+    widget.setDisplayMode(QStringLiteral("heatmap"));
+    widget.setHeatmapOpacity(1.0);
+    CameraViewSettings camera;
+    camera.horizontalFovDegrees = 90.0;
+    camera.verticalFovDegrees = 60.0;
+    camera.rollDegrees = 45.0;
+    widget.setCameraView(camera);
+
+    LiveSpatialResponse response;
+    response.columns = 4;
+    response.rows = 3;
+    response.normalizedValues.fill(0.0f, 12);
+    response.normalizedValues[0] = 1.0f;
+    response.reliability = 0.9;
+    response.hasRefinedPeak = true;
+    response.refinedPeak = {0.0, 0.0};
+    response.azimuthStandardDeviationDegrees = 6.0;
+    response.elevationStandardDeviationDegrees = 1.5;
+    widget.setSpatialResponse(response);
+    widget.show();
+    QCoreApplication::processEvents();
+
+    SoundSourceDirection centerDirection;
+    SoundSourceDirection azimuthOffsetDirection;
+    azimuthOffsetDirection.azimuthDegrees = 6.0;
+    const ProjectionResult center =
+        projectDirection(centerDirection, camera);
+    const ProjectionResult azimuthOffset =
+        projectDirection(azimuthOffsetDirection, camera);
+    QVERIFY(center.valid && center.inView);
+    QVERIFY(azimuthOffset.valid && azimuthOffset.inView);
+    const QPointF centerPixel(
+        center.normalizedPoint.x() * widget.width(),
+        center.normalizedPoint.y() * widget.height());
+    const QPointF azimuthBasis(
+        (azimuthOffset.normalizedPoint.x()
+         - center.normalizedPoint.x()) * widget.width(),
+        (azimuthOffset.normalizedPoint.y()
+         - center.normalizedPoint.y()) * widget.height());
+    const QPointF alongAzimuth =
+        centerPixel + 0.8 * azimuthBasis;
+    const QPointF perpendicular =
+        centerPixel + 0.8 * QPointF(
+            -azimuthBasis.y(), azimuthBasis.x());
+
+    const QImage rendered = widget.grab().toImage();
+    const QColor alongColor = rendered.pixelColor(
+        qRound(alongAzimuth.x()), qRound(alongAzimuth.y()));
+    const QColor perpendicularColor = rendered.pixelColor(
+        qRound(perpendicular.x()), qRound(perpendicular.y()));
+    QVERIFY2(alongColor.red() > perpendicularColor.red() + 80,
+             qPrintable(QStringLiteral(
+                 "along=(%1,%2,%3), perpendicular=(%4,%5,%6)")
+                 .arg(alongColor.red())
+                 .arg(alongColor.green())
+                 .arg(alongColor.blue())
+                 .arg(perpendicularColor.red())
+                 .arg(perpendicularColor.green())
+                 .arg(perpendicularColor.blue())));
+}
+
+void DashboardTest::liveHeatmapRendersCorrelatedHessianShape()
+{
+    LiveLocalizationView widget;
+    widget.resize(640, 360);
+    QImage frame(640, 360, QImage::Format_RGB32);
+    frame.fill(Qt::black);
+    widget.setFrame(frame);
+    widget.setDisplayMode(QStringLiteral("heatmap"));
+    widget.setHeatmapOpacity(1.0);
+    CameraViewSettings camera;
+    camera.horizontalFovDegrees = 90.0;
+    camera.verticalFovDegrees = 60.0;
+    widget.setCameraView(camera);
+
+    LiveSpatialResponse response;
+    response.columns = 4;
+    response.rows = 3;
+    response.normalizedValues.fill(0.0f, 12);
+    response.normalizedValues[0] = 1.0f;
+    response.reliability = 0.9;
+    response.hasRefinedPeak = true;
+    response.refinedPeak = {0.0, 0.0};
+    response.azimuthStandardDeviationDegrees = 4.0;
+    response.elevationStandardDeviationDegrees = 4.0;
+    response.azimuthElevationCorrelation = 0.8;
+    widget.setSpatialResponse(response);
+    widget.show();
+    QCoreApplication::processEvents();
+
+    SoundSourceDirection centerDirection;
+    SoundSourceDirection azimuthOffsetDirection;
+    SoundSourceDirection elevationOffsetDirection;
+    azimuthOffsetDirection.azimuthDegrees = 4.0;
+    elevationOffsetDirection.elevationDegrees = 4.0;
+    const ProjectionResult center =
+        projectDirection(centerDirection, camera);
+    const ProjectionResult azimuthOffset =
+        projectDirection(azimuthOffsetDirection, camera);
+    const ProjectionResult elevationOffset =
+        projectDirection(elevationOffsetDirection, camera);
+    QVERIFY(center.valid && azimuthOffset.valid
+            && elevationOffset.valid);
+    const QPointF centerPixel(
+        center.normalizedPoint.x() * widget.width(),
+        center.normalizedPoint.y() * widget.height());
+    const QPointF azimuthBasis(
+        (azimuthOffset.normalizedPoint.x()
+         - center.normalizedPoint.x()) * widget.width(),
+        (azimuthOffset.normalizedPoint.y()
+         - center.normalizedPoint.y()) * widget.height());
+    const QPointF elevationBasis(
+        (elevationOffset.normalizedPoint.x()
+         - center.normalizedPoint.x()) * widget.width(),
+        (elevationOffset.normalizedPoint.y()
+         - center.normalizedPoint.y()) * widget.height());
+    const QPointF correlated =
+        centerPixel + 0.7 * (
+            azimuthBasis + elevationBasis);
+    const QPointF antiCorrelated =
+        centerPixel + 0.7 * (
+            azimuthBasis - elevationBasis);
+
+    const QImage rendered = widget.grab().toImage();
+    const QColor correlatedColor = rendered.pixelColor(
+        qRound(correlated.x()), qRound(correlated.y()));
+    const QColor antiCorrelatedColor = rendered.pixelColor(
+        qRound(antiCorrelated.x()), qRound(antiCorrelated.y()));
+    QVERIFY2(correlatedColor.red()
+                 > antiCorrelatedColor.red() + 80,
+             qPrintable(QStringLiteral(
+                 "correlated=(%1,%2,%3), anti=(%4,%5,%6)")
+                 .arg(correlatedColor.red())
+                 .arg(correlatedColor.green())
+                 .arg(correlatedColor.blue())
+                 .arg(antiCorrelatedColor.red())
+                 .arg(antiCorrelatedColor.green())
+                 .arg(antiCorrelatedColor.blue())));
+}
+
+void DashboardTest::liveHeatmapCachesUnchangedResponse()
+{
+    LiveLocalizationView widget;
+    widget.resize(640, 360);
+    QImage frame(640, 360, QImage::Format_RGB32);
+    frame.fill(Qt::black);
+    widget.setFrame(frame);
+    widget.setDisplayMode(QStringLiteral("heatmap"));
+    widget.setHeatmapOpacity(1.0);
+    LiveSpatialResponse response;
+    response.columns = 64;
+    response.rows = 36;
+    response.normalizedValues.fill(0.2f, 64 * 36);
+    response.normalizedValues[18 * 64 + 32] = 1.0f;
+    response.reliability = 0.9;
+    response.hasRefinedPeak = true;
+    response.refinedPeak = {0.0, 0.0};
+    response.azimuthStandardDeviationDegrees = 1.0;
+    response.elevationStandardDeviationDegrees = 1.0;
+    widget.setSpatialResponse(response);
+    widget.show();
+    QCoreApplication::processEvents();
+    widget.grab();
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    for (int iteration = 0; iteration < 30; ++iteration) {
+        widget.grab();
+    }
+    const qint64 milliseconds = elapsed.elapsed();
+    qInfo() << "30 cached 640x360 heatmap paints:"
+            << milliseconds << "ms";
+    QVERIFY2(milliseconds <= 250,
+             qPrintable(QStringLiteral(
+                 "cached heatmap paints took %1 ms")
+                 .arg(milliseconds)));
 }
 
 void DashboardTest::powerSpectrumWidgetStoresRealtimeSeries()
@@ -969,6 +1273,8 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
         QStringLiteral("liveLocalizationEnabledCheck"));
     auto *mode = page.findChild<QComboBox *>(
         QStringLiteral("liveLocalizationDisplayModeCombo"));
+    auto *resolution = page.findChild<QComboBox *>(
+        QStringLiteral("liveSpatialResolutionModeCombo"));
     auto *view = page.findChild<LiveLocalizationView *>(
         QStringLiteral("liveLocalizationView"));
     auto *gridColumns = page.findChild<QSpinBox *>(
@@ -997,6 +1303,7 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
         QStringLiteral("importVideoCalibrationButton"));
     QVERIFY(enabled != nullptr);
     QVERIFY(mode != nullptr);
+    QVERIFY(resolution != nullptr);
     QVERIFY(view != nullptr);
     QVERIFY(gridColumns != nullptr);
     QVERIFY(gridRows != nullptr);
@@ -1016,6 +1323,9 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     QVERIFY(mode->findData(QStringLiteral("marker")) >= 0);
     QVERIFY(mode->findData(QStringLiteral("heatmap")) >= 0);
     QCOMPARE(mode->currentData().toString(), QStringLiteral("heatmap"));
+    QCOMPARE(resolution->currentData().toInt(),
+             static_cast<int>(
+                 SpatialResolutionMode::RealtimeEnhanced));
     QCOMPARE(gridColumns->value(), 320);
     QCOMPARE(gridColumns->maximum(), 640);
     QCOMPARE(gridRows->value(), 180);
@@ -1037,6 +1347,60 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     const LiveLocalizationSettings updated = settings.liveLocalization();
     QCOMPARE(updated.heatmapGridColumns, 80);
     QCOMPARE(updated.heatmapGridRows, 45);
+    QSignalSpy reconfigured(
+        &page,
+        &LiveLocalizationPage::configureWorkerRequested);
+    resolution->setCurrentIndex(resolution->findData(
+        static_cast<int>(
+            SpatialResolutionMode::HighPrecision)));
+    QCOMPARE(reconfigured.count(), 1);
+    QCOMPARE(settings.liveLocalization().spatialResolutionMode,
+             SpatialResolutionMode::HighPrecision);
+}
+
+void DashboardTest::
+liveLocalizationConfigurationStartsNewGeneration()
+{
+    AppSettings settings;
+    LiveLocalizationPage page(&settings);
+    QSignalSpy gridChanged(
+        &page,
+        &LiveLocalizationPage::spatialGridRequested);
+    page.setVideoFrame(
+        QImage(640, 360, QImage::Format_RGB32), 0, 0);
+    QVERIFY(!gridChanged.isEmpty());
+    const quint64 initialGeneration =
+        gridChanged.last().at(1).toULongLong();
+
+    auto *updateInterval = page.findChild<QSpinBox *>(
+        QStringLiteral("liveLocalizationUpdateIntervalSpin"));
+    auto *confidence = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("liveLocalizationConfidenceSpin"));
+    QVERIFY(updateInterval != nullptr);
+    QVERIFY(confidence != nullptr);
+
+    updateInterval->setValue(
+        updateInterval->value() + 20);
+    QVERIFY(gridChanged.last().at(1).toULongLong()
+            > initialGeneration);
+    const quint64 updateGeneration =
+        gridChanged.last().at(1).toULongLong();
+
+    confidence->setValue(
+        std::min(1.0, confidence->value() + 0.1));
+    QVERIFY(gridChanged.last().at(1).toULongLong()
+            > updateGeneration);
+    const quint64 confidenceGeneration =
+        gridChanged.last().at(1).toULongLong();
+
+    page.setActive(true);
+    QVERIFY(gridChanged.last().at(1).toULongLong()
+            > confidenceGeneration);
+    const quint64 activeGeneration =
+        gridChanged.last().at(1).toULongLong();
+    page.setActive(false);
+    QVERIFY(gridChanged.last().at(1).toULongLong()
+            > activeGeneration);
 }
 
 void DashboardTest::liveLocalizationPageLoadsCalibrationProfile()

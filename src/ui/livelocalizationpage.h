@@ -57,6 +57,7 @@ private:
     void persistSettings();
     void applyCameraToUi(const CameraViewSettings &camera);
     void updateCameraFromUi(bool persist);
+    void startNewProcessingEpoch();
     void rebuildSpatialGrid();
     void startCalibration();
     void cancelCalibration();
@@ -88,6 +89,7 @@ private:
     QCheckBox *m_enabledCheck = nullptr;
     QComboBox *m_locatorCombo = nullptr;
     QComboBox *m_displayModeCombo = nullptr;
+    QComboBox *m_spatialResolutionModeCombo = nullptr;
     QDoubleSpinBox *m_heatmapOpacitySpin = nullptr;
     QSpinBox *m_heatmapGridColumnsSpin = nullptr;
     QSpinBox *m_heatmapGridRowsSpin = nullptr;

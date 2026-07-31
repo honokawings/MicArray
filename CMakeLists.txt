@@ -18,6 +18,7 @@ set(MICARRAY_SOURCES
     src/analysis/gccphatlocator.cpp
     src/analysis/livelocalizationworker.cpp
     src/analysis/radix2fft.cpp
+    src/analysis/robustsrpphatscorer.cpp
     src/analysis/soundsourcelocatorregistry.cpp
     src/analysis/wavefilereader.cpp
     src/app/appsettings.cpp
@@ -75,6 +76,7 @@ set(MICARRAY_HEADERS
     src/analysis/localizationtypes.h
     src/analysis/livelocalizationworker.h
     src/analysis/radix2fft.h
+    src/analysis/robustsrpphatscorer.h
     src/analysis/soundsourcelocatorregistry.h
     src/analysis/wavefilereader.h
     src/app/appsettings.h

@@ -7,6 +7,7 @@
 #include "analysis/ispatialresponseprovider.h"
 #include "analysis/livelocalizationworker.h"
 #include "analysis/radix2fft.h"
+#include "analysis/robustsrpphatscorer.h"
 #include "analysis/soundsourcelocatorregistry.h"
 #include "analysis/wavefilereader.h"
 #include "media/audioframedecoder.h"
@@ -20,8 +21,10 @@
 #include <QtTest>
 #include <QtEndian>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <numbers>
 
 using namespace MicArray;
 
@@ -182,6 +185,164 @@ MultiChannelAudioWindow syntheticPlaneWave(double azimuthDegrees,
     return window;
 }
 
+MultiChannelAudioWindow syntheticPlaneWaveWithNoiseAndReflection(
+    double azimuthDegrees,
+    double elevationDegrees)
+{
+    MultiChannelAudioWindow direct =
+        syntheticPlaneWave(azimuthDegrees, elevationDegrees);
+    const MultiChannelAudioWindow reflection =
+        syntheticPlaneWave(azimuthDegrees + 25.0,
+                           elevationDegrees + 10.0);
+    constexpr int ReflectionDelaySamples = 144;
+    double signalPower = 0.0;
+    qsizetype sampleCount = 0;
+    for (int channel = 0; channel < direct.channels.size();
+         ++channel) {
+        for (int sample = 0;
+             sample < direct.channels.at(channel).size();
+             ++sample) {
+            const double reflected =
+                sample >= ReflectionDelaySamples
+                ? reflection.channels.at(channel).at(
+                    sample - ReflectionDelaySamples)
+                : 0.0;
+            direct.channels[channel][sample] +=
+                static_cast<float>(0.35 * reflected);
+            signalPower += std::pow(
+                direct.channels.at(channel).at(sample), 2.0);
+            ++sampleCount;
+        }
+    }
+    signalPower /= sampleCount;
+    const double noiseStandardDeviation = std::sqrt(
+        signalPower / std::pow(10.0, 5.0 / 10.0));
+    QRandomGenerator random(0x52564d42);
+    bool hasSpareGaussian = false;
+    double spareGaussian = 0.0;
+    auto gaussian = [&] {
+        if (hasSpareGaussian) {
+            hasSpareGaussian = false;
+            return spareGaussian;
+        }
+        const double radius = std::sqrt(
+            -2.0 * std::log(std::max(
+                random.generateDouble(), 1.0e-12)));
+        const double angle =
+            2.0 * std::numbers::pi
+            * random.generateDouble();
+        spareGaussian = radius * std::sin(angle);
+        hasSpareGaussian = true;
+        return radius * std::cos(angle);
+    };
+    for (QVector<float> &channel : direct.channels) {
+        for (float &sample : channel) {
+            sample += static_cast<float>(
+                noiseStandardDeviation * gaussian());
+        }
+    }
+    return direct;
+}
+
+MultiChannelAudioWindow syntheticNarrowbandPlaneWave(
+    double azimuthDegrees,
+    double elevationDegrees,
+    double frequencyHz = 1000.0)
+{
+    constexpr int Samples = 2048;
+    MultiChannelAudioWindow window;
+    window.sampleRate = 48000;
+    window.centerSample = 20000;
+    const QVector3D direction = directionFromAngles(
+        azimuthDegrees, elevationDegrees);
+    const QVector<MicrophonePosition> microphones =
+        createDefaultArrayGeometry();
+    window.channels.resize(microphones.size());
+    for (int channel = 0; channel < microphones.size();
+         ++channel) {
+        const MicrophonePosition &microphone =
+            microphones.at(channel);
+        const double delaySamples = (
+            microphone.xMeters * direction.x()
+            + microphone.yMeters * direction.y())
+            * window.sampleRate / 343.0;
+        QVector<float> &samples = window.channels[channel];
+        samples.resize(Samples);
+        for (int sample = 0; sample < Samples; ++sample) {
+            samples[sample] = static_cast<float>(std::sin(
+                2.0 * std::numbers::pi * frequencyHz
+                * (sample - delaySamples)
+                / window.sampleRate));
+        }
+    }
+    return window;
+}
+
+MultiChannelAudioWindow syntheticBandLimitedPlaneWave(
+    double azimuthDegrees,
+    double elevationDegrees,
+    double minimumFrequencyHz,
+    double maximumFrequencyHz)
+{
+    constexpr int FftSize = 4096;
+    constexpr int Samples = 2048;
+    constexpr int Margin = 512;
+    constexpr int SampleRate = 48000;
+    QVector<std::complex<double>> spectrum(FftSize);
+    QRandomGenerator random(0x42414e44);
+    const int firstBin = static_cast<int>(std::ceil(
+        minimumFrequencyHz * FftSize / SampleRate));
+    const int lastBin = static_cast<int>(std::floor(
+        maximumFrequencyHz * FftSize / SampleRate));
+    for (int bin = firstBin; bin <= lastBin; ++bin) {
+        const double phase =
+            2.0 * std::numbers::pi * random.generateDouble();
+        spectrum[bin] = std::polar(1.0, phase);
+        spectrum[FftSize - bin] = std::conj(spectrum.at(bin));
+    }
+    if (!Radix2Fft::transform(&spectrum, true)) {
+        return {};
+    }
+    double maximum = 0.0;
+    for (const std::complex<double> &value : std::as_const(spectrum)) {
+        maximum = std::max(maximum, std::abs(value.real()));
+    }
+    if (maximum <= 0.0) {
+        return {};
+    }
+
+    const QVector3D direction = directionFromAngles(
+        azimuthDegrees, elevationDegrees);
+    const QVector<MicrophonePosition> microphones =
+        createDefaultArrayGeometry();
+    MultiChannelAudioWindow window;
+    window.sampleRate = SampleRate;
+    window.centerSample = 30000;
+    window.channels.resize(microphones.size());
+    for (int channel = 0; channel < microphones.size(); ++channel) {
+        const MicrophonePosition &microphone =
+            microphones.at(channel);
+        const double delaySamples = (
+            microphone.xMeters * direction.x()
+            + microphone.yMeters * direction.y())
+            * SampleRate / 343.0;
+        QVector<float> &samples = window.channels[channel];
+        samples.resize(Samples);
+        for (int sample = 0; sample < Samples; ++sample) {
+            const double sourceIndex =
+                Margin + sample - delaySamples;
+            const int left =
+                static_cast<int>(std::floor(sourceIndex));
+            const double fraction = sourceIndex - left;
+            samples[sample] = static_cast<float>((
+                spectrum.at(left).real() * (1.0 - fraction)
+                + spectrum.at(left + 1).real() * fraction)
+                / maximum);
+        }
+    }
+    return window;
+}
+
 QString createSyntheticPlaneWaveFile(const QString &directory,
                                      double azimuthDegrees,
                                      double elevationDegrees,
@@ -261,6 +422,19 @@ SpatialResponseGrid fieldOfViewGrid(int columns, int rows)
     return grid;
 }
 
+double angularDistanceDegrees(const ScanDirection &first,
+                              const ScanDirection &second)
+{
+    const double cosine = std::clamp(
+        static_cast<double>(QVector3D::dotProduct(
+            directionFromAngles(first.azimuthDegrees,
+                                first.elevationDegrees),
+            directionFromAngles(second.azimuthDegrees,
+                                second.elevationDegrees))),
+        -1.0, 1.0);
+    return qRadiansToDegrees(std::acos(cosine));
+}
+
 } // namespace
 
 class AudioAnalysisTest : public QObject
@@ -269,6 +443,17 @@ class AudioAnalysisTest : public QObject
 
 private slots:
     void createsCenteredSixByEightGeometry();
+    void groupsDefaultArrayAcrossTwoDimensions();
+    void rejectsInsufficientValidChannels();
+    void producesMultiBaselineResponseNearestOffGridSource();
+    void refinesSingleSourceBelowHalfDegree();
+    void refinesSingleSourceAtFieldEdgesBelowHalfDegree();
+    void toleratesOneTwoAndFourCorruptedMicrophones();
+    void localizesThroughNoiseAndSingleReflection();
+    void rejectsDiffuseAndInsufficientSpatialEvidence();
+    void remainsFiniteForNarrowbandInput();
+    void downweightsMarginalBandwidthSpatialEvidence();
+    void ignoresBackHemisphereSpatialDirections();
     void convertsAnglesToDirectionRoundTrip();
     void registersAndCreatesLocatorByStableId();
     void readsRecordedExtensibleWave();
@@ -294,14 +479,21 @@ private slots:
     void producesSpatialResponsePeakAtSyntheticDirection();
     void rejectsInvalidOrSilentSpatialResponse();
     void spatialResponseMatchesAfterLocalizationWarmup();
+    void locatorAndHeatmapShareRefinedPeak();
+    void smoothedLocalizationKeepsSpatialPeakAligned();
+    void invalidWindowBreaksTemporalSmoothing();
     void preparedSpatialGridInvalidatesForChangedDirections();
     void evaluatesMaximumSpatialGridWithinCpuBudget();
+    void evaluatesHighPrecisionSpatialGridWithinCpuBudget();
     void registersBuiltInLocator();
     void workerLoadsAndAnalyzesPausedFile();
     void workerRejectsStaleAnalysisRequest();
     void workerDisablesLocalizationForPartialRecording();
     void workerShutsDownCleanlyInDedicatedThread();
     void liveWorkerAccumulatesRealtimeFrames();
+    void liveWorkerSpatialGridMatchesRefinedPeakAfterDirectionChange();
+    void liveWorkerClearsSpatialResponseWhenSourceDisappears();
+    void liveWorkerRecoversFromTimestampRollback();
     void liveWorkerClearsAudioWhenInactive();
     void liveWorkerRejectsStaleCalibrationHistory();
     void liveWorkerShutsDownInDedicatedThread();
@@ -315,6 +507,360 @@ void AudioAnalysisTest::createsCenteredSixByEightGeometry()
     QVERIFY(positionMatches(microphones.at(7), 0.175, 0.125, 0.0));
     QVERIFY(positionMatches(microphones.at(40), -0.175, -0.125, 0.0));
     QVERIFY(positionMatches(microphones.at(47), 0.175, -0.125, 0.0));
+}
+
+void AudioAnalysisTest::groupsDefaultArrayAcrossTwoDimensions()
+{
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+    QVERIFY(scorer.baselineGroupCount() >= 70);
+    QVERIFY(scorer.realtimeBaselineGroupCount() >= 24);
+    QVERIFY(scorer.realtimeBaselineGroupCount() <= 32);
+}
+
+void AudioAnalysisTest::rejectsInsufficientValidChannels()
+{
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+    MultiChannelAudioWindow window = syntheticPlaneWave(13.4, -7.2);
+    for (int channel = 0; channel < 17; ++channel) {
+        window.channels[channel].fill(0.0f);
+    }
+    QVERIFY(!scorer.prepareWindow(window));
+    QVERIFY(!scorer.estimate().hasDirection);
+}
+
+void AudioAnalysisTest::producesMultiBaselineResponseNearestOffGridSource()
+{
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+    const SpatialResponseGrid grid = fieldOfViewGrid(64, 36);
+    scorer.prepareGrid(grid);
+    const MultiChannelAudioWindow window =
+        syntheticPlaneWave(17.35, -8.65);
+    QVERIFY(scorer.prepareWindow(window));
+    const RobustSpatialEstimate result = scorer.estimate(&grid);
+
+    QCOMPARE(result.gridValues.size(), grid.directions.size());
+    QVERIFY(result.validBaselineGroupCount >= 24);
+    QVERIFY(std::all_of(result.gridValues.cbegin(),
+                        result.gridValues.cend(),
+                        [](float value) {
+                            return std::isfinite(value)
+                                && value >= 0.0f && value <= 1.0f;
+                        }));
+    const int peak = static_cast<int>(std::distance(
+        result.gridValues.cbegin(),
+        std::max_element(result.gridValues.cbegin(),
+                         result.gridValues.cend())));
+    constexpr int NearestColumn = 41;
+    constexpr int NearestRow = 23;
+    QCOMPARE(peak, NearestRow * grid.columns + NearestColumn);
+    const ScanDirection peakDirection = grid.directions.at(peak);
+    const double peakError = angularDistanceDegrees(
+        peakDirection, {17.35, -8.65});
+    QVERIFY2(peakError < 2.5,
+             qPrintable(QStringLiteral(
+                 "peak=(%1,%2), angular error=%3")
+                 .arg(peakDirection.azimuthDegrees)
+                 .arg(peakDirection.elevationDegrees)
+                 .arg(peakError)));
+}
+
+void AudioAnalysisTest::refinesSingleSourceBelowHalfDegree()
+{
+    const QVector<ScanDirection> expected {
+        {3.37, -2.41},
+        {27.65, 14.35},
+        {-36.25, -18.75},
+        {58.45, 22.15},
+    };
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+
+    for (const ScanDirection &direction : expected) {
+        QVERIFY(scorer.prepareWindow(
+            syntheticPlaneWave(direction.azimuthDegrees,
+                               direction.elevationDegrees)));
+        const RobustSpatialEstimate result = scorer.estimate();
+        QVERIFY2(result.hasDirection,
+                 qPrintable(QStringLiteral(
+                     "missing direction for (%1,%2)")
+                     .arg(direction.azimuthDegrees)
+                     .arg(direction.elevationDegrees)));
+        const ScanDirection actual {
+            result.direction.azimuthDegrees,
+            result.direction.elevationDegrees,
+        };
+        const double error =
+            angularDistanceDegrees(actual, direction);
+        QVERIFY2(error < 0.5,
+                 qPrintable(QStringLiteral(
+                     "expected=(%1,%2), actual=(%3,%4), error=%5")
+                     .arg(direction.azimuthDegrees)
+                     .arg(direction.elevationDegrees)
+                     .arg(actual.azimuthDegrees)
+                     .arg(actual.elevationDegrees)
+                     .arg(error)));
+        QVERIFY(std::isfinite(
+            result.azimuthStandardDeviationDegrees));
+        QVERIFY(std::isfinite(
+            result.elevationStandardDeviationDegrees));
+        QVERIFY(result.azimuthStandardDeviationDegrees > 0.0);
+        QVERIFY(result.elevationStandardDeviationDegrees > 0.0);
+        QVERIFY(result.reliability > 0.45);
+    }
+}
+
+void AudioAnalysisTest::refinesSingleSourceAtFieldEdgesBelowHalfDegree()
+{
+    const QVector<ScanDirection> expected {
+        {-72.35, 42.15},
+        {-68.45, -43.25},
+        {71.65, -41.75},
+        {74.25, 39.35},
+    };
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    configuration.spatialResolutionMode =
+        SpatialResolutionMode::HighPrecision;
+    QVERIFY(scorer.configure(configuration));
+
+    for (const ScanDirection &direction : expected) {
+        QVERIFY(scorer.prepareWindow(
+            syntheticPlaneWave(direction.azimuthDegrees,
+                               direction.elevationDegrees)));
+        const RobustSpatialEstimate result = scorer.estimate();
+        QVERIFY2(result.hasDirection,
+                 qPrintable(QStringLiteral(
+                     "missing edge direction for (%1,%2), reliability=%3")
+                     .arg(direction.azimuthDegrees)
+                     .arg(direction.elevationDegrees)
+                     .arg(result.reliability)));
+        const ScanDirection actual {
+            result.direction.azimuthDegrees,
+            result.direction.elevationDegrees,
+        };
+        const double error =
+            angularDistanceDegrees(actual, direction);
+        QVERIFY2(error < 0.5,
+                 qPrintable(QStringLiteral(
+                     "edge expected=(%1,%2), actual=(%3,%4), error=%5")
+                     .arg(direction.azimuthDegrees)
+                     .arg(direction.elevationDegrees)
+                     .arg(actual.azimuthDegrees)
+                     .arg(actual.elevationDegrees)
+                     .arg(error)));
+    }
+}
+
+void AudioAnalysisTest::toleratesOneTwoAndFourCorruptedMicrophones()
+{
+    constexpr std::array<int, 4> CorruptedChannels {
+        0, 11, 26, 47,
+    };
+    for (int corruptedCount : {1, 2, 4}) {
+        MultiChannelAudioWindow window =
+            syntheticPlaneWave(31.45, -12.65);
+        QRandomGenerator random(
+            0x4c4f4341u + static_cast<quint32>(corruptedCount));
+        for (int index = 0; index < corruptedCount; ++index) {
+            for (float &sample
+                 : window.channels[CorruptedChannels.at(index)]) {
+                sample = static_cast<float>(
+                    random.generateDouble() * 2.0 - 1.0);
+            }
+        }
+
+        RobustSrpPhatScorer scorer;
+        LocatorConfiguration configuration;
+        configuration.microphones = createDefaultArrayGeometry();
+        QVERIFY(scorer.configure(configuration));
+        QVERIFY(scorer.prepareWindow(window));
+        const RobustSpatialEstimate result = scorer.estimate();
+        QVERIFY2(result.hasDirection,
+                 qPrintable(QStringLiteral(
+                     "%1 corrupted channels produced no direction")
+                     .arg(corruptedCount)));
+        const ScanDirection actual {
+            result.direction.azimuthDegrees,
+            result.direction.elevationDegrees,
+        };
+        const double error = angularDistanceDegrees(
+            actual, {31.45, -12.65});
+        QVERIFY2(error < 1.5,
+                 qPrintable(QStringLiteral(
+                     "%1 corrupted channels: actual=(%2,%3), error=%4, reliability=%5")
+                     .arg(corruptedCount)
+                     .arg(actual.azimuthDegrees)
+                     .arg(actual.elevationDegrees)
+                     .arg(error)
+                     .arg(result.reliability)));
+    }
+}
+
+void AudioAnalysisTest::localizesThroughNoiseAndSingleReflection()
+{
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+    QVERIFY(scorer.prepareWindow(
+        syntheticPlaneWaveWithNoiseAndReflection(18.35, -6.75)));
+    const RobustSpatialEstimate result = scorer.estimate();
+    QVERIFY(result.hasDirection);
+    const ScanDirection actual {
+        result.direction.azimuthDegrees,
+        result.direction.elevationDegrees,
+    };
+    const double error = angularDistanceDegrees(
+        actual, {18.35, -6.75});
+    QVERIFY2(error < 2.0,
+             qPrintable(QStringLiteral(
+                 "actual=(%1,%2), error=%3, reliability=%4")
+                 .arg(actual.azimuthDegrees)
+                 .arg(actual.elevationDegrees)
+                 .arg(error)
+                 .arg(result.reliability)));
+    QVERIFY(std::isfinite(result.reliability));
+}
+
+void AudioAnalysisTest::rejectsDiffuseAndInsufficientSpatialEvidence()
+{
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+    for (quint32 seed = 0; seed < 8; ++seed) {
+        MultiChannelAudioWindow diffuse;
+        diffuse.sampleRate = 48000;
+        diffuse.centerSample = 48000 + seed * 2048;
+        diffuse.channels.resize(48);
+        QRandomGenerator random(0x44494646u + seed);
+        for (QVector<float> &channel : diffuse.channels) {
+            channel.resize(2048);
+            for (float &sample : channel) {
+                sample = static_cast<float>(
+                    random.generateDouble() * 2.0 - 1.0);
+            }
+        }
+        const bool prepared = scorer.prepareWindow(diffuse);
+        const RobustSpatialEstimate result = scorer.estimate();
+        QVERIFY2(!prepared || !result.hasDirection
+                     || result.reliability < 0.2,
+                 qPrintable(QStringLiteral(
+                     "diffuse seed=%1 produced direction=(%2,%3), reliability=%4, groups=%5, psr=%6, std=(%7,%8), coverage=%9, steered=%10, contrast=%11, curvature=%12")
+                     .arg(seed)
+                     .arg(result.direction.azimuthDegrees)
+                     .arg(result.direction.elevationDegrees)
+                     .arg(result.reliability)
+                     .arg(result.validBaselineGroupCount)
+                     .arg(result.peakToSidelobeRatio)
+                     .arg(result.azimuthStandardDeviationDegrees)
+                     .arg(result.elevationStandardDeviationDegrees)
+                     .arg(result.coherentCoverage)
+                     .arg(result.steeredChannelCoherence)
+                     .arg(result.peakContrast)
+                     .arg(result.curvatureScore)));
+    }
+}
+
+void AudioAnalysisTest::remainsFiniteForNarrowbandInput()
+{
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+    const SpatialResponseGrid grid =
+        fieldOfViewGrid(64, 36);
+    scorer.prepareGrid(grid);
+    for (double frequencyHz : {350.0, 1000.0, 3500.0, 7000.0}) {
+        const bool prepared = scorer.prepareWindow(
+            syntheticNarrowbandPlaneWave(
+                14.2, -4.7, frequencyHz));
+        const RobustSpatialEstimate result =
+            scorer.estimate(&grid);
+
+        QVERIFY(std::isfinite(result.reliability));
+        QVERIFY(std::isfinite(result.direction.azimuthDegrees));
+        QVERIFY(std::isfinite(result.direction.elevationDegrees));
+        QVERIFY(std::all_of(
+            result.gridValues.cbegin(),
+            result.gridValues.cend(),
+            [](float value) {
+                return std::isfinite(value)
+                    && value >= 0.0f && value <= 1.0f;
+            }));
+        QVERIFY2(!prepared || !result.hasDirection
+                     || result.reliability
+                        < configuration.confidenceThreshold,
+                 qPrintable(QStringLiteral(
+                     "%1 Hz narrowband input produced reliability=%2")
+                     .arg(frequencyHz)
+                     .arg(result.reliability)));
+    }
+}
+
+void AudioAnalysisTest::downweightsMarginalBandwidthSpatialEvidence()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    RobustSrpPhatScorer broadScorer;
+    RobustSrpPhatScorer limitedScorer;
+    QVERIFY(broadScorer.configure(configuration));
+    QVERIFY(limitedScorer.configure(configuration));
+    QVERIFY(broadScorer.prepareWindow(
+        syntheticPlaneWave(14.2, -4.7)));
+    QVERIFY(limitedScorer.prepareWindow(
+        syntheticBandLimitedPlaneWave(
+            14.2, -4.7, 1000.0, 2400.0)));
+    const RobustSpatialEstimate broad =
+        broadScorer.estimate();
+    const RobustSpatialEstimate limited =
+        limitedScorer.estimate();
+
+    QVERIFY(broad.hasDirection);
+    QVERIFY(std::isfinite(limited.reliability));
+    QVERIFY2(limited.reliability
+                 < broad.reliability * 0.85,
+             qPrintable(QStringLiteral(
+                 "broad reliability=%1, marginal-band reliability=%2")
+                 .arg(broad.reliability)
+                 .arg(limited.reliability)));
+}
+
+void AudioAnalysisTest::ignoresBackHemisphereSpatialDirections()
+{
+    RobustSrpPhatScorer scorer;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    QVERIFY(scorer.configure(configuration));
+    SpatialResponseGrid grid;
+    grid.columns = 2;
+    grid.rows = 1;
+    grid.directions = {
+        {0.0, 0.0},
+        {180.0, 0.0},
+    };
+    scorer.prepareGrid(grid);
+    QVERIFY(scorer.prepareWindow(
+        syntheticPlaneWave(0.0, 0.0)));
+    const RobustSpatialEstimate result =
+        scorer.estimate(&grid);
+
+    QCOMPARE(result.gridValues.size(), 2);
+    QVERIFY(result.gridValues.at(0)
+            > result.gridValues.at(1));
+    QCOMPARE(result.gridValues.at(1), 0.0f);
 }
 
 void AudioAnalysisTest::convertsAnglesToDirectionRoundTrip()
@@ -887,6 +1433,112 @@ void AudioAnalysisTest::spatialResponseMatchesAfterLocalizationWarmup()
     QVERIFY(std::abs(warmedResult.reliability - directResult.reliability) < 1.0e-9);
 }
 
+void AudioAnalysisTest::locatorAndHeatmapShareRefinedPeak()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    const MultiChannelAudioWindow window =
+        syntheticPlaneWave(23.37, -11.42);
+    const SpatialResponseGrid grid = fieldOfViewGrid(32, 18);
+
+    GccPhatLocator locator;
+    QVERIFY(locator.configure(configuration));
+    const SpatialResponseResult response =
+        locator.evaluateSpatialResponse(window, grid);
+    const QVector<SoundSourceDirection> directions =
+        locator.locate(window);
+
+    QCOMPARE(directions.size(), 1);
+    QVERIFY(response.hasRefinedPeak);
+    const ScanDirection located {
+        directions.first().azimuthDegrees,
+        directions.first().elevationDegrees,
+    };
+    QVERIFY(angularDistanceDegrees(
+                located, response.refinedPeak) < 0.1);
+    QVERIFY(angularDistanceDegrees(
+                response.refinedPeak, {23.37, -11.42}) < 0.5);
+    QVERIFY(response.azimuthStandardDeviationDegrees > 0.0);
+    QVERIFY(response.elevationStandardDeviationDegrees > 0.0);
+    QVERIFY(std::isfinite(
+        response.azimuthElevationCorrelation));
+    QVERIFY(std::abs(
+        response.azimuthElevationCorrelation) < 1.0);
+    QVERIFY(response.peakToSidelobeRatio > 0.0);
+}
+
+void AudioAnalysisTest::smoothedLocalizationKeepsSpatialPeakAligned()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    configuration.smoothingFactor = 0.25;
+    GccPhatLocator locator;
+    QVERIFY(locator.configure(configuration));
+    MultiChannelAudioWindow first =
+        syntheticPlaneWave(-20.0, 0.0);
+    MultiChannelAudioWindow second =
+        syntheticPlaneWave(20.0, 0.0);
+    second.centerSample = first.centerSample + 4800;
+    QVERIFY(!locator.locate(first).isEmpty());
+    const QVector<SoundSourceDirection> located =
+        locator.locate(second);
+    const SpatialResponseGrid grid =
+        fieldOfViewGrid(64, 36);
+    const SpatialResponseResult response =
+        locator.evaluateSpatialResponse(second, grid);
+
+    QCOMPARE(located.size(), 1);
+    QVERIFY(response.hasRefinedPeak);
+    const int peak = static_cast<int>(std::distance(
+        response.values.cbegin(),
+        std::max_element(response.values.cbegin(),
+                         response.values.cend())));
+    const ScanDirection gridPeak = grid.directions.at(peak);
+    QVERIFY2(angularDistanceDegrees(
+                 gridPeak, response.refinedPeak) < 3.0,
+             qPrintable(QStringLiteral(
+                 "grid peak=(%1,%2), refined=(%3,%4)")
+                 .arg(gridPeak.azimuthDegrees)
+                 .arg(gridPeak.elevationDegrees)
+                 .arg(response.refinedPeak.azimuthDegrees)
+                 .arg(response.refinedPeak.elevationDegrees)));
+    QVERIFY(angularDistanceDegrees(
+                response.refinedPeak,
+                {located.first().azimuthDegrees,
+                 located.first().elevationDegrees})
+            < 0.1);
+}
+
+void AudioAnalysisTest::invalidWindowBreaksTemporalSmoothing()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    configuration.smoothingFactor = 0.1;
+    GccPhatLocator locator;
+    QVERIFY(locator.configure(configuration));
+
+    MultiChannelAudioWindow first =
+        syntheticPlaneWave(-25.0, 0.0);
+    MultiChannelAudioWindow invalid = first;
+    invalid.sampleRate /= 2;
+    MultiChannelAudioWindow second =
+        syntheticPlaneWave(25.0, 0.0);
+    second.centerSample =
+        first.centerSample + configuration.sampleRate / 10;
+
+    QVERIFY(!locator.locate(first).isEmpty());
+    QVERIFY(locator.locate(invalid).isEmpty());
+    const QVector<SoundSourceDirection> located =
+        locator.locate(second);
+
+    QCOMPARE(located.size(), 1);
+    QVERIFY2(std::abs(
+                 located.first().azimuthDegrees - 25.0) < 0.5,
+             qPrintable(QStringLiteral(
+                 "invalid window retained temporal history: %1 deg")
+                 .arg(located.first().azimuthDegrees)));
+}
+
 void AudioAnalysisTest::preparedSpatialGridInvalidatesForChangedDirections()
 {
     GccPhatLocator locator;
@@ -968,6 +1620,58 @@ void AudioAnalysisTest::evaluatesMaximumSpatialGridWithinCpuBudget()
              qPrintable(QStringLiteral("640x360 took %1 ms, budget is %2 ms")
                             .arg(milliseconds)
                             .arg(BudgetMilliseconds)));
+}
+
+void AudioAnalysisTest::
+evaluatesHighPrecisionSpatialGridWithinCpuBudget()
+{
+    GccPhatLocator locator;
+    LocatorConfiguration configuration;
+    configuration.microphones = createDefaultArrayGeometry();
+    configuration.spatialResolutionMode =
+        SpatialResolutionMode::HighPrecision;
+    QVERIFY(locator.configure(configuration));
+    MultiChannelAudioWindow window =
+        syntheticPlaneWave(20.0, 5.0);
+    const SpatialResponseGrid grid =
+        fieldOfViewGrid(640, 360);
+    locator.prepareSpatialResponseGrid(grid);
+    locator.evaluateSpatialResponse(window, grid);
+
+    QVector<qint64> measurements;
+    SpatialResponseResult response;
+    for (int iteration = 0; iteration < 5; ++iteration) {
+        ++window.centerSample;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        const QVector<SoundSourceDirection> directions =
+            locator.locate(window);
+        response =
+            locator.evaluateSpatialResponse(window, grid);
+        measurements.append(elapsed.elapsed());
+        QVERIFY(!directions.isEmpty());
+    }
+    std::sort(measurements.begin(), measurements.end());
+    const qint64 milliseconds =
+        measurements.at(measurements.size() / 2);
+    qInfo().noquote()
+        << "640x360 high-precision SRP-PHAT median:"
+        << milliseconds << "ms; samples:" << measurements;
+
+    QCOMPARE(response.values.size(), 640 * 360);
+    QVERIFY(std::all_of(
+        response.values.cbegin(), response.values.cend(),
+        [](float value) { return std::isfinite(value); }));
+#ifdef NDEBUG
+    constexpr qint64 BudgetMilliseconds = 200;
+#else
+    constexpr qint64 BudgetMilliseconds = 1500;
+#endif
+    QVERIFY2(milliseconds <= BudgetMilliseconds,
+             qPrintable(QStringLiteral(
+                 "640x360 high precision took %1 ms, budget is %2 ms")
+                 .arg(milliseconds)
+                 .arg(BudgetMilliseconds)));
 }
 
 void AudioAnalysisTest::registersBuiltInLocator()
@@ -1058,8 +1762,11 @@ void AudioAnalysisTest::liveWorkerAccumulatesRealtimeFrames()
     LiveLocalizationSettings settings;
     settings.updateIntervalMs = 20;
     worker.configure(settings);
+    worker.setSpatialGrid(fieldOfViewGrid(16, 9), 7);
     worker.setActive(true);
     QSignalSpy located(&worker, &LiveLocalizationWorker::localizationReady);
+    QSignalSpy spatial(
+        &worker, &LiveLocalizationWorker::spatialResponseReady);
     const MultiChannelAudioWindow window = syntheticPlaneWave(22.0, -8.0);
     for (int frame = 0; frame < 10; ++frame) {
         worker.pushAdjustedFrame(syntheticPayload(window, frame), 0,
@@ -1070,9 +1777,177 @@ void AudioAnalysisTest::liveWorkerAccumulatesRealtimeFrames()
     QCOMPARE(located.count(), 1);
     const LiveLocalizationResult result =
         qvariant_cast<LiveLocalizationResult>(located.first().at(0));
+    QCOMPARE(result.generation, quint64(7));
     QCOMPARE(result.directions.size(), 1);
     QVERIFY(std::abs(result.directions.first().azimuthDegrees - 22.0) < 6.0);
     QVERIFY(std::abs(result.directions.first().elevationDegrees + 8.0) < 6.0);
+    QCOMPARE(spatial.count(), 1);
+    const LiveSpatialResponse response =
+        qvariant_cast<LiveSpatialResponse>(
+            spatial.first().at(0));
+    QCOMPARE(response.generation, quint64(7));
+    QVERIFY(response.hasRefinedPeak);
+    QVERIFY(angularDistanceDegrees(
+                response.refinedPeak,
+                {result.directions.first().azimuthDegrees,
+                 result.directions.first().elevationDegrees})
+            < 0.1);
+    QVERIFY(response.azimuthStandardDeviationDegrees > 0.0);
+    QVERIFY(response.elevationStandardDeviationDegrees > 0.0);
+    QVERIFY(std::isfinite(
+        response.azimuthElevationCorrelation));
+    QVERIFY(std::abs(
+        response.azimuthElevationCorrelation) < 1.0);
+    QVERIFY(std::all_of(
+        response.normalizedValues.cbegin(),
+        response.normalizedValues.cend(),
+        [](float value) {
+            return std::isfinite(value)
+                && value >= 0.0f && value <= 1.0f;
+        }));
+}
+
+void AudioAnalysisTest::
+liveWorkerSpatialGridMatchesRefinedPeakAfterDirectionChange()
+{
+    LiveLocalizationWorker worker;
+    LiveLocalizationSettings settings;
+    settings.updateIntervalMs = 20;
+    settings.smoothingFactor = 0.35;
+    worker.configure(settings);
+    const SpatialResponseGrid grid =
+        fieldOfViewGrid(64, 36);
+    worker.setSpatialGrid(grid, 11);
+    worker.setActive(true);
+    QSignalSpy spatial(
+        &worker, &LiveLocalizationWorker::spatialResponseReady);
+    const MultiChannelAudioWindow first =
+        syntheticPlaneWave(-45.0, 0.0);
+    const MultiChannelAudioWindow second =
+        syntheticPlaneWave(45.0, 0.0);
+
+    for (int frame = 0; frame <= 10; ++frame) {
+        worker.pushAdjustedFrame(
+            syntheticPayload(first, frame),
+            0,
+            static_cast<quint32>(frame * 4167));
+    }
+    spatial.clear();
+    for (int frame = 0; frame <= 10; ++frame) {
+        const int timelineFrame = frame + 11;
+        worker.pushAdjustedFrame(
+            syntheticPayload(second, frame),
+            0,
+            static_cast<quint32>(
+                timelineFrame * 4167));
+    }
+
+    QVERIFY(!spatial.isEmpty());
+    for (const QList<QVariant> &arguments :
+         std::as_const(spatial)) {
+        const LiveSpatialResponse response =
+            qvariant_cast<LiveSpatialResponse>(
+                arguments.at(0));
+        if (!response.hasRefinedPeak) {
+            continue;
+        }
+        QCOMPARE(response.normalizedValues.size(),
+                 grid.directions.size());
+        const int peak = static_cast<int>(std::distance(
+            response.normalizedValues.cbegin(),
+            std::max_element(
+                response.normalizedValues.cbegin(),
+                response.normalizedValues.cend())));
+        const ScanDirection gridPeak =
+            grid.directions.at(peak);
+        QVERIFY2(angularDistanceDegrees(
+                     gridPeak,
+                     response.refinedPeak) < 3.0,
+                 qPrintable(QStringLiteral(
+                     "worker grid peak=(%1,%2), refined=(%3,%4)")
+                     .arg(gridPeak.azimuthDegrees)
+                     .arg(gridPeak.elevationDegrees)
+                     .arg(response.refinedPeak.azimuthDegrees)
+                     .arg(response.refinedPeak.elevationDegrees)));
+    }
+}
+
+void AudioAnalysisTest::
+liveWorkerClearsSpatialResponseWhenSourceDisappears()
+{
+    LiveLocalizationWorker worker;
+    LiveLocalizationSettings settings;
+    settings.updateIntervalMs = 20;
+    worker.configure(settings);
+    worker.setSpatialGrid(fieldOfViewGrid(16, 9), 7);
+    worker.setActive(true);
+    QSignalSpy spatial(
+        &worker, &LiveLocalizationWorker::spatialResponseReady);
+    const MultiChannelAudioWindow window =
+        syntheticPlaneWave(22.0, -8.0);
+    for (int frame = 0; frame <= 10; ++frame) {
+        worker.pushAdjustedFrame(
+            syntheticPayload(window, frame),
+            0,
+            static_cast<quint32>(frame * 4167));
+    }
+    QVERIFY(!spatial.isEmpty());
+    QVERIFY(!qvariant_cast<LiveSpatialResponse>(
+                 spatial.last().at(0)).normalizedValues.isEmpty());
+
+    const QByteArray silence(
+        AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int frame = 11; frame <= 30; ++frame) {
+        worker.pushAdjustedFrame(
+            silence,
+            0,
+            static_cast<quint32>(frame * 4167));
+    }
+
+    QVERIFY(spatial.size() >= 2);
+    const LiveSpatialResponse cleared =
+        qvariant_cast<LiveSpatialResponse>(
+            spatial.last().at(0));
+    QCOMPARE(cleared.generation, quint64(7));
+    QVERIFY(cleared.normalizedValues.isEmpty());
+    QVERIFY(!cleared.hasRefinedPeak);
+}
+
+void AudioAnalysisTest::liveWorkerRecoversFromTimestampRollback()
+{
+    LiveLocalizationWorker worker;
+    LiveLocalizationSettings settings;
+    settings.updateIntervalMs = 20;
+    worker.configure(settings);
+    worker.setActive(true);
+    QSignalSpy located(
+        &worker, &LiveLocalizationWorker::localizationReady);
+    const MultiChannelAudioWindow window =
+        syntheticPlaneWave(12.0, 4.0);
+
+    for (int frame = 0; frame <= 10; ++frame) {
+        const qint64 timestamp =
+            10'000'000 + frame * 4167;
+        worker.pushAdjustedFrame(
+            syntheticPayload(window, frame),
+            static_cast<quint32>(timestamp / 1'000'000),
+            static_cast<quint32>(timestamp % 1'000'000));
+    }
+    QVERIFY(!located.isEmpty());
+    const int countBeforeRollback = located.size();
+
+    for (int frame = 0; frame <= 20; ++frame) {
+        worker.pushAdjustedFrame(
+            syntheticPayload(window, frame),
+            0,
+            static_cast<quint32>(frame * 4167));
+    }
+
+    QVERIFY(located.size() > countBeforeRollback);
+    const LiveLocalizationResult recovered =
+        qvariant_cast<LiveLocalizationResult>(
+            located.last().at(0));
+    QVERIFY(!recovered.directions.isEmpty());
 }
 
 void AudioAnalysisTest::liveWorkerClearsAudioWhenInactive()

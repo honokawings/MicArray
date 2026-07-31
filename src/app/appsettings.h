@@ -60,6 +60,8 @@ struct LiveLocalizationSettings {
     bool enabled = true;
     QString locatorId = QStringLiteral("gcc-phat-tdoa");
     QString displayMode = QStringLiteral("marker");
+    SpatialResolutionMode spatialResolutionMode =
+        SpatialResolutionMode::RealtimeEnhanced;
     double heatmapOpacity = 0.45;
     int heatmapGridColumns = 64;
     int heatmapGridRows = 36;

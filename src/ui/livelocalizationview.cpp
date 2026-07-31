@@ -6,6 +6,7 @@
 #include <QPainter>
 
 #include <algorithm>
+#include <cmath>
 
 namespace MicArray {
 
@@ -18,6 +19,7 @@ LiveLocalizationView::LiveLocalizationView(QWidget *parent)
 void LiveLocalizationView::setCameraView(const CameraViewSettings &camera)
 {
     m_camera = camera;
+    invalidateHeatmapCache();
     update();
 }
 
@@ -28,9 +30,40 @@ void LiveLocalizationView::setDirections(
     update();
 }
 
+void LiveLocalizationView::setSpatialResponseActive(bool active)
+{
+    if (m_spatialResponseActive == active) {
+        return;
+    }
+    m_spatialResponseActive = active;
+    if (!active) {
+        m_response = {};
+        invalidateHeatmapCache();
+    }
+    update();
+}
+
+void LiveLocalizationView::setExpectedSpatialResponseGeneration(
+    quint64 generation)
+{
+    if (m_expectedSpatialResponseGeneration == generation) {
+        return;
+    }
+    m_expectedSpatialResponseGeneration = generation;
+    m_response = {};
+    invalidateHeatmapCache();
+    update();
+}
+
 void LiveLocalizationView::setSpatialResponse(const LiveSpatialResponse &response)
 {
+    if (!m_spatialResponseActive
+        || response.generation
+        != m_expectedSpatialResponseGeneration) {
+        return;
+    }
     m_response = response;
+    invalidateHeatmapCache();
     update();
 }
 
@@ -89,6 +122,7 @@ void LiveLocalizationView::paintEvent(QPaintEvent *event)
     }
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
     if (m_displayMode == QStringLiteral("heatmap")) {
         const QImage heatmap = heatmapImage();
         if (!heatmap.isNull()) {
@@ -151,6 +185,13 @@ void LiveLocalizationView::paintEvent(QPaintEvent *event)
     }
 }
 
+void LiveLocalizationView::invalidateHeatmapCache()
+{
+    ++m_heatmapRevision;
+    m_cachedHeatmap = {};
+    m_cachedHeatmapSize = {};
+}
+
 QImage LiveLocalizationView::heatmapImage() const
 {
     if (m_response.columns <= 0 || m_response.rows <= 0
@@ -158,18 +199,250 @@ QImage LiveLocalizationView::heatmapImage() const
             != m_response.columns * m_response.rows) {
         return {};
     }
-    QImage image(m_response.columns, m_response.rows, QImage::Format_ARGB32);
-    for (int row = 0; row < m_response.rows; ++row) {
-        auto *pixels = reinterpret_cast<QRgb *>(image.scanLine(row));
-        for (int column = 0; column < m_response.columns; ++column) {
-            const float value = std::clamp(
-                m_response.normalizedValues.at(row * m_response.columns + column),
-                0.0f, 1.0f);
-            const int hue = static_cast<int>((1.0f - value) * 240.0f);
-            pixels[column] = QColor::fromHsv(hue, 255, 255, 230).rgba();
+    const QRectF target = videoRect();
+    const int imageWidth = std::clamp(
+        qRound(target.width()), 256, 640);
+    const int imageHeight = std::clamp(
+        qRound(target.height()), 144, 360);
+    const QSize imageSize(imageWidth, imageHeight);
+    if (m_cachedHeatmapRevision == m_heatmapRevision
+        && m_cachedHeatmapSize == imageSize
+        && !m_cachedHeatmap.isNull()) {
+        return m_cachedHeatmap;
+    }
+    QImage image(imageWidth, imageHeight,
+                 QImage::Format_ARGB32);
+
+    const auto gridValue = [this](int column, int row) {
+        return m_response.normalizedValues.at(
+            row * m_response.columns + column);
+    };
+    const auto interpolatedValue =
+        [this, &gridValue](double normalizedX,
+                           double normalizedY) {
+        const double gridX = std::clamp(
+            normalizedX * m_response.columns - 0.5,
+            0.0,
+            static_cast<double>(m_response.columns - 1));
+        const double gridY = std::clamp(
+            normalizedY * m_response.rows - 0.5,
+            0.0,
+            static_cast<double>(m_response.rows - 1));
+        const int left = static_cast<int>(
+            std::floor(gridX));
+        const int top = static_cast<int>(
+            std::floor(gridY));
+        const int right = std::min(
+            left + 1, m_response.columns - 1);
+        const int bottom = std::min(
+            top + 1, m_response.rows - 1);
+        const double horizontal = gridX - left;
+        const double vertical = gridY - top;
+        const double topValue =
+            gridValue(left, top) * (1.0 - horizontal)
+            + gridValue(right, top) * horizontal;
+        const double bottomValue =
+            gridValue(left, bottom) * (1.0 - horizontal)
+            + gridValue(right, bottom) * horizontal;
+        return topValue * (1.0 - vertical)
+            + bottomValue * vertical;
+    };
+
+    const float gridMaximum = *std::max_element(
+        m_response.normalizedValues.cbegin(),
+        m_response.normalizedValues.cend());
+    QPointF peakPointPixels;
+    QPointF azimuthBasisPixels;
+    QPointF elevationBasisPixels;
+    bool renderRefinedPeak =
+        m_response.hasRefinedPeak
+        && m_response.reliability > 0.0
+        && std::isfinite(
+            m_response.azimuthStandardDeviationDegrees)
+        && std::isfinite(
+            m_response.elevationStandardDeviationDegrees)
+        && std::isfinite(
+            m_response.azimuthElevationCorrelation)
+        && m_response.azimuthStandardDeviationDegrees > 0.0
+        && m_response.elevationStandardDeviationDegrees > 0.0
+        && std::abs(
+            m_response.azimuthElevationCorrelation) < 1.0
+        && gridMaximum > 0.0f;
+    if (renderRefinedPeak) {
+        const auto projected =
+            [this](double azimuth, double elevation) {
+            SoundSourceDirection direction;
+            direction.azimuthDegrees = azimuth;
+            direction.elevationDegrees = elevation;
+            return projectDirection(direction, m_camera);
+        };
+        const ProjectionResult center = projected(
+            m_response.refinedPeak.azimuthDegrees,
+            m_response.refinedPeak.elevationDegrees);
+        const ProjectionResult azimuthOffset = projected(
+            m_response.refinedPeak.azimuthDegrees
+                + m_response.azimuthStandardDeviationDegrees,
+            m_response.refinedPeak.elevationDegrees);
+        const ProjectionResult elevationOffset = projected(
+            m_response.refinedPeak.azimuthDegrees,
+            m_response.refinedPeak.elevationDegrees
+                + m_response.elevationStandardDeviationDegrees);
+        renderRefinedPeak = center.valid && center.inFront
+            && center.inView
+            && azimuthOffset.valid && azimuthOffset.inFront
+            && elevationOffset.valid
+            && elevationOffset.inFront;
+        if (renderRefinedPeak) {
+            peakPointPixels = {
+                center.normalizedPoint.x() * imageWidth,
+                center.normalizedPoint.y() * imageHeight,
+            };
+            azimuthBasisPixels = {
+                (azimuthOffset.normalizedPoint.x()
+                 - center.normalizedPoint.x()) * imageWidth,
+                (azimuthOffset.normalizedPoint.y()
+                 - center.normalizedPoint.y()) * imageHeight,
+            };
+            elevationBasisPixels = {
+                (elevationOffset.normalizedPoint.x()
+                 - center.normalizedPoint.x()) * imageWidth,
+                (elevationOffset.normalizedPoint.y()
+                 - center.normalizedPoint.y()) * imageHeight,
+            };
+            const auto ensureVisibleBasis = [](QPointF basis) {
+                const double length = std::hypot(
+                    basis.x(), basis.y());
+                if (length < 1.0 && length > 1.0e-9) {
+                    basis *= 1.0 / length;
+                }
+                return basis;
+            };
+            azimuthBasisPixels =
+                ensureVisibleBasis(azimuthBasisPixels);
+            elevationBasisPixels =
+                ensureVisibleBasis(elevationBasisPixels);
+            const double determinant =
+                azimuthBasisPixels.x()
+                    * elevationBasisPixels.y()
+                - elevationBasisPixels.x()
+                    * azimuthBasisPixels.y();
+            renderRefinedPeak =
+                std::isfinite(determinant)
+                && std::abs(determinant) > 1.0e-6;
         }
     }
-    return image;
+
+    const auto colorForValue = [](double value) {
+        value = std::clamp(value, 0.0, 1.0);
+        const int hue = static_cast<int>(
+            (1.0 - value) * 240.0);
+        return QColor::fromHsv(hue, 255, 255, 230).rgba();
+    };
+    for (int row = 0; row < imageHeight; ++row) {
+        auto *pixels = reinterpret_cast<QRgb *>(image.scanLine(row));
+        const double normalizedY =
+            (row + 0.5) / imageHeight;
+        for (int column = 0; column < imageWidth; ++column) {
+            const double normalizedX =
+                (column + 0.5) / imageWidth;
+            const double value = interpolatedValue(
+                normalizedX, normalizedY);
+            pixels[column] = colorForValue(value);
+        }
+    }
+
+    if (renderRefinedPeak) {
+        const double correlation =
+            m_response.azimuthElevationCorrelation;
+        const double correlationDenominator =
+            1.0 - correlation * correlation;
+        const double determinant =
+            azimuthBasisPixels.x()
+                * elevationBasisPixels.y()
+            - elevationBasisPixels.x()
+                * azimuthBasisPixels.y();
+        const double horizontalRadius = 3.0 * std::sqrt(
+            std::max(
+                0.0,
+                azimuthBasisPixels.x()
+                    * azimuthBasisPixels.x()
+                + elevationBasisPixels.x()
+                    * elevationBasisPixels.x()
+                + 2.0 * correlation
+                    * azimuthBasisPixels.x()
+                    * elevationBasisPixels.x()));
+        const double verticalRadius = 3.0 * std::sqrt(
+            std::max(
+                0.0,
+                azimuthBasisPixels.y()
+                    * azimuthBasisPixels.y()
+                + elevationBasisPixels.y()
+                    * elevationBasisPixels.y()
+                + 2.0 * correlation
+                    * azimuthBasisPixels.y()
+                    * elevationBasisPixels.y()));
+        const int left = std::clamp(
+            static_cast<int>(std::floor(
+                peakPointPixels.x() - horizontalRadius)),
+            0, imageWidth - 1);
+        const int right = std::clamp(
+            static_cast<int>(std::ceil(
+                peakPointPixels.x() + horizontalRadius)),
+            0, imageWidth - 1);
+        const int top = std::clamp(
+            static_cast<int>(std::floor(
+                peakPointPixels.y() - verticalRadius)),
+            0, imageHeight - 1);
+        const int bottom = std::clamp(
+            static_cast<int>(std::ceil(
+                peakPointPixels.y() + verticalRadius)),
+            0, imageHeight - 1);
+        for (int row = top; row <= bottom; ++row) {
+            auto *pixels = reinterpret_cast<QRgb *>(
+                image.scanLine(row));
+            const double normalizedY =
+                (row + 0.5) / imageHeight;
+            for (int column = left;
+                 column <= right;
+                 ++column) {
+                const QPointF delta(
+                    column + 0.5 - peakPointPixels.x(),
+                    row + 0.5 - peakPointPixels.y());
+                const double azimuthCoordinate = (
+                    elevationBasisPixels.y() * delta.x()
+                    - elevationBasisPixels.x() * delta.y())
+                    / determinant;
+                const double elevationCoordinate = (
+                    -azimuthBasisPixels.y() * delta.x()
+                    + azimuthBasisPixels.x() * delta.y())
+                    / determinant;
+                const double radiusSquared =
+                    (azimuthCoordinate * azimuthCoordinate
+                     - 2.0 * correlation
+                         * azimuthCoordinate
+                         * elevationCoordinate
+                     + elevationCoordinate
+                         * elevationCoordinate)
+                    / correlationDenominator;
+                if (radiusSquared > 9.0) {
+                    continue;
+                }
+                const double normalizedX =
+                    (column + 0.5) / imageWidth;
+                const double base = interpolatedValue(
+                    normalizedX, normalizedY);
+                const double localLikelihood =
+                    gridMaximum * std::exp(
+                        -0.5 * radiusSquared);
+                pixels[column] = colorForValue(
+                    std::max(base, localLikelihood));
+            }
+        }
+    }
+    m_cachedHeatmapRevision = m_heatmapRevision;
+    m_cachedHeatmapSize = imageSize;
+    m_cachedHeatmap = image;
+    return m_cachedHeatmap;
 }
 
 } // namespace MicArray

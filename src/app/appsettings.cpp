@@ -122,6 +122,32 @@ bool isPowerOfTwo(int value)
     return value > 0 && (value & (value - 1)) == 0;
 }
 
+QString spatialResolutionModeKey(SpatialResolutionMode mode)
+{
+    switch (mode) {
+    case SpatialResolutionMode::RealtimeEnhanced:
+        return QStringLiteral("realtime-enhanced");
+    case SpatialResolutionMode::HighPrecision:
+        return QStringLiteral("high-precision");
+    }
+    return QStringLiteral("realtime-enhanced");
+}
+
+bool spatialResolutionModeFromKey(const QString &key,
+                                  SpatialResolutionMode *mode)
+{
+    const QString normalized = key.trimmed().toLower();
+    if (normalized == QStringLiteral("realtime-enhanced")) {
+        *mode = SpatialResolutionMode::RealtimeEnhanced;
+        return true;
+    }
+    if (normalized == QStringLiteral("high-precision")) {
+        *mode = SpatialResolutionMode::HighPrecision;
+        return true;
+    }
+    return false;
+}
+
 AudioAnalysisSettings sanitizeAudioAnalysisSettings(AudioAnalysisSettings value)
 {
     const AudioAnalysisSettings defaults;
@@ -771,6 +797,13 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
                                         defaults.locatorId).toString();
     value.displayMode = m_settings->value(QStringLiteral("liveLocalization/displayMode"),
                                           defaults.displayMode).toString();
+    if (!spatialResolutionModeFromKey(
+            m_settings->value(
+                QStringLiteral("liveLocalization/spatialResolutionMode"),
+                spatialResolutionModeKey(defaults.spatialResolutionMode)).toString(),
+            &value.spatialResolutionMode)) {
+        value.spatialResolutionMode = defaults.spatialResolutionMode;
+    }
     readFiniteNumberSetting(
         m_settings->value(QStringLiteral("liveLocalization/heatmapOpacity"),
                           defaults.heatmapOpacity),
@@ -1244,6 +1277,8 @@ void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsV
     m_settings->setValue(group + QStringLiteral("enabled"), value.enabled);
     m_settings->setValue(group + QStringLiteral("locatorId"), value.locatorId);
     m_settings->setValue(group + QStringLiteral("displayMode"), value.displayMode);
+    m_settings->setValue(group + QStringLiteral("spatialResolutionMode"),
+                         spatialResolutionModeKey(value.spatialResolutionMode));
     m_settings->setValue(group + QStringLiteral("heatmapOpacity"), value.heatmapOpacity);
     m_settings->setValue(group + QStringLiteral("heatmapGridColumns"),
                          value.heatmapGridColumns);

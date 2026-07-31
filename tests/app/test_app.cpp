@@ -41,6 +41,7 @@ private slots:
     void persistsAudioAnalysisSettings();
     void invalidAudioAnalysisFieldsFallBackIndependently();
     void persistsLiveLocalizationSettings();
+    void persistsSpatialResolutionMode();
     void invalidLiveLocalizationFieldsFallBackIndependently();
     void usesNoiseReductionProcessingDefaults();
     void persistsNoiseReductionSettings();
@@ -555,6 +556,23 @@ void AppTest::persistsLiveLocalizationSettings()
     QCOMPARE(reloaded.liveLocalization(), expected);
 }
 
+void AppTest::persistsSpatialResolutionMode()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    AppSettings settings(path);
+
+    LiveLocalizationSettings expected = settings.liveLocalization();
+    QCOMPARE(expected.spatialResolutionMode,
+             SpatialResolutionMode::RealtimeEnhanced);
+    expected.spatialResolutionMode = SpatialResolutionMode::HighPrecision;
+    settings.saveLiveLocalization(expected);
+
+    QCOMPARE(AppSettings(path).liveLocalization().spatialResolutionMode,
+             SpatialResolutionMode::HighPrecision);
+}
+
 void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
 {
     QTemporaryDir directory;
@@ -564,6 +582,8 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
         QSettings raw(path, QSettings::IniFormat);
         raw.setValue(QStringLiteral("liveLocalization/enabled"), true);
         raw.setValue(QStringLiteral("liveLocalization/displayMode"), QStringLiteral("glow"));
+        raw.setValue(QStringLiteral("liveLocalization/spatialResolutionMode"),
+                     QStringLiteral("unknown"));
         raw.setValue(QStringLiteral("liveLocalization/heatmapOpacity"), 4.0);
         raw.setValue(QStringLiteral("liveLocalization/heatmapGridColumns"), 641);
         raw.setValue(QStringLiteral("liveLocalization/heatmapGridRows"), 8);
@@ -585,6 +605,8 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
     const LiveLocalizationSettings actual = settings.liveLocalization();
     QVERIFY(actual.enabled);
     QCOMPARE(actual.displayMode, defaults.displayMode);
+    QCOMPARE(actual.spatialResolutionMode,
+             SpatialResolutionMode::RealtimeEnhanced);
     QCOMPARE(actual.heatmapOpacity, defaults.heatmapOpacity);
     QCOMPARE(actual.heatmapGridColumns, defaults.heatmapGridColumns);
     QCOMPARE(actual.heatmapGridRows, defaults.heatmapGridRows);
