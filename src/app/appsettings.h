@@ -51,6 +51,8 @@ struct AudioAnalysisSettings {
     double soundSpeedMetersPerSecond = 343.0;
     double smoothingFactor = 0.35;
     double confidenceThreshold = 0.45;
+    bool neuralPeakEnhancementEnabled = true;
+    double neuralPeakEnhancementStrength = 0.30;
     CameraViewSettings camera;
 
     bool operator==(const AudioAnalysisSettings &) const = default;
@@ -70,6 +72,8 @@ struct LiveLocalizationSettings {
     double soundSpeedMetersPerSecond = 343.0;
     double smoothingFactor = 0.35;
     double confidenceThreshold = 0.45;
+    bool neuralPeakEnhancementEnabled = true;
+    double neuralPeakEnhancementStrength = 0.30;
     CameraViewSettings camera;
     bool showCalibrationOverlay = false;
     QSize calibrationReferenceVideoSize = {0, 0};

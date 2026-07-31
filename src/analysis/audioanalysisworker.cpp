@@ -318,6 +318,10 @@ bool AudioAnalysisWorker::configureLocator()
     configuration.smoothingFactor = m_settings.smoothingFactor;
     configuration.spatialResolutionMode =
         SpatialResolutionMode::HighPrecision;
+    configuration.neuralPeakEnhancementEnabled =
+        m_settings.neuralPeakEnhancementEnabled;
+    configuration.neuralPeakEnhancementStrength =
+        m_settings.neuralPeakEnhancementStrength;
     QString error;
     if (!m_locator->configure(configuration, &error)) {
         emit errorOccurred(error);

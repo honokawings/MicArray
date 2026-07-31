@@ -6,6 +6,8 @@
 #include "analysis/gccphatlocator.h"
 #include "analysis/ispatialresponseprovider.h"
 #include "analysis/livelocalizationworker.h"
+#include "analysis/neuralmodeldata.h"
+#include "analysis/neuralsrppeakrefiner.h"
 #include "analysis/radix2fft.h"
 #include "analysis/robustsrpphatscorer.h"
 #include "analysis/soundsourcelocatorregistry.h"
@@ -435,6 +437,58 @@ double angularDistanceDegrees(const ScanDirection &first,
     return qRadiansToDegrees(std::acos(cosine));
 }
 
+NeuralSrpPeakInput syntheticNeuralPeakInput()
+{
+    NeuralSrpPeakInput input;
+    input.normalizedPatch.reserve(
+        NeuralSrpPeakInput::PatchValueCount);
+    for (int row = 0;
+         row < NeuralSrpPeakInput::PatchSize;
+         ++row) {
+        for (int column = 0;
+             column < NeuralSrpPeakInput::PatchSize;
+             ++column) {
+            const double x = column - 4.25;
+            const double y = row - 3.75;
+            input.normalizedPatch.append(
+                static_cast<float>(
+                    std::exp(-0.5
+                             * (x * x / 2.25
+                                + y * y / 1.44))));
+        }
+    }
+    input.diagnostics = {
+        0.92f, 1.0f, 0.87f, 0.5f,
+        0.5f, 0.3f, 0.25f, 0.1f,
+        0.86f, 0.7f, 0.81f, 0.96f,
+    };
+    return input;
+}
+
+NeuralSrpPeakInput exportedGoldenNeuralPeakInput()
+{
+    NeuralSrpPeakInput input;
+    input.normalizedPatch.reserve(
+        NeuralSrpPeakInput::PatchValueCount);
+    for (int index = 0;
+         index
+            < NeuralSrpPeakInput::PatchValueCount;
+         ++index) {
+        input.normalizedPatch.append(
+            NeuralModelData::GoldenInput.at(index));
+    }
+    for (int index = 0;
+         index < input.diagnostics.size();
+         ++index) {
+        input.diagnostics[index] =
+            NeuralModelData::GoldenInput.at(
+                NeuralSrpPeakInput
+                    ::PatchValueCount
+                + index);
+    }
+    return input;
+}
+
 } // namespace
 
 class AudioAnalysisTest : public QObject
@@ -453,6 +507,15 @@ private slots:
     void rejectsDiffuseAndInsufficientSpatialEvidence();
     void remainsFiniteForNarrowbandInput();
     void downweightsMarginalBandwidthSpatialEvidence();
+    void neuralPeakModelRejectsInvalidInputs();
+    void neuralPeakModelProducesBoundedFiniteOutput();
+    void neuralPeakModelMatchesGoldenForwardResult();
+    void samplesNormalizedNineByNineSincPatch();
+    void neuralPeakRefinementPreservesPhysicalSafetyEnvelope();
+    void neuralPeakRefinementBypassesBelowPhysicalThreshold();
+    void neuralPeakHeatmapSharpeningContractsMainLobe();
+    void neuralPeakPostprocessingStaysWithinCpuBudget();
+    void liveWorkerRebuildsLocatorForNeuralConfiguration();
     void ignoresBackHemisphereSpatialDirections();
     void convertsAnglesToDirectionRoundTrip();
     void registersAndCreatesLocatorByStableId();
@@ -539,6 +602,7 @@ void AudioAnalysisTest::producesMultiBaselineResponseNearestOffGridSource()
     RobustSrpPhatScorer scorer;
     LocatorConfiguration configuration;
     configuration.microphones = createDefaultArrayGeometry();
+    configuration.neuralPeakEnhancementEnabled = false;
     QVERIFY(scorer.configure(configuration));
     const SpatialResponseGrid grid = fieldOfViewGrid(64, 36);
     scorer.prepareGrid(grid);
@@ -836,6 +900,443 @@ void AudioAnalysisTest::downweightsMarginalBandwidthSpatialEvidence()
                  "broad reliability=%1, marginal-band reliability=%2")
                  .arg(broad.reliability)
                  .arg(limited.reliability)));
+}
+
+void AudioAnalysisTest::neuralPeakModelRejectsInvalidInputs()
+{
+    const NeuralSrpPeakRefiner refiner;
+    QVERIFY(refiner.modelValid());
+
+    NeuralSrpPeakInput tooShort =
+        syntheticNeuralPeakInput();
+    tooShort.normalizedPatch.removeLast();
+    QVERIFY(!refiner.infer(tooShort).valid);
+
+    NeuralSrpPeakInput tooLong =
+        syntheticNeuralPeakInput();
+    tooLong.normalizedPatch.append(0.0f);
+    QVERIFY(!refiner.infer(tooLong).valid);
+
+    NeuralSrpPeakInput constant =
+        syntheticNeuralPeakInput();
+    constant.normalizedPatch.fill(
+        0.5f,
+        NeuralSrpPeakInput::PatchValueCount);
+    QVERIFY(!refiner.infer(constant).valid);
+
+    NeuralSrpPeakInput notANumber =
+        syntheticNeuralPeakInput();
+    notANumber.normalizedPatch[10] =
+        std::numeric_limits<float>::quiet_NaN();
+    QVERIFY(!refiner.infer(notANumber).valid);
+
+    NeuralSrpPeakInput infinite =
+        syntheticNeuralPeakInput();
+    infinite.normalizedPatch[20] =
+        std::numeric_limits<float>::infinity();
+    QVERIFY(!refiner.infer(infinite).valid);
+
+    NeuralSrpPeakInput invalidDiagnostic =
+        syntheticNeuralPeakInput();
+    invalidDiagnostic.diagnostics[3] =
+        std::numeric_limits<float>::infinity();
+    QVERIFY(!refiner.infer(invalidDiagnostic).valid);
+}
+
+void AudioAnalysisTest::
+neuralPeakModelProducesBoundedFiniteOutput()
+{
+    const NeuralSrpPeakRefiner refiner;
+    const NeuralSrpPeakOutput output =
+        refiner.infer(syntheticNeuralPeakInput());
+
+    QVERIFY(output.valid);
+    QVERIFY(std::isfinite(output.deltaAzimuthCells));
+    QVERIFY(std::isfinite(output.deltaElevationCells));
+    QVERIFY(std::abs(output.deltaAzimuthCells) <= 1.0);
+    QVERIFY(std::abs(output.deltaElevationCells) <= 1.0);
+    QVERIFY(output.azimuthSigmaScale >= 0.35
+            && output.azimuthSigmaScale <= 1.0);
+    QVERIFY(output.elevationSigmaScale >= 0.35
+            && output.elevationSigmaScale <= 1.0);
+    QVERIFY(std::abs(output.correlationResidual) <= 0.35);
+    QVERIFY(output.confidence >= 0.0
+            && output.confidence <= 1.0);
+}
+
+void AudioAnalysisTest::
+neuralPeakModelMatchesGoldenForwardResult()
+{
+    const NeuralSrpPeakRefiner refiner;
+    const NeuralSrpPeakOutput output =
+        refiner.infer(
+            exportedGoldenNeuralPeakInput());
+
+    QVERIFY(output.valid);
+    QVERIFY(std::abs(output.deltaAzimuthCells
+                     - NeuralModelData
+                           ::GoldenOutput.at(0))
+            < 1.0e-6);
+    QVERIFY(std::abs(output.deltaElevationCells
+                     - NeuralModelData
+                           ::GoldenOutput.at(1))
+            < 1.0e-6);
+    QVERIFY(std::abs(output.azimuthSigmaScale
+                     - NeuralModelData
+                           ::GoldenOutput.at(2))
+            < 1.0e-6);
+    QVERIFY(std::abs(output.elevationSigmaScale
+                     - NeuralModelData
+                           ::GoldenOutput.at(3))
+            < 1.0e-6);
+    QVERIFY(std::abs(output.correlationResidual
+                     - NeuralModelData
+                           ::GoldenOutput.at(4))
+            < 1.0e-6);
+    QVERIFY(std::abs(output.confidence
+                     - NeuralModelData
+                           ::GoldenOutput.at(5))
+            < 1.0e-6);
+}
+
+void AudioAnalysisTest::
+samplesNormalizedNineByNineSincPatch()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones =
+        createDefaultArrayGeometry();
+    configuration.spatialResolutionMode =
+        SpatialResolutionMode::HighPrecision;
+    configuration.neuralPeakEnhancementEnabled = false;
+    RobustSrpPhatScorer scorer;
+    QVERIFY(scorer.configure(configuration));
+    QVERIFY(scorer.prepareWindow(
+        syntheticPlaneWave(18.4, -7.3)));
+    const RobustSpatialEstimate physical =
+        scorer.estimate();
+    QVERIFY(physical.hasDirection);
+
+    const std::optional<SrpLocalPeakPatch> patch =
+        scorer.sampleLocalPeakPatch(physical);
+
+    QVERIFY(patch.has_value());
+    QCOMPARE(patch->normalizedValues.size(), 81);
+    QVERIFY(std::all_of(
+        patch->normalizedValues.cbegin(),
+        patch->normalizedValues.cend(),
+        [](float value) {
+            return std::isfinite(value)
+                && value >= 0.0f && value <= 1.0f;
+        }));
+    const auto [minimum, maximum] =
+        std::minmax_element(
+            patch->normalizedValues.cbegin(),
+            patch->normalizedValues.cend());
+    QVERIFY(*maximum - *minimum > 1.0e-5f);
+    QCOMPARE(
+        patch->azimuthStepDegrees,
+        std::clamp(
+            physical.azimuthStandardDeviationDegrees
+                / 2.5,
+            0.25, 1.5));
+    QCOMPARE(
+        patch->elevationStepDegrees,
+        std::clamp(
+            physical.elevationStandardDeviationDegrees
+                / 2.5,
+            0.25, 1.5));
+    QVERIFY(std::isfinite(
+        patch->centerPhysicalScore));
+    QVERIFY(patch->dynamicRange > 1.0e-9);
+    QVERIFY(std::abs(
+                patch->diagnostics.at(0)
+                - physical.direction.azimuthDegrees
+                    / 90.0)
+            < 1.0e-6);
+    QVERIFY(std::abs(
+                patch->diagnostics.at(1)
+                - physical.direction.elevationDegrees
+                    / 90.0)
+            < 1.0e-6);
+}
+
+void AudioAnalysisTest::
+neuralPeakRefinementPreservesPhysicalSafetyEnvelope()
+{
+    LocatorConfiguration physicalConfiguration;
+    physicalConfiguration.microphones =
+        createDefaultArrayGeometry();
+    physicalConfiguration.spatialResolutionMode =
+        SpatialResolutionMode::HighPrecision;
+    physicalConfiguration.neuralPeakEnhancementEnabled =
+        false;
+    LocatorConfiguration neuralConfiguration =
+        physicalConfiguration;
+    neuralConfiguration.neuralPeakEnhancementEnabled =
+        true;
+    neuralConfiguration.neuralPeakEnhancementStrength =
+        0.65;
+
+    const MultiChannelAudioWindow window =
+        syntheticPlaneWave(23.37, -11.42);
+    const SpatialResponseGrid grid =
+        fieldOfViewGrid(32, 18);
+    GccPhatLocator physicalLocator;
+    GccPhatLocator neuralLocator;
+    QVERIFY(physicalLocator.configure(
+        physicalConfiguration));
+    QVERIFY(neuralLocator.configure(
+        neuralConfiguration));
+
+    const SpatialResponseResult physical =
+        physicalLocator.evaluateSpatialResponse(
+            window, grid);
+    const SpatialResponseResult neural =
+        neuralLocator.evaluateSpatialResponse(
+            window, grid);
+
+    QVERIFY(physical.hasRefinedPeak);
+    QVERIFY(neural.hasRefinedPeak);
+    QVERIFY(!physical.neuralPeakAttempted);
+    QVERIFY(!physical.neuralPeakApplied);
+    QVERIFY(neural.neuralPeakAttempted);
+    QVERIFY(std::isfinite(neural.neuralPeakConfidence));
+    QVERIFY(neural.neuralPeakConfidence >= 0.0);
+    QVERIFY(neural.neuralPeakConfidence <= 1.0);
+    QVERIFY(angularDistanceDegrees(
+                neural.physicalPeak,
+                physical.refinedPeak)
+            < 1.0e-6);
+    QVERIFY(angularDistanceDegrees(
+                neural.refinedPeak,
+                neural.physicalPeak)
+            <= 1.5 + 1.0e-9);
+    QVERIFY2(
+        neural.neuralPeakApplied,
+        qPrintable(QStringLiteral(
+            "confidence=%1 correction=(%2,%3)")
+                       .arg(neural.neuralPeakConfidence)
+                       .arg(
+                           neural
+                               .neuralAzimuthCorrectionDegrees)
+                       .arg(
+                           neural
+                               .neuralElevationCorrectionDegrees)));
+    QVERIFY(neural.neuralPeakConfidence >= 0.55);
+    QVERIFY(neural.azimuthStandardDeviationDegrees
+            <= physical
+                .azimuthStandardDeviationDegrees);
+    QVERIFY(neural.elevationStandardDeviationDegrees
+            <= physical
+                .elevationStandardDeviationDegrees);
+}
+
+void AudioAnalysisTest::
+neuralPeakRefinementBypassesBelowPhysicalThreshold()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones =
+        createDefaultArrayGeometry();
+    configuration.spatialResolutionMode =
+        SpatialResolutionMode::HighPrecision;
+    configuration.confidenceThreshold = 1.0;
+    configuration.neuralPeakEnhancementEnabled = true;
+    RobustSrpPhatScorer scorer;
+    QVERIFY(scorer.configure(configuration));
+    QVERIFY(scorer.prepareWindow(
+        syntheticPlaneWaveWithNoiseAndReflection(
+            23.37, -11.42)));
+
+    const RobustSpatialEstimate estimate =
+        scorer.estimate();
+
+    QVERIFY(estimate.hasDirection);
+    QVERIFY(estimate.reliability < 1.0);
+    QVERIFY(!estimate.neuralPeakAttempted);
+    QVERIFY(!estimate.neuralPeakApplied);
+    QCOMPARE(
+        estimate.direction.azimuthDegrees,
+        estimate.physicalPeak.azimuthDegrees);
+    QCOMPARE(
+        estimate.direction.elevationDegrees,
+        estimate.physicalPeak.elevationDegrees);
+}
+
+void AudioAnalysisTest::
+neuralPeakHeatmapSharpeningContractsMainLobe()
+{
+    SpatialResponseGrid grid;
+    grid.columns = 11;
+    grid.rows = 11;
+    QVector<float> values;
+    for (int row = 0; row < grid.rows; ++row) {
+        const double elevation = 5.0 - row;
+        for (int column = 0;
+             column < grid.columns;
+             ++column) {
+            const double azimuth = column - 5.0;
+            grid.directions.append({
+                azimuth, elevation,
+            });
+            values.append(static_cast<float>(
+                std::exp(-0.5 * (
+                    (azimuth + 1.0) * (azimuth + 1.0)
+                    + elevation * elevation)
+                    / 4.0)));
+        }
+    }
+
+    RobustSpatialEstimate estimate;
+    estimate.hasDirection = true;
+    estimate.direction.azimuthDegrees = 0.0;
+    estimate.direction.elevationDegrees = 0.0;
+    estimate.azimuthStandardDeviationDegrees = 1.5;
+    estimate.elevationStandardDeviationDegrees = 1.5;
+    estimate.azimuthElevationCorrelation = 0.0;
+    estimate.neuralPeakApplied = true;
+    estimate.neuralPeakConfidence = 1.0;
+    const QVector<float> original = values;
+
+    sharpenNeuralSrpHeatmap(
+        grid, estimate, 0.65, &values);
+
+    int originalHalfPowerCount = 0;
+    int sharpenedHalfPowerCount = 0;
+    for (int index = 0; index < values.size(); ++index) {
+        originalHalfPowerCount +=
+            original.at(index) >= 0.5f ? 1 : 0;
+        sharpenedHalfPowerCount +=
+            values.at(index) >= 0.5f ? 1 : 0;
+        QVERIFY(std::isfinite(values.at(index)));
+        QVERIFY(values.at(index) >= 0.0f);
+        QVERIFY(values.at(index) <= 1.0f);
+    }
+    const int sharpenedPeak = static_cast<int>(
+        std::distance(
+            values.cbegin(),
+            std::max_element(
+                values.cbegin(), values.cend())));
+    QCOMPARE(sharpenedPeak, 5 * 11 + 5);
+    QVERIFY(values.at(5 * 11 + 5)
+            > values.at(5 * 11 + 4));
+    QCOMPARE(values.first(), original.first());
+    QVERIFY(sharpenedHalfPowerCount > 0);
+    QVERIFY(sharpenedHalfPowerCount
+            <= 0.75 * originalHalfPowerCount);
+}
+
+void AudioAnalysisTest::
+liveWorkerRebuildsLocatorForNeuralConfiguration()
+{
+    LiveLocalizationWorker worker;
+    LiveLocalizationSettings settings;
+    settings.updateIntervalMs = 20;
+    settings.confidenceThreshold = 0.0;
+    settings.neuralPeakEnhancementEnabled = false;
+    worker.configure(settings);
+    worker.setSpatialGrid(fieldOfViewGrid(32, 18), 21);
+    worker.setActive(true);
+    QSignalSpy spatial(
+        &worker, &LiveLocalizationWorker::spatialResponseReady);
+    const MultiChannelAudioWindow window =
+        syntheticPlaneWave(23.37, -11.42);
+    for (int frame = 0; frame <= 10; ++frame) {
+        worker.pushAdjustedFrame(
+            syntheticPayload(window, frame),
+            0,
+            static_cast<quint32>(frame * 4167));
+    }
+    QVERIFY(!spatial.isEmpty());
+    const LiveSpatialResponse disabled =
+        qvariant_cast<LiveSpatialResponse>(
+            spatial.last().at(0));
+    QVERIFY(!disabled.neuralPeakAttempted);
+
+    spatial.clear();
+    settings.neuralPeakEnhancementEnabled = true;
+    settings.neuralPeakEnhancementStrength = 1.0;
+    worker.configure(settings);
+    for (int frame = 0; frame <= 10; ++frame) {
+        const int timelineFrame = frame + 11;
+        worker.pushAdjustedFrame(
+            syntheticPayload(window, frame),
+            0,
+            static_cast<quint32>(
+                timelineFrame * 4167));
+    }
+    QVERIFY(!spatial.isEmpty());
+    const LiveSpatialResponse enabled =
+        qvariant_cast<LiveSpatialResponse>(
+            spatial.last().at(0));
+    QVERIFY(enabled.neuralPeakAttempted);
+    QVERIFY(enabled.neuralPeakApplied);
+}
+
+void AudioAnalysisTest::
+neuralPeakPostprocessingStaysWithinCpuBudget()
+{
+    LocatorConfiguration configuration;
+    configuration.microphones =
+        createDefaultArrayGeometry();
+    configuration.spatialResolutionMode =
+        SpatialResolutionMode::HighPrecision;
+    configuration.neuralPeakEnhancementEnabled =
+        false;
+    RobustSrpPhatScorer scorer;
+    QVERIFY(scorer.configure(configuration));
+    QVERIFY(scorer.prepareWindow(
+        syntheticPlaneWave(23.37, -11.42)));
+    RobustSpatialEstimate estimate =
+        scorer.estimate();
+    QVERIFY(estimate.hasDirection);
+    estimate.neuralPeakApplied = true;
+    estimate.neuralPeakConfidence = 0.9;
+
+    const SpatialResponseGrid grid =
+        fieldOfViewGrid(640, 360);
+    QVector<float> originalValues(
+        grid.directions.size(), 0.2f);
+    QVector<qint64> measurements;
+    const NeuralSrpPeakRefiner refiner;
+    for (int iteration = 0;
+         iteration < 7;
+         ++iteration) {
+        QVector<float> values = originalValues;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        const std::optional<SrpLocalPeakPatch> patch =
+            scorer.sampleLocalPeakPatch(estimate);
+        QVERIFY(patch.has_value());
+        NeuralSrpPeakInput input;
+        input.normalizedPatch =
+            patch->normalizedValues;
+        input.diagnostics = patch->diagnostics;
+        QVERIFY(refiner.infer(input).valid);
+        sharpenNeuralSrpHeatmap(
+            grid, estimate, 0.65, &values);
+        measurements.append(elapsed.nsecsElapsed());
+    }
+    std::sort(
+        measurements.begin(),
+        measurements.end());
+    const double medianMilliseconds =
+        measurements.at(measurements.size() / 2)
+        / 1.0e6;
+    qInfo().noquote()
+        << "neural SRP postprocessing median:"
+        << medianMilliseconds << "ms";
+#ifdef NDEBUG
+    constexpr double BudgetMilliseconds = 2.0;
+#else
+    constexpr double BudgetMilliseconds = 30.0;
+#endif
+    QVERIFY2(
+        medianMilliseconds <= BudgetMilliseconds,
+        qPrintable(QStringLiteral(
+            "neural postprocessing took %1 ms, "
+            "budget is %2 ms")
+                       .arg(medianMilliseconds)
+                       .arg(BudgetMilliseconds)));
 }
 
 void AudioAnalysisTest::ignoresBackHemisphereSpatialDirections()

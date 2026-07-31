@@ -4,13 +4,16 @@
 
 #include <QVector3D>
 
+#include <array>
 #include <complex>
+#include <optional>
 
 namespace MicArray {
 
 struct RobustSpatialEstimate {
     bool hasDirection = false;
     SoundSourceDirection direction;
+    ScanDirection physicalPeak;
     QVector<float> gridValues;
     double reliability = 0.0;
     double peakToSidelobeRatio = 0.0;
@@ -23,7 +26,28 @@ struct RobustSpatialEstimate {
     double azimuthElevationCorrelation = 0.0;
     int validChannelCount = 0;
     int validBaselineGroupCount = 0;
+    bool neuralPeakAttempted = false;
+    bool neuralPeakApplied = false;
+    double neuralPeakConfidence = 0.0;
+    double neuralAzimuthCorrectionDegrees = 0.0;
+    double neuralElevationCorrectionDegrees = 0.0;
 };
+
+struct SrpLocalPeakPatch
+{
+    QVector<float> normalizedValues;
+    std::array<float, 12> diagnostics {};
+    double azimuthStepDegrees = 0.0;
+    double elevationStepDegrees = 0.0;
+    double centerPhysicalScore = 0.0;
+    double dynamicRange = 0.0;
+};
+
+void sharpenNeuralSrpHeatmap(
+    const SpatialResponseGrid &grid,
+    const RobustSpatialEstimate &estimate,
+    double strength,
+    QVector<float> *normalizedValues);
 
 class RobustSrpPhatScorer
 {
@@ -34,6 +58,11 @@ public:
     bool prepareWindow(const MultiChannelAudioWindow &window);
     RobustSpatialEstimate estimate(
         const SpatialResponseGrid *grid = nullptr);
+    std::optional<SrpLocalPeakPatch>
+    sampleLocalPeakPatch(
+        const RobustSpatialEstimate &physicalEstimate) const;
+    double scorePreparedDirectionSinc(
+        const ScanDirection &direction) const;
     void reset();
 
     int baselineGroupCount() const;
@@ -73,6 +102,8 @@ private:
         const ScanDirection &direction) const;
     bool refineContinuousPeak(
         const QVector<int> &seedGroupIndices,
+        RobustSpatialEstimate *result) const;
+    void applyNeuralPeakRefinement(
         RobustSpatialEstimate *result) const;
 
     LocatorConfiguration m_configuration;

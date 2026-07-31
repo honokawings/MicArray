@@ -17,6 +17,7 @@ set(MICARRAY_SOURCES
     src/analysis/directionprojection.cpp
     src/analysis/gccphatlocator.cpp
     src/analysis/livelocalizationworker.cpp
+    src/analysis/neuralsrppeakrefiner.cpp
     src/analysis/radix2fft.cpp
     src/analysis/robustsrpphatscorer.cpp
     src/analysis/soundsourcelocatorregistry.cpp
@@ -75,6 +76,8 @@ set(MICARRAY_HEADERS
     src/analysis/ispatialresponseprovider.h
     src/analysis/localizationtypes.h
     src/analysis/livelocalizationworker.h
+    src/analysis/neuralmodeldata.h
+    src/analysis/neuralsrppeakrefiner.h
     src/analysis/radix2fft.h
     src/analysis/robustsrpphatscorer.h
     src/analysis/soundsourcelocatorregistry.h
@@ -204,6 +207,14 @@ qt_add_executable(test_analysis
 target_link_libraries(test_analysis PRIVATE MicArrayCore Qt::Test Qt::Gui Qt::Multimedia)
 add_test(NAME test_analysis COMMAND test_analysis)
 set_tests_properties(test_analysis PROPERTIES ENVIRONMENT "PATH=${QT_BIN_DIR};$ENV{PATH}")
+
+qt_add_executable(train_neural_srp_peak
+    tools/train_neural_srp_peak.cpp
+)
+set_target_properties(train_neural_srp_peak PROPERTIES
+    EXCLUDE_FROM_ALL TRUE
+)
+target_link_libraries(train_neural_srp_peak PRIVATE MicArrayCore Qt::Core)
 
 install(TARGETS MicArray
     BUNDLE  DESTINATION .

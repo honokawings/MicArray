@@ -459,6 +459,8 @@ void AppTest::persistsAudioAnalysisSettings()
     expected.soundSpeedMetersPerSecond = 344.0;
     expected.smoothingFactor = 0.25;
     expected.confidenceThreshold = 0.55;
+    expected.neuralPeakEnhancementEnabled = false;
+    expected.neuralPeakEnhancementStrength = 0.35;
     expected.camera.centerAzimuthDegrees = 10.0;
     expected.camera.centerElevationDegrees = -5.0;
     expected.camera.horizontalFovDegrees = 100.0;
@@ -491,6 +493,10 @@ void AppTest::invalidAudioAnalysisFieldsFallBackIndependently()
                      std::numeric_limits<double>::infinity());
         raw.setValue(QStringLiteral("audioAnalysis/smoothingFactor"), -1.0);
         raw.setValue(QStringLiteral("audioAnalysis/confidenceThreshold"), 2.0);
+        raw.setValue(
+            QStringLiteral(
+                "audioAnalysis/neuralPeakEnhancementStrength"),
+            2.0);
         raw.setValue(QStringLiteral("audioAnalysis/cameraCenterAzimuthDegrees"), 12.0);
         raw.setValue(QStringLiteral("audioAnalysis/cameraCenterElevationDegrees"), -4.0);
         raw.setValue(QStringLiteral("audioAnalysis/cameraHorizontalFovDegrees"), 180.0);
@@ -510,6 +516,10 @@ void AppTest::invalidAudioAnalysisFieldsFallBackIndependently()
     QCOMPARE(actual.soundSpeedMetersPerSecond, defaults.soundSpeedMetersPerSecond);
     QCOMPARE(actual.smoothingFactor, defaults.smoothingFactor);
     QCOMPARE(actual.confidenceThreshold, defaults.confidenceThreshold);
+    QCOMPARE(actual.neuralPeakEnhancementEnabled,
+             defaults.neuralPeakEnhancementEnabled);
+    QCOMPARE(actual.neuralPeakEnhancementStrength,
+             defaults.neuralPeakEnhancementStrength);
     QCOMPARE(actual.camera.centerAzimuthDegrees, 12.0);
     QCOMPARE(actual.camera.centerElevationDegrees, -4.0);
     QCOMPARE(actual.camera.horizontalFovDegrees, defaults.camera.horizontalFovDegrees);
@@ -533,6 +543,8 @@ void AppTest::persistsLiveLocalizationSettings()
     expected.soundSpeedMetersPerSecond = 344.0;
     expected.smoothingFactor = 0.25;
     expected.confidenceThreshold = 0.6;
+    expected.neuralPeakEnhancementEnabled = false;
+    expected.neuralPeakEnhancementStrength = 0.8;
     expected.camera.centerAzimuthDegrees = 12.0;
     expected.camera.centerElevationDegrees = -4.0;
     expected.camera.horizontalFovDegrees = 82.0;
@@ -592,6 +604,10 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
         raw.setValue(QStringLiteral("liveLocalization/soundSpeedMetersPerSecond"), 344.0);
         raw.setValue(QStringLiteral("liveLocalization/smoothingFactor"), -1.0);
         raw.setValue(QStringLiteral("liveLocalization/confidenceThreshold"), 0.6);
+        raw.setValue(
+            QStringLiteral(
+                "liveLocalization/neuralPeakEnhancementStrength"),
+            -0.1);
         raw.setValue(QStringLiteral("liveLocalization/cameraCenterAzimuthDegrees"), 12.0);
         raw.setValue(QStringLiteral("liveLocalization/cameraHorizontalFovDegrees"), 180.0);
         raw.setValue(QStringLiteral("liveLocalization/calibrationVersion"), 999);
@@ -615,6 +631,10 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
     QCOMPARE(actual.soundSpeedMetersPerSecond, 344.0);
     QCOMPARE(actual.smoothingFactor, defaults.smoothingFactor);
     QCOMPARE(actual.confidenceThreshold, 0.6);
+    QCOMPARE(actual.neuralPeakEnhancementEnabled,
+             defaults.neuralPeakEnhancementEnabled);
+    QCOMPARE(actual.neuralPeakEnhancementStrength,
+             defaults.neuralPeakEnhancementStrength);
     QCOMPARE(actual.camera.centerAzimuthDegrees, 12.0);
     QCOMPARE(actual.camera.horizontalFovDegrees, defaults.camera.horizontalFovDegrees);
     QVERIFY(actual.calibrationSamples.isEmpty());

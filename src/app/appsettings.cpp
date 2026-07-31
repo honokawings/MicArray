@@ -181,6 +181,13 @@ AudioAnalysisSettings sanitizeAudioAnalysisSettings(AudioAnalysisSettings value)
         || value.confidenceThreshold < 0.0 || value.confidenceThreshold > 1.0) {
         value.confidenceThreshold = defaults.confidenceThreshold;
     }
+    if (!std::isfinite(
+            value.neuralPeakEnhancementStrength)
+        || value.neuralPeakEnhancementStrength < 0.0
+        || value.neuralPeakEnhancementStrength > 1.0) {
+        value.neuralPeakEnhancementStrength =
+            defaults.neuralPeakEnhancementStrength;
+    }
     if (!std::isfinite(value.camera.centerAzimuthDegrees)
         || value.camera.centerAzimuthDegrees < -180.0
         || value.camera.centerAzimuthDegrees > 180.0) {
@@ -249,6 +256,13 @@ LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettin
     if (!std::isfinite(value.confidenceThreshold)
         || value.confidenceThreshold < 0.0 || value.confidenceThreshold > 1.0) {
         value.confidenceThreshold = defaults.confidenceThreshold;
+    }
+    if (!std::isfinite(
+            value.neuralPeakEnhancementStrength)
+        || value.neuralPeakEnhancementStrength < 0.0
+        || value.neuralPeakEnhancementStrength > 1.0) {
+        value.neuralPeakEnhancementStrength =
+            defaults.neuralPeakEnhancementStrength;
     }
     AudioAnalysisSettings cameraValidation;
     cameraValidation.camera = value.camera;
@@ -754,6 +768,20 @@ AudioAnalysisSettings AppSettings::audioAnalysis() const
             &value.confidenceThreshold)) {
         value.confidenceThreshold = defaults.confidenceThreshold;
     }
+    value.neuralPeakEnhancementEnabled =
+        m_settings->value(
+            QStringLiteral(
+                "audioAnalysis/neuralPeakEnhancementEnabled"),
+            defaults.neuralPeakEnhancementEnabled).toBool();
+    if (!readFiniteNumberSetting(
+            m_settings->value(
+                QStringLiteral(
+                    "audioAnalysis/neuralPeakEnhancementStrength"),
+                defaults.neuralPeakEnhancementStrength),
+            &value.neuralPeakEnhancementStrength)) {
+        value.neuralPeakEnhancementStrength =
+            defaults.neuralPeakEnhancementStrength;
+    }
     if (!readFiniteNumberSetting(
             m_settings->value(QStringLiteral("audioAnalysis/cameraCenterAzimuthDegrees"),
                               defaults.camera.centerAzimuthDegrees),
@@ -834,6 +862,17 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
         m_settings->value(QStringLiteral("liveLocalization/confidenceThreshold"),
                           defaults.confidenceThreshold),
         &value.confidenceThreshold);
+    value.neuralPeakEnhancementEnabled =
+        m_settings->value(
+            QStringLiteral(
+                "liveLocalization/neuralPeakEnhancementEnabled"),
+            defaults.neuralPeakEnhancementEnabled).toBool();
+    readFiniteNumberSetting(
+        m_settings->value(
+            QStringLiteral(
+                "liveLocalization/neuralPeakEnhancementStrength"),
+            defaults.neuralPeakEnhancementStrength),
+        &value.neuralPeakEnhancementStrength);
     readFiniteNumberSetting(
         m_settings->value(QStringLiteral("liveLocalization/cameraCenterAzimuthDegrees"),
                           defaults.camera.centerAzimuthDegrees),
@@ -1257,6 +1296,14 @@ void AppSettings::saveAudioAnalysis(const AudioAnalysisSettings &settingsValue)
     m_settings->setValue(QStringLiteral("audioAnalysis/smoothingFactor"), value.smoothingFactor);
     m_settings->setValue(QStringLiteral("audioAnalysis/confidenceThreshold"),
                          value.confidenceThreshold);
+    m_settings->setValue(
+        QStringLiteral(
+            "audioAnalysis/neuralPeakEnhancementEnabled"),
+        value.neuralPeakEnhancementEnabled);
+    m_settings->setValue(
+        QStringLiteral(
+            "audioAnalysis/neuralPeakEnhancementStrength"),
+        value.neuralPeakEnhancementStrength);
     m_settings->setValue(QStringLiteral("audioAnalysis/cameraCenterAzimuthDegrees"),
                          value.camera.centerAzimuthDegrees);
     m_settings->setValue(QStringLiteral("audioAnalysis/cameraCenterElevationDegrees"),
@@ -1291,6 +1338,16 @@ void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsV
     m_settings->setValue(group + QStringLiteral("smoothingFactor"), value.smoothingFactor);
     m_settings->setValue(group + QStringLiteral("confidenceThreshold"),
                          value.confidenceThreshold);
+    m_settings->setValue(
+        group
+            + QStringLiteral(
+                "neuralPeakEnhancementEnabled"),
+        value.neuralPeakEnhancementEnabled);
+    m_settings->setValue(
+        group
+            + QStringLiteral(
+                "neuralPeakEnhancementStrength"),
+        value.neuralPeakEnhancementStrength);
     m_settings->setValue(group + QStringLiteral("cameraCenterAzimuthDegrees"),
                          value.camera.centerAzimuthDegrees);
     m_settings->setValue(group + QStringLiteral("cameraCenterElevationDegrees"),

@@ -1,6 +1,7 @@
 #include "analysis/robustsrpphatscorer.h"
 
 #include "analysis/arraygeometry.h"
+#include "analysis/neuralsrppeakrefiner.h"
 #include "analysis/radix2fft.h"
 
 #include <QtConcurrent>
@@ -150,6 +151,112 @@ normalizedSincWeights()
 
 } // namespace
 
+void sharpenNeuralSrpHeatmap(
+    const SpatialResponseGrid &grid,
+    const RobustSpatialEstimate &estimate,
+    double strength,
+    QVector<float> *normalizedValues)
+{
+    if (normalizedValues == nullptr
+        || normalizedValues->size()
+            != grid.directions.size()
+        || !estimate.hasDirection
+        || !estimate.neuralPeakApplied
+        || !std::isfinite(strength)
+        || strength <= 0.0
+        || !std::isfinite(
+            estimate
+                .azimuthStandardDeviationDegrees)
+        || !std::isfinite(
+            estimate
+                .elevationStandardDeviationDegrees)
+        || estimate
+                .azimuthStandardDeviationDegrees
+            <= 0.0
+        || estimate
+                .elevationStandardDeviationDegrees
+            <= 0.0) {
+        return;
+    }
+
+    const double azimuthSigma =
+        estimate.azimuthStandardDeviationDegrees;
+    const double elevationSigma =
+        estimate.elevationStandardDeviationDegrees;
+    const double correlation = std::clamp(
+        estimate.azimuthElevationCorrelation,
+        -0.95, 0.95);
+    const double inverseCorrelationScale =
+        1.0 / (1.0 - correlation * correlation);
+    const double exponent =
+        1.0 + 2.0
+            * std::clamp(strength, 0.0, 1.0)
+            * std::clamp(
+                estimate.neuralPeakConfidence,
+                0.0, 1.0);
+    double peakAmplitude = 0.0;
+    for (float value : std::as_const(
+             *normalizedValues)) {
+        if (!std::isfinite(value)) {
+            return;
+        }
+        peakAmplitude = std::max(
+            peakAmplitude,
+            std::clamp(
+                static_cast<double>(value),
+                0.0, 1.0));
+    }
+    if (peakAmplitude <= 0.0) {
+        return;
+    }
+    constexpr double MaximumMahalanobisSquared = 9.0;
+    for (int index = 0;
+         index < normalizedValues->size();
+         ++index) {
+        const ScanDirection &candidate =
+            grid.directions.at(index);
+        const double normalizedAzimuth =
+            (candidate.azimuthDegrees
+             - estimate.direction.azimuthDegrees)
+            / azimuthSigma;
+        const double normalizedElevation =
+            (candidate.elevationDegrees
+             - estimate.direction.elevationDegrees)
+            / elevationSigma;
+        const double mahalanobisSquared = (
+            normalizedAzimuth * normalizedAzimuth
+            - 2.0 * correlation
+                * normalizedAzimuth
+                * normalizedElevation
+            + normalizedElevation
+                * normalizedElevation)
+            * inverseCorrelationScale;
+        if (!std::isfinite(mahalanobisSquared)
+            || mahalanobisSquared
+                > MaximumMahalanobisSquared) {
+            continue;
+        }
+        const double value = std::clamp(
+            static_cast<double>(
+                normalizedValues->at(index)),
+            0.0, 1.0);
+        const double shoulder =
+            std::pow(value, exponent)
+            * std::exp(
+                -0.5 * (exponent - 1.0)
+                * mahalanobisSquared);
+        const double kernel =
+            peakAmplitude
+            * std::exp(
+                -0.5 * mahalanobisSquared);
+        (*normalizedValues)[index] =
+            static_cast<float>(
+                std::clamp(
+                    std::max(shoulder, kernel),
+                    0.0, 1.0));
+    }
+}
+
 bool RobustSrpPhatScorer::configure(
     const LocatorConfiguration &configuration,
     QString *errorMessage)
@@ -159,7 +266,11 @@ bool RobustSrpPhatScorer::configure(
         || configuration.sampleRate <= 0
         || configuration.windowSamples <= 0
         || !std::isfinite(configuration.soundSpeedMetersPerSecond)
-        || configuration.soundSpeedMetersPerSecond <= 0.0) {
+        || configuration.soundSpeedMetersPerSecond <= 0.0
+        || !std::isfinite(
+            configuration.neuralPeakEnhancementStrength)
+        || configuration.neuralPeakEnhancementStrength < 0.0
+        || configuration.neuralPeakEnhancementStrength > 1.0) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("Invalid SRP-PHAT configuration");
         }
@@ -544,6 +655,7 @@ RobustSpatialEstimate RobustSrpPhatScorer::estimate(
         result = m_continuousEstimate;
     } else {
         refineContinuousPeak(activeGroups, &result);
+        applyNeuralPeakRefinement(&result);
         m_continuousEstimate = result;
         m_hasContinuousEstimate = true;
     }
@@ -725,7 +837,332 @@ RobustSpatialEstimate RobustSrpPhatScorer::estimate(
             1.0 - normalizedSum / result.gridValues.size(),
             0.0, 1.0);
     }
+    sharpenNeuralSrpHeatmap(
+        *requestedGrid,
+        result,
+        m_configuration
+            .neuralPeakEnhancementStrength,
+        &result.gridValues);
     return result;
+}
+
+std::optional<SrpLocalPeakPatch>
+RobustSrpPhatScorer::sampleLocalPeakPatch(
+    const RobustSpatialEstimate &physicalEstimate) const
+{
+    constexpr int PatchSize = 9;
+    constexpr int PatchCenter = PatchSize / 2;
+    if (!m_windowPrepared
+        || !physicalEstimate.hasDirection
+        || m_validGroupIndices.size() < 12
+        || !std::isfinite(
+            physicalEstimate
+                .azimuthStandardDeviationDegrees)
+        || !std::isfinite(
+            physicalEstimate
+                .elevationStandardDeviationDegrees)
+        || physicalEstimate
+                .azimuthStandardDeviationDegrees
+            <= 0.0
+        || physicalEstimate
+                .elevationStandardDeviationDegrees
+            <= 0.0) {
+        return std::nullopt;
+    }
+
+    SrpLocalPeakPatch patch;
+    patch.azimuthStepDegrees = std::clamp(
+        physicalEstimate
+                .azimuthStandardDeviationDegrees
+            / 2.5,
+        0.25, 1.5);
+    patch.elevationStepDegrees = std::clamp(
+        physicalEstimate
+                .elevationStandardDeviationDegrees
+            / 2.5,
+        0.25, 1.5);
+    QVector<double> rawValues;
+    rawValues.reserve(PatchSize * PatchSize);
+    for (int row = 0; row < PatchSize; ++row) {
+        for (int column = 0;
+             column < PatchSize;
+             ++column) {
+            const ScanDirection candidate {
+                std::clamp(
+                    physicalEstimate
+                            .direction.azimuthDegrees
+                        + (column - PatchCenter)
+                            * patch.azimuthStepDegrees,
+                    -90.0, 90.0),
+                std::clamp(
+                    physicalEstimate
+                            .direction.elevationDegrees
+                        + (PatchCenter - row)
+                            * patch.elevationStepDegrees,
+                    -90.0, 90.0),
+            };
+            const double score = scoreDirectionSinc(
+                candidate, m_validGroupIndices);
+            if (!std::isfinite(score)) {
+                return std::nullopt;
+            }
+            rawValues.append(score);
+        }
+    }
+
+    patch.centerPhysicalScore =
+        rawValues.at(
+            PatchCenter * PatchSize + PatchCenter);
+    QVector<double> ordered = rawValues;
+    const qsizetype medianIndex =
+        ordered.size() / 2;
+    const qsizetype p95Index =
+        static_cast<qsizetype>(std::floor(
+            0.95 * (ordered.size() - 1)));
+    std::nth_element(
+        ordered.begin(),
+        ordered.begin() + medianIndex,
+        ordered.end());
+    const double median = ordered.at(medianIndex);
+    std::nth_element(
+        ordered.begin(),
+        ordered.begin() + p95Index,
+        ordered.end());
+    const double p95 = ordered.at(p95Index);
+    const double maximum = *std::max_element(
+        rawValues.cbegin(), rawValues.cend());
+    patch.dynamicRange = p95 - median;
+    if (!std::isfinite(median)
+        || !std::isfinite(p95)
+        || !std::isfinite(maximum)
+        || patch.dynamicRange <= 1.0e-9) {
+        return std::nullopt;
+    }
+
+    patch.normalizedValues.reserve(
+        rawValues.size());
+    for (double value : std::as_const(rawValues)) {
+        patch.normalizedValues.append(
+            static_cast<float>(std::clamp(
+                (value - median)
+                    / patch.dynamicRange,
+                0.0, 1.0)));
+    }
+    const double scoreScale = std::max(
+        std::abs(maximum), 1.0e-9);
+    patch.diagnostics = {
+        static_cast<float>(std::clamp(
+            physicalEstimate
+                    .direction.azimuthDegrees
+                / 90.0,
+            -1.0, 1.0)),
+        static_cast<float>(std::clamp(
+            physicalEstimate
+                    .direction.elevationDegrees
+                / 90.0,
+            -1.0, 1.0)),
+        static_cast<float>(std::clamp(
+            patch.dynamicRange / scoreScale,
+            0.0, 1.0)),
+        static_cast<float>(
+            patch.azimuthStepDegrees / 1.5),
+        static_cast<float>(
+            patch.elevationStepDegrees / 1.5),
+        static_cast<float>(std::clamp(
+            physicalEstimate
+                    .azimuthStandardDeviationDegrees
+                / 10.0,
+            0.0, 1.0)),
+        static_cast<float>(std::clamp(
+            physicalEstimate
+                    .elevationStandardDeviationDegrees
+                / 10.0,
+            0.0, 1.0)),
+        static_cast<float>(std::clamp(
+            physicalEstimate
+                .azimuthElevationCorrelation,
+            -0.99, 0.99)),
+        static_cast<float>(std::clamp(
+            physicalEstimate.reliability,
+            0.0, 1.0)),
+        static_cast<float>(std::clamp(
+            std::log1p(std::max(
+                physicalEstimate
+                    .peakToSidelobeRatio,
+                0.0))
+                / 4.0,
+            0.0, 1.0)),
+        static_cast<float>(std::clamp(
+            physicalEstimate
+                .steeredChannelCoherence,
+            0.0, 1.0)),
+        static_cast<float>(std::clamp(
+            physicalEstimate.validChannelCount
+                / static_cast<double>(
+                    m_configuration
+                        .microphones.size()),
+            0.0, 1.0)),
+    };
+    return patch;
+}
+
+double RobustSrpPhatScorer::scorePreparedDirectionSinc(
+    const ScanDirection &direction) const
+{
+    if (!m_windowPrepared
+        || !std::isfinite(direction.azimuthDegrees)
+        || !std::isfinite(direction.elevationDegrees)
+        || direction.azimuthDegrees < -90.0
+        || direction.azimuthDegrees > 90.0
+        || direction.elevationDegrees < -90.0
+        || direction.elevationDegrees > 90.0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return scoreDirectionSinc(
+        direction, m_validGroupIndices);
+}
+
+void RobustSrpPhatScorer::applyNeuralPeakRefinement(
+    RobustSpatialEstimate *result) const
+{
+    if (result == nullptr || !result->hasDirection) {
+        return;
+    }
+
+    result->physicalPeak = {
+        result->direction.azimuthDegrees,
+        result->direction.elevationDegrees,
+    };
+    if (!m_configuration.neuralPeakEnhancementEnabled
+        || m_configuration.neuralPeakEnhancementStrength
+            <= 0.0
+        || result->reliability
+            < m_configuration.confidenceThreshold) {
+        return;
+    }
+
+    const std::optional<SrpLocalPeakPatch> patch =
+        sampleLocalPeakPatch(*result);
+    if (!patch.has_value()) {
+        return;
+    }
+    result->neuralPeakAttempted = true;
+
+    NeuralSrpPeakInput input;
+    input.normalizedPatch = patch->normalizedValues;
+    input.diagnostics = patch->diagnostics;
+    const NeuralSrpPeakOutput output =
+        NeuralSrpPeakRefiner {}.infer(input);
+    if (!output.valid) {
+        return;
+    }
+    result->neuralPeakConfidence =
+        output.confidence;
+    constexpr double MinimumConfidence = 0.55;
+    if (output.confidence < MinimumConfidence) {
+        return;
+    }
+
+    const double strength = std::clamp(
+        m_configuration.neuralPeakEnhancementStrength
+            * output.confidence
+            * result->reliability,
+        0.0, 1.0);
+    double azimuthCorrection =
+        output.deltaAzimuthCells
+        * patch->azimuthStepDegrees * strength;
+    double elevationCorrection =
+        output.deltaElevationCells
+        * patch->elevationStepDegrees * strength;
+    constexpr double MaximumCorrectionDegrees = 1.5;
+    const double correctionMagnitude = std::hypot(
+        azimuthCorrection, elevationCorrection);
+    if (correctionMagnitude > MaximumCorrectionDegrees) {
+        return;
+    }
+
+    const double azimuthSigma = std::max(
+        result->azimuthStandardDeviationDegrees,
+        1.0e-6);
+    const double elevationSigma = std::max(
+        result->elevationStandardDeviationDegrees,
+        1.0e-6);
+    const double correlation = std::clamp(
+        result->azimuthElevationCorrelation,
+        -0.95, 0.95);
+    const double normalizedAzimuth =
+        azimuthCorrection / azimuthSigma;
+    const double normalizedElevation =
+        elevationCorrection / elevationSigma;
+    const double mahalanobisSquared = (
+        normalizedAzimuth * normalizedAzimuth
+        - 2.0 * correlation
+            * normalizedAzimuth
+            * normalizedElevation
+        + normalizedElevation * normalizedElevation)
+        / (1.0 - correlation * correlation);
+    constexpr double MaximumMahalanobisDistance = 2.5;
+    if (!std::isfinite(mahalanobisSquared)
+        || mahalanobisSquared
+            > MaximumMahalanobisDistance
+                * MaximumMahalanobisDistance) {
+        return;
+    }
+
+    const ScanDirection corrected {
+        result->physicalPeak.azimuthDegrees
+            + azimuthCorrection,
+        result->physicalPeak.elevationDegrees
+            + elevationCorrection,
+    };
+    if (corrected.azimuthDegrees < -90.0
+        || corrected.azimuthDegrees > 90.0
+        || corrected.elevationDegrees < -90.0
+        || corrected.elevationDegrees > 90.0) {
+        return;
+    }
+    const double acceptedAzimuthCorrection =
+        corrected.azimuthDegrees
+        - result->physicalPeak.azimuthDegrees;
+    const double acceptedElevationCorrection =
+        corrected.elevationDegrees
+        - result->physicalPeak.elevationDegrees;
+    const double correctedScore = scoreDirectionSinc(
+        corrected, m_validGroupIndices);
+    if (!std::isfinite(correctedScore)
+        || correctedScore
+            < 0.97 * patch->centerPhysicalScore) {
+        return;
+    }
+
+    result->direction.azimuthDegrees =
+        corrected.azimuthDegrees;
+    result->direction.elevationDegrees =
+        corrected.elevationDegrees;
+    result->azimuthStandardDeviationDegrees *=
+        std::lerp(
+            1.0,
+            output.azimuthSigmaScale,
+            strength);
+    result->elevationStandardDeviationDegrees *=
+        std::lerp(
+            1.0,
+            output.elevationSigmaScale,
+            strength);
+    result->azimuthElevationCorrelation =
+        std::clamp(
+            result->azimuthElevationCorrelation
+                + output.correlationResidual
+                    * strength,
+            -0.99, 0.99);
+    result->direction.residualSamples = std::hypot(
+        result->azimuthStandardDeviationDegrees,
+        result->elevationStandardDeviationDegrees);
+    result->neuralPeakApplied = true;
+    result->neuralAzimuthCorrectionDegrees =
+        acceptedAzimuthCorrection;
+    result->neuralElevationCorrectionDegrees =
+        acceptedElevationCorrection;
 }
 
 void RobustSrpPhatScorer::reset()

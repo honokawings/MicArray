@@ -44,7 +44,11 @@ void LiveLocalizationWorker::configure(const LiveLocalizationSettings &settings)
         || settings.smoothingFactor != m_settings.smoothingFactor
         || settings.confidenceThreshold != m_settings.confidenceThreshold
         || settings.spatialResolutionMode
-            != m_settings.spatialResolutionMode;
+            != m_settings.spatialResolutionMode
+        || settings.neuralPeakEnhancementEnabled
+            != m_settings.neuralPeakEnhancementEnabled
+        || settings.neuralPeakEnhancementStrength
+            != m_settings.neuralPeakEnhancementStrength;
     m_settings = settings;
     if (locatorChanged || m_locator == nullptr) {
         rebuildLocator();
@@ -219,6 +223,10 @@ bool LiveLocalizationWorker::rebuildLocator()
     configuration.smoothingFactor = m_settings.smoothingFactor;
     configuration.spatialResolutionMode =
         m_settings.spatialResolutionMode;
+    configuration.neuralPeakEnhancementEnabled =
+        m_settings.neuralPeakEnhancementEnabled;
+    configuration.neuralPeakEnhancementStrength =
+        m_settings.neuralPeakEnhancementStrength;
     QString error;
     if (!m_locator->configure(configuration, &error)) {
         m_locator.reset();
@@ -311,6 +319,7 @@ void LiveLocalizationWorker::analyzeLatest(qint64 timestampMicroseconds)
     response.reliability = spatial.reliability;
     response.hasRefinedPeak = spatial.hasRefinedPeak;
     response.refinedPeak = spatial.refinedPeak;
+    response.physicalPeak = spatial.physicalPeak;
     response.azimuthStandardDeviationDegrees =
         spatial.azimuthStandardDeviationDegrees;
     response.elevationStandardDeviationDegrees =
@@ -319,6 +328,16 @@ void LiveLocalizationWorker::analyzeLatest(qint64 timestampMicroseconds)
         spatial.azimuthElevationCorrelation;
     response.peakToSidelobeRatio =
         spatial.peakToSidelobeRatio;
+    response.neuralPeakAttempted =
+        spatial.neuralPeakAttempted;
+    response.neuralPeakApplied =
+        spatial.neuralPeakApplied;
+    response.neuralPeakConfidence =
+        spatial.neuralPeakConfidence;
+    response.neuralAzimuthCorrectionDegrees =
+        spatial.neuralAzimuthCorrectionDegrees;
+    response.neuralElevationCorrectionDegrees =
+        spatial.neuralElevationCorrectionDegrees;
     emit spatialResponseReady(response);
     emit statusChanged(
         directions.isEmpty()

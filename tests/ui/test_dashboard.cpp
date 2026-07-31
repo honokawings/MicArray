@@ -185,6 +185,13 @@ void DashboardTest::audioAnalysisPageProvidesOfflineControls()
     auto *locator = page.findChild<QComboBox *>(QStringLiteral("analysisLocatorCombo"));
     auto *photo = page.findChild<DirectionPhotoWidget *>(QStringLiteral("directionPhotoWidget"));
     auto *horizontalFov = page.findChild<QDoubleSpinBox *>(QStringLiteral("cameraHorizontalFovSpin"));
+    auto *neuralEnabled = page.findChild<QCheckBox *>(
+        QStringLiteral(
+            "audioAnalysisNeuralPeakEnhancementCheck"));
+    auto *neuralStrength =
+        page.findChild<QDoubleSpinBox *>(
+            QStringLiteral(
+                "audioAnalysisNeuralPeakEnhancementStrengthSpin"));
 
     QVERIFY(open != nullptr);
     QVERIFY(play != nullptr);
@@ -192,6 +199,10 @@ void DashboardTest::audioAnalysisPageProvidesOfflineControls()
     QVERIFY(locator != nullptr);
     QVERIFY(photo != nullptr);
     QVERIFY(horizontalFov != nullptr);
+    QVERIFY(neuralEnabled != nullptr);
+    QVERIFY(neuralStrength != nullptr);
+    QVERIFY(neuralEnabled->isChecked());
+    QCOMPARE(neuralStrength->value(), 0.30);
     QCOMPARE(channel->count(), 48);
     QVERIFY(locator->findData(QStringLiteral("gcc-phat-tdoa")) >= 0);
     QVERIFY(!play->isEnabled());
@@ -471,7 +482,11 @@ void DashboardTest::liveHeatmapRendersRefinedPeakAtSubgridCenter()
     QCoreApplication::processEvents();
 
     const QImage rendered = widget.grab().toImage();
-    const QColor center = rendered.pixelColor(320, 180);
+    const QPoint imageCenter(
+        rendered.width() / 2,
+        rendered.height() / 2);
+    const QColor center =
+        rendered.pixelColor(imageCenter);
     QVERIFY2(center.red() > 200
                  && center.red() > center.blue() + 80,
              qPrintable(QStringLiteral(
@@ -483,8 +498,12 @@ void DashboardTest::liveHeatmapRendersRefinedPeakAtSubgridCenter()
     response.hasRefinedPeak = false;
     widget.setSpatialResponse(response);
     QCoreApplication::processEvents();
+    const QImage withoutRefinedPeakImage =
+        widget.grab().toImage();
     const QColor withoutRefinedPeak =
-        widget.grab().toImage().pixelColor(320, 180);
+        withoutRefinedPeakImage.pixelColor(
+            withoutRefinedPeakImage.width() / 2,
+            withoutRefinedPeakImage.height() / 2);
     QVERIFY(withoutRefinedPeak.blue()
                 > withoutRefinedPeak.red() + 80);
 }
@@ -510,8 +529,12 @@ void DashboardTest::liveHeatmapRejectsStaleGeneration()
     widget.setSpatialResponse(response);
     widget.show();
     QCoreApplication::processEvents();
+    const QImage staleImage =
+        widget.grab().toImage();
     const QColor staleCenter =
-        widget.grab().toImage().pixelColor(320, 180);
+        staleImage.pixelColor(
+            staleImage.width() / 2,
+            staleImage.height() / 2);
     QVERIFY(staleCenter.red() < 40
             && staleCenter.green() < 40
             && staleCenter.blue() < 40);
@@ -519,8 +542,12 @@ void DashboardTest::liveHeatmapRejectsStaleGeneration()
     response.generation = 2;
     widget.setSpatialResponse(response);
     QCoreApplication::processEvents();
+    const QImage currentImage =
+        widget.grab().toImage();
     const QColor currentCenter =
-        widget.grab().toImage().pixelColor(320, 180);
+        currentImage.pixelColor(
+            currentImage.width() / 2,
+            currentImage.height() / 2);
     QVERIFY(currentCenter.red() > 200);
 }
 
@@ -609,10 +636,18 @@ void DashboardTest::liveHeatmapProjectsAngularAxesWithCameraRoll()
             -azimuthBasis.y(), azimuthBasis.x());
 
     const QImage rendered = widget.grab().toImage();
+    const double imageScaleX =
+        rendered.width()
+        / static_cast<double>(widget.width());
+    const double imageScaleY =
+        rendered.height()
+        / static_cast<double>(widget.height());
     const QColor alongColor = rendered.pixelColor(
-        qRound(alongAzimuth.x()), qRound(alongAzimuth.y()));
+        qRound(alongAzimuth.x() * imageScaleX),
+        qRound(alongAzimuth.y() * imageScaleY));
     const QColor perpendicularColor = rendered.pixelColor(
-        qRound(perpendicular.x()), qRound(perpendicular.y()));
+        qRound(perpendicular.x() * imageScaleX),
+        qRound(perpendicular.y() * imageScaleY));
     QVERIFY2(alongColor.red() > perpendicularColor.red() + 80,
              qPrintable(QStringLiteral(
                  "along=(%1,%2,%3), perpendicular=(%4,%5,%6)")
@@ -687,10 +722,18 @@ void DashboardTest::liveHeatmapRendersCorrelatedHessianShape()
             azimuthBasis - elevationBasis);
 
     const QImage rendered = widget.grab().toImage();
+    const double imageScaleX =
+        rendered.width()
+        / static_cast<double>(widget.width());
+    const double imageScaleY =
+        rendered.height()
+        / static_cast<double>(widget.height());
     const QColor correlatedColor = rendered.pixelColor(
-        qRound(correlated.x()), qRound(correlated.y()));
+        qRound(correlated.x() * imageScaleX),
+        qRound(correlated.y() * imageScaleY));
     const QColor antiCorrelatedColor = rendered.pixelColor(
-        qRound(antiCorrelated.x()), qRound(antiCorrelated.y()));
+        qRound(antiCorrelated.x() * imageScaleX),
+        qRound(antiCorrelated.y() * imageScaleY));
     QVERIFY2(correlatedColor.red()
                  > antiCorrelatedColor.red() + 80,
              qPrintable(QStringLiteral(
@@ -1275,6 +1318,13 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
         QStringLiteral("liveLocalizationDisplayModeCombo"));
     auto *resolution = page.findChild<QComboBox *>(
         QStringLiteral("liveSpatialResolutionModeCombo"));
+    auto *neuralEnabled = page.findChild<QCheckBox *>(
+        QStringLiteral(
+            "liveLocalizationNeuralPeakEnhancementCheck"));
+    auto *neuralStrength =
+        page.findChild<QDoubleSpinBox *>(
+            QStringLiteral(
+                "liveLocalizationNeuralPeakEnhancementStrengthSpin"));
     auto *view = page.findChild<LiveLocalizationView *>(
         QStringLiteral("liveLocalizationView"));
     auto *gridColumns = page.findChild<QSpinBox *>(
@@ -1304,6 +1354,8 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     QVERIFY(enabled != nullptr);
     QVERIFY(mode != nullptr);
     QVERIFY(resolution != nullptr);
+    QVERIFY(neuralEnabled != nullptr);
+    QVERIFY(neuralStrength != nullptr);
     QVERIFY(view != nullptr);
     QVERIFY(gridColumns != nullptr);
     QVERIFY(gridRows != nullptr);
@@ -1326,6 +1378,8 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     QCOMPARE(resolution->currentData().toInt(),
              static_cast<int>(
                  SpatialResolutionMode::RealtimeEnhanced));
+    QVERIFY(neuralEnabled->isChecked());
+    QCOMPARE(neuralStrength->value(), 0.30);
     QCOMPARE(gridColumns->value(), 320);
     QCOMPARE(gridColumns->maximum(), 640);
     QCOMPARE(gridRows->value(), 180);
@@ -1356,6 +1410,14 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
     QCOMPARE(reconfigured.count(), 1);
     QCOMPARE(settings.liveLocalization().spatialResolutionMode,
              SpatialResolutionMode::HighPrecision);
+    neuralEnabled->setChecked(false);
+    neuralStrength->setValue(0.4);
+    QCOMPARE(settings.liveLocalization()
+                 .neuralPeakEnhancementEnabled,
+             false);
+    QCOMPARE(settings.liveLocalization()
+                 .neuralPeakEnhancementStrength,
+             0.4);
 }
 
 void DashboardTest::

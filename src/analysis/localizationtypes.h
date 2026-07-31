@@ -35,12 +35,16 @@ struct LocatorConfiguration {
     double smoothingFactor = 0.35;
     SpatialResolutionMode spatialResolutionMode =
         SpatialResolutionMode::RealtimeEnhanced;
+    bool neuralPeakEnhancementEnabled = true;
+    double neuralPeakEnhancementStrength = 0.30;
 };
 
 struct MultiChannelAudioWindow {
     QVector<QVector<float>> channels;
     qint64 centerSample = 0;
     int sampleRate = 48000;
+
+    bool operator==(const MultiChannelAudioWindow &) const = default;
 };
 
 struct SoundSourceDirection {
@@ -81,10 +85,16 @@ struct SpatialResponseResult {
     double reliability = 0.0;
     bool hasRefinedPeak = false;
     ScanDirection refinedPeak;
+    ScanDirection physicalPeak;
     double azimuthStandardDeviationDegrees = 0.0;
     double elevationStandardDeviationDegrees = 0.0;
     double azimuthElevationCorrelation = 0.0;
     double peakToSidelobeRatio = 0.0;
+    bool neuralPeakAttempted = false;
+    bool neuralPeakApplied = false;
+    double neuralPeakConfidence = 0.0;
+    double neuralAzimuthCorrectionDegrees = 0.0;
+    double neuralElevationCorrectionDegrees = 0.0;
 };
 
 struct LiveLocalizationResult {
@@ -103,10 +113,16 @@ struct LiveSpatialResponse {
     double reliability = 0.0;
     bool hasRefinedPeak = false;
     ScanDirection refinedPeak;
+    ScanDirection physicalPeak;
     double azimuthStandardDeviationDegrees = 0.0;
     double elevationStandardDeviationDegrees = 0.0;
     double azimuthElevationCorrelation = 0.0;
     double peakToSidelobeRatio = 0.0;
+    bool neuralPeakAttempted = false;
+    bool neuralPeakApplied = false;
+    double neuralPeakConfidence = 0.0;
+    double neuralAzimuthCorrectionDegrees = 0.0;
+    double neuralElevationCorrectionDegrees = 0.0;
 };
 
 struct VideoCalibrationSample {

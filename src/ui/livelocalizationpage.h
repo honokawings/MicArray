@@ -90,6 +90,9 @@ private:
     QComboBox *m_locatorCombo = nullptr;
     QComboBox *m_displayModeCombo = nullptr;
     QComboBox *m_spatialResolutionModeCombo = nullptr;
+    QCheckBox *m_neuralPeakEnhancementCheck = nullptr;
+    QDoubleSpinBox
+        *m_neuralPeakEnhancementStrengthSpin = nullptr;
     QDoubleSpinBox *m_heatmapOpacitySpin = nullptr;
     QSpinBox *m_heatmapGridColumnsSpin = nullptr;
     QSpinBox *m_heatmapGridRowsSpin = nullptr;

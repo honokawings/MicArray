@@ -127,6 +127,8 @@ SpatialResponseResult GccPhatLocator::evaluateSpatialResponse(
             m_cachedEstimate.direction.azimuthDegrees,
             m_cachedEstimate.direction.elevationDegrees,
         };
+        result.physicalPeak =
+            m_cachedEstimate.physicalPeak;
         result.azimuthStandardDeviationDegrees =
             m_cachedEstimate.azimuthStandardDeviationDegrees;
         result.elevationStandardDeviationDegrees =
@@ -135,6 +137,18 @@ SpatialResponseResult GccPhatLocator::evaluateSpatialResponse(
             m_cachedEstimate.azimuthElevationCorrelation;
         result.peakToSidelobeRatio =
             m_cachedEstimate.peakToSidelobeRatio;
+        result.neuralPeakAttempted =
+            m_cachedEstimate.neuralPeakAttempted;
+        result.neuralPeakApplied =
+            m_cachedEstimate.neuralPeakApplied;
+        result.neuralPeakConfidence =
+            m_cachedEstimate.neuralPeakConfidence;
+        result.neuralAzimuthCorrectionDegrees =
+            m_cachedEstimate
+                .neuralAzimuthCorrectionDegrees;
+        result.neuralElevationCorrectionDegrees =
+            m_cachedEstimate
+                .neuralElevationCorrectionDegrees;
     }
     return result;
 }

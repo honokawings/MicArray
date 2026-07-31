@@ -4,6 +4,7 @@
 #include "ui/audiowaveformwidget.h"
 #include "ui/directionphotowidget.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -230,12 +231,34 @@ void AudioAnalysisPage::buildUi()
     m_confidenceSpin = new QDoubleSpinBox(algorithmGroup);
     m_confidenceSpin->setRange(0.0, 1.0);
     m_confidenceSpin->setSingleStep(0.05);
+    m_neuralPeakEnhancementCheck =
+        new QCheckBox(
+            QStringLiteral("启用神经网络主峰锐化"),
+            algorithmGroup);
+    m_neuralPeakEnhancementCheck->setObjectName(
+        QStringLiteral(
+            "audioAnalysisNeuralPeakEnhancementCheck"));
+    m_neuralPeakEnhancementStrengthSpin =
+        new QDoubleSpinBox(algorithmGroup);
+    m_neuralPeakEnhancementStrengthSpin->setObjectName(
+        QStringLiteral(
+            "audioAnalysisNeuralPeakEnhancementStrengthSpin"));
+    m_neuralPeakEnhancementStrengthSpin->setRange(
+        0.0, 1.0);
+    m_neuralPeakEnhancementStrengthSpin->setDecimals(2);
+    m_neuralPeakEnhancementStrengthSpin->setSingleStep(
+        0.05);
     algorithmLayout->addRow(QStringLiteral("算法"), m_locatorCombo);
     algorithmLayout->addRow(QStringLiteral("窗口采样数"), m_windowSamplesSpin);
     algorithmLayout->addRow(QStringLiteral("更新周期"), m_updateIntervalSpin);
     algorithmLayout->addRow(QStringLiteral("声速"), m_soundSpeedSpin);
     algorithmLayout->addRow(QStringLiteral("平滑系数"), m_smoothingSpin);
     algorithmLayout->addRow(QStringLiteral("置信阈值"), m_confidenceSpin);
+    algorithmLayout->addRow(
+        m_neuralPeakEnhancementCheck);
+    algorithmLayout->addRow(
+        QStringLiteral("神经锐化强度"),
+        m_neuralPeakEnhancementStrengthSpin);
     settingsLayout->addWidget(algorithmGroup);
 
     auto *cameraGroup = new QGroupBox(QStringLiteral("照片视角"), settingsPanel);
@@ -327,6 +350,22 @@ void AudioAnalysisPage::connectUi()
         connect(spin, &QAbstractSpinBox::editingFinished,
                 this, &AudioAnalysisPage::updateAnalysisConfiguration);
     }
+    connect(
+        m_neuralPeakEnhancementCheck,
+        &QCheckBox::toggled,
+        this,
+        [this](bool enabled) {
+        m_neuralPeakEnhancementStrengthSpin
+            ->setEnabled(enabled);
+        updateAnalysisConfiguration();
+    });
+    connect(
+        m_neuralPeakEnhancementStrengthSpin,
+        &QDoubleSpinBox::valueChanged,
+        this,
+        [this](double) {
+        updateAnalysisConfiguration();
+    });
     for (QDoubleSpinBox *spin : {m_centerAzimuthSpin, m_centerElevationSpin,
                                  m_horizontalFovSpin, m_verticalFovSpin, m_rollSpin}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this] { updateCamera(); });
@@ -352,6 +391,12 @@ void AudioAnalysisPage::restoreSettings()
     m_soundSpeedSpin->setValue(m_settings.soundSpeedMetersPerSecond);
     m_smoothingSpin->setValue(m_settings.smoothingFactor);
     m_confidenceSpin->setValue(m_settings.confidenceThreshold);
+    m_neuralPeakEnhancementCheck->setChecked(
+        m_settings.neuralPeakEnhancementEnabled);
+    m_neuralPeakEnhancementStrengthSpin->setValue(
+        m_settings.neuralPeakEnhancementStrength);
+    m_neuralPeakEnhancementStrengthSpin->setEnabled(
+        m_settings.neuralPeakEnhancementEnabled);
     m_centerAzimuthSpin->setValue(m_settings.camera.centerAzimuthDegrees);
     m_centerElevationSpin->setValue(m_settings.camera.centerElevationDegrees);
     m_horizontalFovSpin->setValue(m_settings.camera.horizontalFovDegrees);
@@ -426,6 +471,10 @@ void AudioAnalysisPage::updateAnalysisConfiguration()
     m_settings.soundSpeedMetersPerSecond = m_soundSpeedSpin->value();
     m_settings.smoothingFactor = m_smoothingSpin->value();
     m_settings.confidenceThreshold = m_confidenceSpin->value();
+    m_settings.neuralPeakEnhancementEnabled =
+        m_neuralPeakEnhancementCheck->isChecked();
+    m_settings.neuralPeakEnhancementStrength =
+        m_neuralPeakEnhancementStrengthSpin->value();
     m_photoWidget->setConfidenceThreshold(m_settings.confidenceThreshold);
     emit configurationRequested(m_settings);
     persistSettings();

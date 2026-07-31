@@ -7,6 +7,7 @@
 #include <QWidget>
 
 class QComboBox;
+class QCheckBox;
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
@@ -74,6 +75,9 @@ private:
     QDoubleSpinBox *m_soundSpeedSpin = nullptr;
     QDoubleSpinBox *m_smoothingSpin = nullptr;
     QDoubleSpinBox *m_confidenceSpin = nullptr;
+    QCheckBox *m_neuralPeakEnhancementCheck = nullptr;
+    QDoubleSpinBox
+        *m_neuralPeakEnhancementStrengthSpin = nullptr;
     QDoubleSpinBox *m_centerAzimuthSpin = nullptr;
     QDoubleSpinBox *m_centerElevationSpin = nullptr;
     QDoubleSpinBox *m_horizontalFovSpin = nullptr;

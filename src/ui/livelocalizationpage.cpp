@@ -255,6 +255,23 @@ void LiveLocalizationPage::buildUi()
         QStringLiteral("高精度（约 5 FPS）"),
         static_cast<int>(
             SpatialResolutionMode::HighPrecision));
+    m_neuralPeakEnhancementCheck =
+        new QCheckBox(
+            QStringLiteral("启用神经网络主峰锐化"),
+            localizationGroup);
+    m_neuralPeakEnhancementCheck->setObjectName(
+        QStringLiteral(
+            "liveLocalizationNeuralPeakEnhancementCheck"));
+    m_neuralPeakEnhancementStrengthSpin =
+        new QDoubleSpinBox(localizationGroup);
+    m_neuralPeakEnhancementStrengthSpin->setObjectName(
+        QStringLiteral(
+            "liveLocalizationNeuralPeakEnhancementStrengthSpin"));
+    m_neuralPeakEnhancementStrengthSpin->setRange(
+        0.0, 1.0);
+    m_neuralPeakEnhancementStrengthSpin->setDecimals(2);
+    m_neuralPeakEnhancementStrengthSpin->setSingleStep(
+        0.05);
     m_heatmapOpacitySpin = new QDoubleSpinBox(localizationGroup);
     m_heatmapOpacitySpin->setObjectName(QStringLiteral("liveHeatmapOpacitySpin"));
     m_heatmapOpacitySpin->setRange(0.0, 1.0);
@@ -287,6 +304,11 @@ void LiveLocalizationPage::buildUi()
     localizationLayout->addRow(QStringLiteral("方向网格高度"), m_heatmapGridRowsSpin);
     localizationLayout->addRow(QStringLiteral("更新周期"), m_updateIntervalSpin);
     localizationLayout->addRow(QStringLiteral("置信度门限"), m_confidenceSpin);
+    localizationLayout->addRow(
+        m_neuralPeakEnhancementCheck);
+    localizationLayout->addRow(
+        QStringLiteral("神经锐化强度"),
+        m_neuralPeakEnhancementStrengthSpin);
     panelLayout->addWidget(localizationGroup);
 
     auto *cameraGroup = new QGroupBox(QStringLiteral("视频视角参数"), panel);
@@ -424,6 +446,30 @@ void LiveLocalizationPage::connectUi()
         persistSettings();
         emit configureWorkerRequested(m_settings);
     });
+    connect(
+        m_neuralPeakEnhancementCheck,
+        &QCheckBox::toggled,
+        this,
+        [this](bool enabled) {
+        m_settings.neuralPeakEnhancementEnabled =
+            enabled;
+        m_neuralPeakEnhancementStrengthSpin
+            ->setEnabled(enabled);
+        startNewProcessingEpoch();
+        persistSettings();
+        emit configureWorkerRequested(m_settings);
+    });
+    connect(
+        m_neuralPeakEnhancementStrengthSpin,
+        &QDoubleSpinBox::valueChanged,
+        this,
+        [this](double value) {
+        m_settings.neuralPeakEnhancementStrength =
+            value;
+        startNewProcessingEpoch();
+        persistSettings();
+        emit configureWorkerRequested(m_settings);
+    });
     connect(m_heatmapOpacitySpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         m_settings.heatmapOpacity = value;
         m_view->setHeatmapOpacity(value);
@@ -537,6 +583,12 @@ void LiveLocalizationPage::restoreSettings()
             static_cast<int>(
                 m_settings.spatialResolutionMode))));
     m_heatmapOpacitySpin->setValue(m_settings.heatmapOpacity);
+    m_neuralPeakEnhancementCheck->setChecked(
+        m_settings.neuralPeakEnhancementEnabled);
+    m_neuralPeakEnhancementStrengthSpin->setValue(
+        m_settings.neuralPeakEnhancementStrength);
+    m_neuralPeakEnhancementStrengthSpin->setEnabled(
+        m_settings.neuralPeakEnhancementEnabled);
     m_heatmapGridColumnsSpin->setValue(m_settings.heatmapGridColumns);
     m_heatmapGridRowsSpin->setValue(m_settings.heatmapGridRows);
     m_updateIntervalSpin->setValue(m_settings.updateIntervalMs);
