@@ -25,6 +25,7 @@ struct RecordingStatistics {
     quint64 inputFrames = 0;
     quint64 dataBytes = 0;
     quint64 fileBytes = 0;
+    quint64 audioFileCount = 0;
     quint64 pendingBytes = 0;
     quint64 pendingFrames = 0;
     quint64 discardedFrames = 0;
@@ -42,11 +43,16 @@ public:
     explicit AudioRecorder(QObject *parent = nullptr);
     explicit AudioRecorder(quint64 maxPendingBytes, QObject *parent = nullptr);
     AudioRecorder(quint64 maxPendingBytes, quint64 maxPendingFrames, QObject *parent = nullptr);
+    AudioRecorder(quint64 maxPendingBytes,
+                  quint64 maxPendingFrames,
+                  MultiChannelWavWriter::FileFactory writerFileFactory,
+                  QObject *parent = nullptr);
     ~AudioRecorder() override;
 
     bool startRecording(const RecordingSettings &settings);
     bool enqueueFrame(const QByteArray &payload);
     bool enqueueFrame(const QByteArray &payload, const GainConfiguration &gainConfiguration);
+    bool enqueueNoiseReductionFrame(const NoiseReductionRecordingFrame &frame);
     void stopRecording(const QString &reason = QStringLiteral("user"));
     bool stopAndWait(int timeoutMs = 5000);
 
@@ -73,6 +79,8 @@ private:
     void updateSummary(const RecordingSummary &summary, bool forceEmit);
     bool enqueueFrameInternal(const QByteArray &payload,
                               const GainConfiguration *gainConfiguration);
+    bool reservePendingFrame(quint64 inputBytes);
+    bool rejectFrame(const QString &error);
     void releasePendingFrame(quint64 inputBytes);
 
     QThread m_thread;
@@ -85,6 +93,7 @@ private:
     quint64 m_pendingFrames = 0;
     quint64 m_maxPendingBytes = MaxPendingBytes;
     quint64 m_maxPendingFrames = MaxPendingFrames;
+    RecordingSettings m_recordingSettings;
     bool m_terminalFailure = false;
 };
 

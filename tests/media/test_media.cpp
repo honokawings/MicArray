@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtEndian>
@@ -16,6 +17,7 @@
 
 #include "control/directioncontrolmapper.h"
 #include "media/audioframedecoder.h"
+#include "media/audiomonitorbuffer.h"
 #include "media/automaticgaincontrol.h"
 #include "media/audioprocessor.h"
 #include "media/audiorecorder.h"
@@ -27,6 +29,7 @@
 #include "media/mediaframequeue.h"
 #include "media/multichannelwavwriter.h"
 #include "media/noisereductionframedecoder.h"
+#include "media/noisereductiontypes.h"
 #include "media/noisereductionworker.h"
 #include "media/wienernoisereducer.h"
 
@@ -146,6 +149,35 @@ private:
     bool m_shortWrite = false;
 };
 
+class BlockingWriteFile : public QFile
+{
+public:
+    BlockingWriteFile(const QString &path,
+                      QSemaphore *writeEntered,
+                      QSemaphore *allowWrite)
+        : QFile(path)
+        , m_writeEntered(writeEntered)
+        , m_allowWrite(allowWrite)
+    {
+    }
+
+protected:
+    qint64 writeData(const char *data, qint64 length) override
+    {
+        ++m_writeCalls;
+        if (m_writeCalls == 2) {
+            m_writeEntered->release();
+            m_allowWrite->acquire();
+        }
+        return QFile::writeData(data, length);
+    }
+
+private:
+    QSemaphore *m_writeEntered = nullptr;
+    QSemaphore *m_allowWrite = nullptr;
+    int m_writeCalls = 0;
+};
+
 }
 
 class MediaTest : public QObject
@@ -180,6 +212,7 @@ private slots:
     void reportsUnwritableGainProfileTarget();
     void boundedFrameQueueDropsOldestAudioFrame();
     void singleFrameQueueKeepsLatestVideoFrame();
+    void boundsPcm16MonitorBufferAndPreservesUnreadSuffix();
     void mediaProcessorsSignalCompletionForInvalidFrames();
     void audioProcessorDistributesGainAdjustedFrame();
     void recordsOnlyGainAdjustedAudioFrames();
@@ -201,6 +234,16 @@ private slots:
     void stopsRecordingOnQueueOverflow();
     void preservesFormatFailureAfterQueuedFramesAndStop();
     void preservesAsynchronousStartFailureAfterImmediateStop();
+    void recordsNoiseReductionStagesInCombinedWav();
+    void recordsNoiseReductionStagesAsSeparateTracks();
+    void stopsAllSeparateWritersWhenSecondWriterAppendFails();
+    void preservesArrayTrackLabelsWhenSortingSeparateChannels();
+    void rejectsMisalignedNoiseReductionFramesBeforeQueueing();
+    void boundsNoiseReductionQueueByPackedTrackBytes();
+    void compactsNoiseFrameBeforeQueuedCapture();
+    void stopAndWaitPreservesQueuedAppendFailure();
+    void rejectsNonFiniteNoiseReductionSamples();
+    void mapsNoiseReductionStagesToStableRecordingTracks();
     void mapsNoiseReductionDirectionsToSixControlInterfaces();
     void quantizesContinuousNoiseDirectionsOnlyAtControlBoundary();
     void clampsAndRejectsInvalidNoiseReductionDirectionMappings();
@@ -214,6 +257,9 @@ private slots:
     void logMmseRejectsInvalidConfigurationAndKeepsSilenceStable();
     void automaticGainControlConvergesAndLimitsOutput();
     void automaticGainControlRejectsInvalidConfiguration();
+    void noiseReductionWorkerCapturesRequestedBypassedStages();
+    void noiseReductionWorkerCapturesConfiguredPostProcessingOrder();
+    void noiseReductionWorkerStopsCapturingWhenStagesAreCleared();
     void noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources();
     void filtersDenoisedWorkerOutputWhileMonitoringIsDisabled();
     void noiseReductionWorkerHonorsPostProcessingOrder();
@@ -1020,6 +1066,32 @@ void MediaTest::singleFrameQueueKeepsLatestVideoFrame()
     QCOMPARE(queue.takeNext().timestampSeconds, quint32(2));
 }
 
+void MediaTest::boundsPcm16MonitorBufferAndPreservesUnreadSuffix()
+{
+    AudioMonitorBuffer buffer;
+    buffer.configure(48000, 250);
+
+    QCOMPARE(buffer.append(QByteArray(23998, 'a')), qsizetype(0));
+    QCOMPARE(buffer.availableBytes(), qsizetype(23998));
+    QVERIFY(!buffer.readyToStart());
+    QCOMPARE(buffer.append(QByteArray(2, 'b')), qsizetype(0));
+    QVERIFY(buffer.readyToStart());
+
+    QCOMPARE(buffer.peek(4), QByteArray("aaaa"));
+    buffer.discard(23997);
+    QCOMPARE(buffer.availableBytes(), qsizetype(4));
+    QCOMPARE(buffer.peek(4), QByteArray("aabb"));
+
+    QByteArray oversized(48002, char(0));
+    for (qsizetype index = 0; index < oversized.size(); ++index) {
+        oversized[index] = static_cast<char>(index % 127);
+    }
+    buffer.clear();
+    QCOMPARE(buffer.append(oversized), qsizetype(2));
+    QCOMPARE(buffer.availableBytes(), qsizetype(48000));
+    QCOMPARE(buffer.peek(48000), oversized.mid(2));
+}
+
 void MediaTest::mediaProcessorsSignalCompletionForInvalidFrames()
 {
     AudioProcessor audio;
@@ -1213,6 +1285,7 @@ void MediaTest::rollsWavSegmentsOnWholeFrameBoundaries()
 
     const RecordingSummary summary = writer.summary();
     QCOMPARE(summary.segmentPaths.size(), 2);
+    QCOMPARE(summary.audioFileCount, quint64(2));
     QCOMPARE(summary.inputFrames, quint64(3));
 
     QFile first(summary.segmentPaths.at(0));
@@ -1621,6 +1694,487 @@ void MediaTest::preservesAsynchronousStartFailureAfterImmediateStop()
     QVERIFY(recorder.statistics().error.contains(QStringLiteral("does not exist")));
 }
 
+void MediaTest::recordsNoiseReductionStagesInCombinedWav()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("noise_combined");
+    settings.sampleRate = 48000;
+    settings.inputSource = RecordingInputSource::NoiseReductionStages;
+    settings.fileLayout = RecordingFileLayout::SingleMultichannel;
+    settings.noiseReductionStages = {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+
+    AudioRecorder recorder;
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+
+    NoiseReductionRecordingFrame frame;
+    frame.sampleRate = 48000;
+    frame.stages = {
+        {NoiseReductionDataFlowStage::Suppression,
+         QVector<float>(AudioFrameDecoder::SamplesPerFrame, 0.25F)},
+        {NoiseReductionDataFlowStage::AutomaticGainControl,
+         QVector<float>(AudioFrameDecoder::SamplesPerFrame, -0.5F)},
+    };
+    frame.stages[0].samples[1] = 2.0F;
+    frame.stages[1].samples[1] = -2.0F;
+    QVERIFY(recorder.enqueueNoiseReductionFrame(frame));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.statistics().inputFrames, quint64(1), 3000);
+    recorder.stopRecording(QStringLiteral("user"));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Idle, 3000);
+
+    const RecordingStatistics statistics = recorder.statistics();
+    QCOMPARE(statistics.audioFileCount, quint64(1));
+    QFile manifest(statistics.outputPath);
+    QVERIFY(manifest.open(QIODevice::ReadOnly));
+    const QJsonObject root = QJsonDocument::fromJson(manifest.readAll()).object();
+    QCOMPARE(root.value(QStringLiteral("inputSource")).toString(),
+             QStringLiteral("noiseReductionStages"));
+    QCOMPARE(root.value(QStringLiteral("fileLayout")).toString(),
+             QStringLiteral("singleMultichannel"));
+    const QJsonArray tracks = root.value(QStringLiteral("tracks")).toArray();
+    QCOMPARE(tracks.size(), 2);
+    QCOMPARE(tracks.at(0).toObject().value(QStringLiteral("trackKey")).toString(),
+             QStringLiteral("suppression"));
+    QCOMPARE(tracks.at(1).toObject().value(QStringLiteral("trackKey")).toString(),
+             QStringLiteral("agc"));
+
+    const QString wavName = root.value(QStringLiteral("segments"))
+                                .toArray()
+                                .first()
+                                .toObject()
+                                .value(QStringLiteral("file"))
+                                .toString();
+    QFile wav(directory.filePath(wavName));
+    QVERIFY(wav.open(QIODevice::ReadOnly));
+    const QByteArray bytes = wav.readAll();
+    QCOMPARE(readLe16(bytes, 22), quint16(2));
+    QCOMPARE(qFromLittleEndian<quint32>(
+                 reinterpret_cast<const uchar *>(bytes.constData() + 68)),
+             quint32(0x00200000));
+    QCOMPARE(qFromLittleEndian<quint32>(
+                 reinterpret_cast<const uchar *>(bytes.constData() + 72)),
+             quint32(0xffc00000));
+    QCOMPARE(qFromLittleEndian<quint32>(
+                 reinterpret_cast<const uchar *>(bytes.constData() + 76)),
+             quint32(0x007fff00));
+    QCOMPARE(qFromLittleEndian<quint32>(
+                 reinterpret_cast<const uchar *>(bytes.constData() + 80)),
+             quint32(0xff800000));
+}
+
+void MediaTest::recordsNoiseReductionStagesAsSeparateTracks()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("noise_separate");
+    settings.sampleRate = 32000;
+    settings.inputSource = RecordingInputSource::NoiseReductionStages;
+    settings.fileLayout = RecordingFileLayout::SeparateTracks;
+    settings.noiseReductionStages = {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+    settings.trackNames = {QStringLiteral("Suppression"), QStringLiteral("AGC")};
+
+    AudioRecorder recorder;
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+    NoiseReductionRecordingFrame frame;
+    frame.sampleRate = 32000;
+    frame.stages = {
+        {NoiseReductionDataFlowStage::Suppression,
+         QVector<float>(AudioFrameDecoder::SamplesPerFrame, 0.25F)},
+        {NoiseReductionDataFlowStage::AutomaticGainControl,
+         QVector<float>(AudioFrameDecoder::SamplesPerFrame, -0.5F)},
+    };
+    QVERIFY(recorder.enqueueNoiseReductionFrame(frame));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.statistics().inputFrames, quint64(1), 3000);
+    recorder.stopRecording(QStringLiteral("user"));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Idle, 3000);
+    QCOMPARE(recorder.statistics().audioFileCount, quint64(2));
+
+    struct TrackExpectation {
+        QString key;
+        QString name;
+        quint32 sample;
+    };
+    const QVector<TrackExpectation> expectations {
+        {QStringLiteral("suppression"), QStringLiteral("Suppression"), quint32(0x00200000)},
+        {QStringLiteral("agc"), QStringLiteral("AGC"), quint32(0xffc00000)},
+    };
+    for (const TrackExpectation &expectation : expectations) {
+        const QString baseName = QStringLiteral("noise_separate_%1").arg(expectation.key);
+        QFile wav(directory.filePath(baseName + QStringLiteral(".wav")));
+        QVERIFY2(wav.open(QIODevice::ReadOnly), qPrintable(wav.fileName()));
+        const QByteArray bytes = wav.readAll();
+        QCOMPARE(readLe16(bytes, 22), quint16(1));
+        QCOMPARE(qFromLittleEndian<quint32>(
+                     reinterpret_cast<const uchar *>(bytes.constData() + 68)),
+                 expectation.sample);
+
+        QFile manifest(directory.filePath(baseName + QStringLiteral(".json")));
+        QVERIFY(manifest.open(QIODevice::ReadOnly));
+        const QJsonObject root = QJsonDocument::fromJson(manifest.readAll()).object();
+        QCOMPARE(root.value(QStringLiteral("inputSource")).toString(),
+                 QStringLiteral("noiseReductionStages"));
+        QCOMPARE(root.value(QStringLiteral("fileLayout")).toString(),
+                 QStringLiteral("separateTracks"));
+        QCOMPARE(root.value(QStringLiteral("trackKey")).toString(), expectation.key);
+        QCOMPARE(root.value(QStringLiteral("trackName")).toString(), expectation.name);
+    }
+}
+
+void MediaTest::stopsAllSeparateWritersWhenSecondWriterAppendFails()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    AudioRecorder recorder(
+        AudioRecorder::MaxPendingBytes,
+        AudioRecorder::MaxPendingFrames,
+        [](const QString &path) -> std::unique_ptr<QFile> {
+            if (path.endsWith(QStringLiteral("_agc.wav"))) {
+                return std::make_unique<FailingWriteFile>(path, 2, true);
+            }
+            return std::make_unique<QFile>(path);
+        });
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("second_writer_append_failure");
+    settings.sampleRate = 48000;
+    settings.inputSource = RecordingInputSource::NoiseReductionStages;
+    settings.fileLayout = RecordingFileLayout::SeparateTracks;
+    settings.noiseReductionStages = {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+    NoiseReductionRecordingFrame frame;
+    frame.sampleRate = 48000;
+    frame.stages = {
+        {NoiseReductionDataFlowStage::Suppression,
+         QVector<float>(AudioFrameDecoder::SamplesPerFrame, 0.25F)},
+        {NoiseReductionDataFlowStage::AutomaticGainControl,
+         QVector<float>(AudioFrameDecoder::SamplesPerFrame, -0.5F)},
+    };
+
+    QVERIFY(recorder.enqueueNoiseReductionFrame(frame));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Error, 3000);
+    QVERIFY(recorder.statistics().error.contains(QStringLiteral("Short WAV write")));
+    QCOMPARE(recorder.statistics().inputFrames, quint64(1));
+    QVERIFY(!recorder.enqueueNoiseReductionFrame(frame));
+    recorder.stopRecording(QStringLiteral("user"));
+    QCOMPARE(recorder.state(), RecordingState::Error);
+
+    const QString suppressionBase =
+        QStringLiteral("second_writer_append_failure_suppression");
+    QFile suppressionWav(
+        directory.filePath(suppressionBase + QStringLiteral(".wav")));
+    QVERIFY(suppressionWav.open(QIODevice::ReadOnly));
+    const QByteArray suppressionBytes = suppressionWav.readAll();
+    QCOMPARE(readLe32(suppressionBytes, 64), quint32(800));
+
+    for (const QString &trackKey : {QStringLiteral("suppression"),
+                                    QStringLiteral("agc")}) {
+        QFile manifest(directory.filePath(
+            QStringLiteral("second_writer_append_failure_%1.json")
+                .arg(trackKey)));
+        QVERIFY2(manifest.open(QIODevice::ReadOnly),
+                 qPrintable(manifest.fileName()));
+        const QJsonObject root =
+            QJsonDocument::fromJson(manifest.readAll()).object();
+        QCOMPARE(root.value(QStringLiteral("stopReason")).toString(),
+                 QStringLiteral("io-error"));
+        QVERIFY(!root.value(QStringLiteral("endedAt")).toString().isEmpty());
+    }
+}
+
+void MediaTest::preservesArrayTrackLabelsWhenSortingSeparateChannels()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("array_separate");
+    settings.channels = {7, 2};
+    settings.sampleRate = 48000;
+    settings.fileLayout = RecordingFileLayout::SeparateTracks;
+    settings.trackKeys = {QStringLiteral("rear"), QStringLiteral("front")};
+    settings.trackNames = {QStringLiteral("Rear"), QStringLiteral("Front")};
+    settings.gainApplied = true;
+
+    AudioRecorder recorder;
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 7, 0x07000000);
+    fillChannelSamples(payload, 2, 0x02000000);
+    GainConfiguration finalGain;
+    finalGain.shifts[2] = 1;
+    finalGain.shifts[7] = 2;
+    QVERIFY(recorder.enqueueFrame(payload, finalGain));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.statistics().inputFrames, quint64(1), 3000);
+    recorder.stopRecording(QStringLiteral("user"));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Idle, 3000);
+    QCOMPARE(recorder.statistics().audioFileCount, quint64(2));
+    QVERIFY(recorder.statistics().outputPath.endsWith(
+        QStringLiteral("array_separate_front.json")));
+
+    struct TrackExpectation {
+        QString key;
+        QString name;
+        int channel;
+        qint32 sample;
+    };
+    const QVector<TrackExpectation> expectations {
+        {QStringLiteral("front"), QStringLiteral("Front"), 2, qint32(0x02000000)},
+        {QStringLiteral("rear"), QStringLiteral("Rear"), 7, qint32(0x07000000)},
+    };
+    for (const TrackExpectation &expectation : expectations) {
+        const QString baseName = QStringLiteral("array_separate_%1").arg(expectation.key);
+        QFile wav(directory.filePath(baseName + QStringLiteral(".wav")));
+        QVERIFY(wav.open(QIODevice::ReadOnly));
+        const QByteArray bytes = wav.readAll();
+        QCOMPARE(readLe16(bytes, 22), quint16(1));
+        QCOMPARE(qFromLittleEndian<qint32>(
+                     reinterpret_cast<const uchar *>(bytes.constData() + 68)),
+                 expectation.sample);
+
+        QFile manifest(directory.filePath(baseName + QStringLiteral(".json")));
+        QVERIFY(manifest.open(QIODevice::ReadOnly));
+        const QJsonObject root = QJsonDocument::fromJson(manifest.readAll()).object();
+        QCOMPARE(root.value(QStringLiteral("inputSource")).toString(), QStringLiteral("array"));
+        QCOMPARE(root.value(QStringLiteral("fileLayout")).toString(),
+                 QStringLiteral("separateTracks"));
+        QCOMPARE(root.value(QStringLiteral("trackKey")).toString(), expectation.key);
+        QCOMPARE(root.value(QStringLiteral("trackName")).toString(), expectation.name);
+        QCOMPARE(root.value(QStringLiteral("channels")).toArray().first().toInt(),
+                 expectation.channel);
+        QCOMPARE(root.value(QStringLiteral("gain"))
+                     .toObject()
+                     .value(QStringLiteral("final"))
+                     .toObject()
+                     .value(QStringLiteral("shifts"))
+                     .toArray()
+                     .at(expectation.channel)
+                     .toInt(),
+                 finalGain.shifts.at(expectation.channel));
+    }
+}
+
+void MediaTest::rejectsMisalignedNoiseReductionFramesBeforeQueueing()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("invalid_noise_frames");
+    settings.inputSource = RecordingInputSource::NoiseReductionStages;
+    settings.noiseReductionStages = {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+
+    AudioRecorder recorder;
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+    const QVector<float> samples(AudioFrameDecoder::SamplesPerFrame, 0.25F);
+    NoiseReductionRecordingFrame wrongRate {
+        {{NoiseReductionDataFlowStage::Suppression, samples},
+         {NoiseReductionDataFlowStage::AutomaticGainControl, samples}},
+        32000, 0, 0,
+    };
+    QVERIFY(!recorder.enqueueNoiseReductionFrame(wrongRate));
+
+    NoiseReductionRecordingFrame missingStage {
+        {{NoiseReductionDataFlowStage::Suppression, samples}}, 48000, 0, 0,
+    };
+    QVERIFY(!recorder.enqueueNoiseReductionFrame(missingStage));
+
+    NoiseReductionRecordingFrame wrongSampleCount {
+        {{NoiseReductionDataFlowStage::Suppression, QVector<float>(199, 0.25F)},
+         {NoiseReductionDataFlowStage::AutomaticGainControl, samples}},
+        48000, 0, 0,
+    };
+    QVERIFY(!recorder.enqueueNoiseReductionFrame(wrongSampleCount));
+
+    NoiseReductionRecordingFrame duplicateStage {
+        {{NoiseReductionDataFlowStage::Suppression, samples},
+         {NoiseReductionDataFlowStage::Suppression, samples},
+         {NoiseReductionDataFlowStage::AutomaticGainControl, samples}},
+        48000, 0, 0,
+    };
+    QVERIFY(!recorder.enqueueNoiseReductionFrame(duplicateStage));
+    QCOMPARE(recorder.statistics().pendingBytes, quint64(0));
+    QCOMPARE(recorder.statistics().pendingFrames, quint64(0));
+    QCOMPARE(recorder.statistics().discardedFrames, quint64(4));
+    QCOMPARE(recorder.state(), RecordingState::Recording);
+
+    recorder.stopRecording(QStringLiteral("user"));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Idle, 3000);
+    QCOMPARE(recorder.statistics().inputFrames, quint64(0));
+    QCOMPARE(recorder.statistics().dataBytes, quint64(0));
+}
+
+void MediaTest::boundsNoiseReductionQueueByPackedTrackBytes()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("noise_queue_limit");
+    settings.inputSource = RecordingInputSource::NoiseReductionStages;
+    settings.noiseReductionStages = {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+
+    AudioRecorder recorder(1599);
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+    const QVector<float> samples(AudioFrameDecoder::SamplesPerFrame, 0.0F);
+    const NoiseReductionRecordingFrame frame {
+        {{NoiseReductionDataFlowStage::Suppression, samples},
+         {NoiseReductionDataFlowStage::AutomaticGainControl, samples}},
+        48000, 0, 0,
+    };
+    QVERIFY(!recorder.enqueueNoiseReductionFrame(frame));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Error, 3000);
+    QCOMPARE(recorder.statistics().inputFrames, quint64(0));
+    QVERIFY(recorder.statistics().error.contains(QStringLiteral("queue"), Qt::CaseInsensitive));
+}
+
+void MediaTest::compactsNoiseFrameBeforeQueuedCapture()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSemaphore writeEntered;
+    QSemaphore allowWrite;
+    AudioRecorder recorder(
+        AudioRecorder::MaxPendingBytes,
+        AudioRecorder::MaxPendingFrames,
+        [&writeEntered, &allowWrite](const QString &path) {
+            return std::make_unique<BlockingWriteFile>(
+                path, &writeEntered, &allowWrite);
+        });
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("compact_noise_capture");
+    settings.inputSource = RecordingInputSource::NoiseReductionStages;
+    settings.noiseReductionStages = {
+        NoiseReductionDataFlowStage::Suppression,
+    };
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+
+    NoiseReductionRecordingFrame frame;
+    frame.sampleRate = 48000;
+    frame.timestampSeconds = 12;
+    frame.timestampMicros = 345;
+    frame.stages = {
+        {NoiseReductionDataFlowStage::Suppression,
+         QVector<float>(AudioFrameDecoder::SamplesPerFrame, 0.25F)},
+        {NoiseReductionDataFlowStage::BandPass,
+         QVector<float>(static_cast<qsizetype>(AudioRecorder::MaxPendingBytes / sizeof(float)) + 1,
+                        0.5F)},
+    };
+    QVERIFY(frame.stages.isDetached());
+    const bool queued = recorder.enqueueNoiseReductionFrame(frame);
+    const bool workerBlocked = writeEntered.tryAcquire(1, 3000);
+    const quint64 pendingBytes = recorder.statistics().pendingBytes;
+    const bool sourceStagesRemainDetached = frame.stages.isDetached();
+    allowWrite.release();
+    const bool stopped = recorder.stopAndWait();
+
+    QVERIFY(queued);
+    QVERIFY(workerBlocked);
+    QCOMPARE(pendingBytes,
+             quint64(AudioFrameDecoder::SamplesPerFrame * sizeof(float)));
+    QVERIFY(sourceStagesRemainDetached);
+    QVERIFY(stopped);
+    QCOMPARE(recorder.statistics().inputFrames, quint64(1));
+}
+
+void MediaTest::stopAndWaitPreservesQueuedAppendFailure()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AudioRecorder recorder(
+        AudioRecorder::MaxPendingBytes,
+        AudioRecorder::MaxPendingFrames,
+        [](const QString &path) {
+            return std::make_unique<FailingWriteFile>(path, 2, true);
+        });
+    RecordingSettings settings {
+        directory.path(), QStringLiteral("synchronous_append_failure"), {0}, 48000,
+    };
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+
+    QVERIFY(recorder.enqueueFrame(
+        QByteArray(AudioFrameDecoder::FramePayloadBytes, char(0))));
+    const bool stopped = recorder.stopAndWait();
+
+    QVERIFY(!stopped);
+    QCOMPARE(recorder.state(), RecordingState::Error);
+    QVERIFY(recorder.statistics().error.contains(QStringLiteral("Short WAV write")));
+}
+
+void MediaTest::rejectsNonFiniteNoiseReductionSamples()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    RecordingSettings settings;
+    settings.outputDirectory = directory.path();
+    settings.baseName = QStringLiteral("non_finite_noise");
+    settings.inputSource = RecordingInputSource::NoiseReductionStages;
+    settings.noiseReductionStages = {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+    AudioRecorder recorder;
+    QVERIFY(recorder.startRecording(settings));
+    QTRY_COMPARE_WITH_TIMEOUT(recorder.state(), RecordingState::Recording, 3000);
+
+    const QVector<float> finite(AudioFrameDecoder::SamplesPerFrame, 0.0F);
+    NoiseReductionRecordingFrame nanFrame {
+        {{NoiseReductionDataFlowStage::Suppression, finite},
+         {NoiseReductionDataFlowStage::AutomaticGainControl, finite}},
+        48000, 0, 0,
+    };
+    nanFrame.stages[0].samples[7] = std::numeric_limits<float>::quiet_NaN();
+    NoiseReductionRecordingFrame infinityFrame = nanFrame;
+    infinityFrame.stages[0].samples[7] = 0.0F;
+    infinityFrame.stages[1].samples[19] = std::numeric_limits<float>::infinity();
+
+    const bool acceptedNan = recorder.enqueueNoiseReductionFrame(nanFrame);
+    const bool acceptedInfinity = recorder.enqueueNoiseReductionFrame(infinityFrame);
+    const bool stopped = recorder.stopAndWait();
+
+    QVERIFY(!acceptedNan);
+    QVERIFY(!acceptedInfinity);
+    QVERIFY(stopped);
+    QCOMPARE(recorder.state(), RecordingState::Idle);
+    QCOMPARE(recorder.statistics().discardedFrames, quint64(2));
+    QCOMPARE(recorder.statistics().pendingBytes, quint64(0));
+    QCOMPARE(recorder.statistics().inputFrames, quint64(0));
+    QCOMPARE(recorder.statistics().dataBytes, quint64(0));
+    QVERIFY(recorder.statistics().error.contains(QStringLiteral("finite"), Qt::CaseInsensitive));
+}
+
 void MediaTest::mapsNoiseReductionDirectionsToSixControlInterfaces()
 {
     const DirectionControlMapping mapping;
@@ -2011,6 +2565,238 @@ void MediaTest::automaticGainControlRejectsInvalidConfiguration()
     settings.maximumAttenuationDb = -20.0;
     settings.limiterLevelDbfs = 1.0;
     QVERIFY(!control.configure(48000, settings));
+}
+
+void MediaTest::noiseReductionWorkerCapturesRequestedBypassedStages()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.bandPass.enabled = false;
+    settings.logMmse.enabled = false;
+    settings.automaticGainControl.enabled = false;
+    worker.configure(settings, 32000);
+    worker.setRecordingStages({
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::BandPass,
+        NoiseReductionDataFlowStage::LogMmse,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    });
+    worker.setActive(true);
+
+    QSignalSpy recordings(
+        &worker, &NoiseReductionWorker::recordingFrameReady);
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame;
+         ++sample) {
+        putSample(payload, sample, 1, (1000 + sample * 3) << 8);
+        putSample(payload, sample, 2, (300 - sample) << 8);
+        putSample(payload, sample, 3, (-200 + sample) * 256);
+    }
+
+    NoiseReductionFrameDecoder decoder;
+    const NoiseReductionInputFrame decoded = decoder.decode(payload);
+    QVERIFY(decoded.valid);
+    WienerNoiseReducer expectedReducer;
+    expectedReducer.setSuppressionCoefficients(0.0, 5.0, 5.0);
+    QVector<float> expectedSuppression;
+    for (int frame = 0; frame < 8; ++frame) {
+        expectedSuppression += expectedReducer.process(
+            decoded.channels.at(1),
+            decoded.channels.at(2),
+            decoded.channels.at(3));
+    }
+
+    const QVector<quint32> timestampMicros {
+        999000, 1005251, 1011501, 2000000,
+        2006251, 2012501, 2018751, 2025001,
+    };
+    for (int frame = 0; frame < 6; ++frame) {
+        worker.processRawFrame(payload, 7, timestampMicros.at(frame));
+    }
+    QCOMPARE(recordings.count(), 2);
+    for (int frame = 6; frame < 8; ++frame) {
+        worker.processRawFrame(payload, 7, timestampMicros.at(frame));
+    }
+    QCOMPARE(recordings.count(), 5);
+
+    struct TimestampExpectation {
+        quint32 seconds;
+        quint32 micros;
+    };
+    const QVector<TimestampExpectation> expectedTimestamps {
+        {7, 999000},
+        {8, 5250},
+        {8, 11500},
+        {9, 0},
+        {9, 6250},
+    };
+    const QVector<NoiseReductionDataFlowStage> expectedStages {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::BandPass,
+        NoiseReductionDataFlowStage::LogMmse,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+    QVector<float> recordedSuppression;
+    for (int frameIndex = 0; frameIndex < recordings.size();
+         ++frameIndex) {
+        const NoiseReductionRecordingFrame recording =
+            qvariant_cast<NoiseReductionRecordingFrame>(
+                recordings.at(frameIndex).at(0));
+        QCOMPARE(recording.sampleRate, 32000);
+        QCOMPARE(recording.timestampSeconds,
+                 expectedTimestamps.at(frameIndex).seconds);
+        QCOMPARE(recording.timestampMicros,
+                 expectedTimestamps.at(frameIndex).micros);
+        QCOMPARE(recording.stages.size(), 4);
+        for (int stageIndex = 0;
+             stageIndex < expectedStages.size(); ++stageIndex) {
+            QCOMPARE(recording.stages.at(stageIndex).stage,
+                     expectedStages.at(stageIndex));
+            QCOMPARE(recording.stages.at(stageIndex).samples.size(),
+                     AudioFrameDecoder::SamplesPerFrame);
+            QCOMPARE(recording.stages.at(stageIndex).samples,
+                     recording.stages.first().samples);
+        }
+        recordedSuppression += recording.stages.first().samples;
+    }
+    QCOMPARE(recordedSuppression,
+             expectedSuppression.first(recordedSuppression.size()));
+
+    worker.setRecordingStages({});
+    QCOMPARE(recordings.count(), 5);
+}
+
+void MediaTest::noiseReductionWorkerCapturesConfiguredPostProcessingOrder()
+{
+    auto capture = [](const QVector<NoiseReductionDataFlowStage> &stages) {
+        NoiseReductionWorker worker;
+        NoiseReductionSettings settings;
+        settings.enabled = true;
+        settings.monitorEnabled = false;
+        settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+        settings.singleSuppressionCoefficient = 0.0;
+        settings.bandPass.enabled = true;
+        settings.bandPass.preset = BandPassPreset::Voice;
+        settings.bandPass.lowCutoffHz = 100.0;
+        settings.bandPass.highCutoffHz = 8000.0;
+        settings.logMmse.enabled = false;
+        settings.automaticGainControl.enabled = true;
+        settings.postProcessingOrder = {
+            NoisePostProcessingNode::AutomaticGainControl,
+            NoisePostProcessingNode::BandPass,
+            NoisePostProcessingNode::LogMmse,
+        };
+        worker.configure(settings, 48000);
+        worker.setRecordingStages(stages);
+        worker.setActive(true);
+
+        QSignalSpy recordings(
+            &worker, &NoiseReductionWorker::recordingFrameReady);
+        QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+        for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame;
+             ++sample) {
+            putSample(payload, sample, 1, 4096 << 8);
+            putSample(payload, sample, 2, 1024 << 8);
+            putSample(payload, sample, 3, -512 * 256);
+        }
+        for (int frame = 0; frame < 6; ++frame) {
+            worker.processRawFrame(payload, 31, frame * 4167);
+        }
+        if (recordings.isEmpty()) {
+            return NoiseReductionRecordingFrame {};
+        }
+        return qvariant_cast<NoiseReductionRecordingFrame>(
+            recordings.first().at(0));
+    };
+
+    const NoiseReductionRecordingFrame suppression = capture({
+        NoiseReductionDataFlowStage::Suppression,
+    });
+    const NoiseReductionRecordingFrame processed = capture({
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+        NoiseReductionDataFlowStage::BandPass,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+        static_cast<NoiseReductionDataFlowStage>(99),
+    });
+
+    QCOMPARE(suppression.stages.size(), 1);
+    QCOMPARE(processed.stages.size(), 2);
+    QCOMPARE(processed.stages.at(0).stage,
+             NoiseReductionDataFlowStage::AutomaticGainControl);
+    QCOMPARE(processed.stages.at(1).stage,
+             NoiseReductionDataFlowStage::BandPass);
+    QCOMPARE(processed.stages.at(0).samples.size(),
+             AudioFrameDecoder::SamplesPerFrame);
+    QCOMPARE(processed.stages.at(1).samples.size(),
+             AudioFrameDecoder::SamplesPerFrame);
+    QVERIFY(processed.stages.at(0).samples
+            != suppression.stages.first().samples);
+    QVERIFY(processed.stages.at(1).samples
+            != processed.stages.at(0).samples);
+}
+
+void MediaTest::noiseReductionWorkerStopsCapturingWhenStagesAreCleared()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    worker.configure(settings, 48000);
+    worker.setRecordingStages({
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::BandPass,
+    });
+    worker.setRecordingStages({});
+    worker.setActive(true);
+
+    QSignalSpy recordings(
+        &worker, &NoiseReductionWorker::recordingFrameReady);
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame;
+         ++sample) {
+        putSample(payload, sample, 1, 2048 << 8);
+    }
+    for (int frame = 0; frame < 6; ++frame) {
+        worker.processRawFrame(payload, 45, frame * 4167);
+    }
+
+    QCOMPARE(recordings.count(), 0);
+}
+
+void MediaTest::mapsNoiseReductionStagesToStableRecordingTracks()
+{
+    struct StageExpectation {
+        NoiseReductionDataFlowStage stage;
+        QString key;
+        QString name;
+    };
+    const QVector<StageExpectation> expectations {
+        {NoiseReductionDataFlowStage::Suppression,
+         QStringLiteral("suppression"), QStringLiteral("降噪抑制")},
+        {NoiseReductionDataFlowStage::BandPass,
+         QStringLiteral("bandpass"), QStringLiteral("带通滤波")},
+        {NoiseReductionDataFlowStage::LogMmse,
+         QStringLiteral("logmmse"), QStringLiteral("LogMMSE")},
+        {NoiseReductionDataFlowStage::AutomaticGainControl,
+         QStringLiteral("agc"), QStringLiteral("自动增益控制")},
+    };
+
+    for (const StageExpectation &expectation : expectations) {
+        QCOMPARE(noiseReductionDataFlowStageKey(expectation.stage),
+                 expectation.key);
+        QCOMPARE(noiseReductionDataFlowStageName(expectation.stage),
+                 expectation.name);
+    }
+
+    const RecordingSettings settings;
+    QCOMPARE(settings.inputSource, RecordingInputSource::Array);
+    QCOMPARE(settings.fileLayout, RecordingFileLayout::SingleMultichannel);
 }
 
 void MediaTest::noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources()

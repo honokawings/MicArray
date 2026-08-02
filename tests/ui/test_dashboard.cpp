@@ -18,8 +18,14 @@
 #include "ui/powerspectrumwidget.h"
 
 #include <QSignalSpy>
+#include <QAbstractButton>
 #include <QCheckBox>
 #include <QElapsedTimer>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QProgressBar>
 #include <QScrollArea>
@@ -34,6 +40,7 @@
 #include <QToolButton>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTcpServer>
 #include <QStandardPaths>
 #include <QWheelEvent>
 #include <QWindow>
@@ -146,6 +153,11 @@ private slots:
     void monitorStatisticsDoNotContainUnlabelledProgressBar();
     void debugPageProvidesPostTailPreview();
     void recordingPageProvidesChannelSelectionAndCommands();
+    void recordingSourceSelectionControlsStartAvailability();
+    void recordingRoutesOnlyFramesFromTheActiveSource();
+    void quickNoiseRecordingReusesRecordingPageConfiguration();
+    void quickRecordingKeepsDetailedErrorAcrossRefreshes();
+    void noiseRecordingContinuesAcrossPageSwitchAndStopsOnTerminalState();
     void lightThemeRecordingChannelsUseDedicatedReadableStyle();
     void recordingDefaultsToPersistedOutputChannel();
     void recordingPageFitsAtMinimumSupportedSize();
@@ -158,6 +170,8 @@ private slots:
     void noiseReductionVideoDragsMarkerAndFinishesOnce();
     void waveformWidgetAcceptsNamedFloatSeries();
     void noiseReductionPageProvidesRealtimeControlsAndDefaults();
+    void noiseReductionListeningTabProvidesBufferAndQuickRecording();
+    void noiseReductionRecordingRequirementKeepsWorkerActiveOffPage();
     void noiseReductionPageUsesTabbedReorderableDataFlow();
     void noiseReductionCriticalAnglesIgnoreMouseWheel();
     void noiseReductionVideoClickUpdatesSelectedTargetAndRequestsAllControls();
@@ -1117,6 +1131,146 @@ void DashboardTest::noiseReductionPageProvidesRealtimeControlsAndDefaults()
                  QStringLiteral("noiseReductionMonitorGainSpin"))
                  ->maximum(),
              48.0);
+}
+
+void DashboardTest::noiseReductionListeningTabProvidesBufferAndQuickRecording()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString settingsPath =
+        directory.filePath(QStringLiteral("settings.ini"));
+    AppSettings settings(settingsPath);
+    NoiseReductionPage page(&settings);
+    page.resize(1200, 760);
+    page.show();
+
+    auto *buffer = page.findChild<QSpinBox *>(
+        QStringLiteral("noiseMonitorBufferMilliseconds"));
+    auto *quickRecording = page.findChild<QPushButton *>(
+        QStringLiteral("noiseQuickRecordingButton"));
+    auto *status = page.findChild<QLabel *>(
+        QStringLiteral("noiseReductionStatusLabel"));
+    QVERIFY(buffer != nullptr);
+    QVERIFY(quickRecording != nullptr);
+    QVERIFY(status != nullptr);
+    QCOMPARE(buffer->minimum(), 50);
+    QCOMPARE(buffer->maximum(), 1000);
+    QCOMPARE(buffer->singleStep(), 50);
+    QCOMPARE(buffer->suffix(), QStringLiteral(" ms"));
+    QCOMPARE(buffer->value(), 250);
+    QCOMPARE(quickRecording->text(), QStringLiteral("开始录制"));
+    QVERIFY(!quickRecording->isEnabled());
+
+    buffer->setValue(450);
+    QCOMPARE(page.currentSettings().monitorBufferMilliseconds, 450);
+    QCOMPARE(settings.noiseReduction().monitorBufferMilliseconds, 450);
+    QSettings raw(settingsPath, QSettings::IniFormat);
+    QCOMPARE(raw.value(QStringLiteral(
+                 "noiseReduction/monitorBufferMilliseconds"))
+                 .toInt(),
+             450);
+
+    buffer->setFocus();
+    const QPointF local = buffer->rect().center();
+    const QPointF global = buffer->mapToGlobal(
+        buffer->rect().center());
+    QWheelEvent wheel(local,
+                      global,
+                      QPoint(),
+                      QPoint(0, 120),
+                      Qt::NoButton,
+                      Qt::NoModifier,
+                      Qt::ScrollUpdate,
+                      false);
+    QCoreApplication::sendEvent(buffer, &wheel);
+    QCOMPARE(buffer->value(), 450);
+
+    QSignalSpy toggleSpy(
+        &page, &NoiseReductionPage::quickRecordingToggleRequested);
+    page.setQuickRecordingState(
+        false, true, QStringLiteral("录制状态：空闲"));
+    QCOMPARE(quickRecording->text(), QStringLiteral("开始录制"));
+    QVERIFY(quickRecording->isEnabled());
+    QVERIFY(status->text().contains(QStringLiteral("降噪处理")));
+    QVERIFY(status->text().contains(QStringLiteral("录制状态：空闲")));
+    QTest::mouseClick(quickRecording, Qt::LeftButton);
+    QCOMPARE(toggleSpy.count(), 1);
+
+    page.setQuickRecordingState(
+        true, true, QStringLiteral("录制状态：录制中"));
+    QCOMPARE(quickRecording->text(), QStringLiteral("停止录制"));
+    QVERIFY(quickRecording->isEnabled());
+    QTest::mouseClick(quickRecording, Qt::LeftButton);
+    QCOMPARE(toggleSpy.count(), 2);
+
+    page.setQuickRecordingState(
+        true, false, QStringLiteral("录制状态：正在停止"));
+    QCOMPARE(quickRecording->text(), QStringLiteral("正在停止…"));
+    QVERIFY(!quickRecording->isEnabled());
+    QVERIFY(status->text().contains(
+        QStringLiteral("录制状态：正在停止")));
+}
+
+void DashboardTest::
+noiseReductionRecordingRequirementKeepsWorkerActiveOffPage()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(
+        directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionSettings noiseSettings;
+    noiseSettings.enabled = true;
+    noiseSettings.monitorEnabled = false;
+    settings.saveNoiseReduction(noiseSettings);
+    NoiseReductionPage page(&settings);
+
+    QSignalSpy activeSpy(
+        &page, &NoiseReductionPage::workerActiveRequested);
+    QSignalSpy rawFrameSpy(
+        &page, &NoiseReductionPage::rawAudioFrameRequested);
+    QSignalSpy recordingFrameSpy(
+        &page, &NoiseReductionPage::noiseRecordingFrameReady);
+    page.setActive(false);
+    QCOMPARE(activeSpy.count(), 0);
+
+    const QVector<NoiseReductionDataFlowStage> requestedStages {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::Suppression,
+        static_cast<NoiseReductionDataFlowStage>(99),
+    };
+    page.setRecordingRequired(true, requestedStages);
+    QCOMPARE(activeSpy.count(), 1);
+    QCOMPARE(activeSpy.takeFirst().at(0).toBool(), true);
+    page.setRecordingRequired(true, requestedStages);
+    QCOMPARE(activeSpy.count(), 0);
+
+    const QByteArray payload(
+        AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int frameIndex = 0; frameIndex < 6; ++frameIndex) {
+        page.submitRawAudioFrame(
+            payload, 7, 500 + frameIndex * 4167);
+    }
+    QCOMPARE(page.submittedAudioFrames(), quint64(6));
+    QCOMPARE(rawFrameSpy.count(), 6);
+    QTRY_VERIFY_WITH_TIMEOUT(!recordingFrameSpy.isEmpty(), 2000);
+    const NoiseReductionRecordingFrame frame =
+        qvariant_cast<NoiseReductionRecordingFrame>(
+            recordingFrameSpy.takeFirst().at(0));
+    QCOMPARE(frame.stages.size(), 1);
+    QCOMPARE(frame.stages.first().stage,
+             NoiseReductionDataFlowStage::Suppression);
+    QCOMPARE(frame.timestampSeconds, quint32(7));
+    QCOMPARE(frame.timestampMicros, quint32(500));
+
+    page.setActive(true);
+    page.setActive(false);
+    QCOMPARE(activeSpy.count(), 0);
+    page.setRecordingRequired(false, requestedStages);
+    QCOMPARE(activeSpy.count(), 1);
+    QCOMPARE(activeSpy.takeFirst().at(0).toBool(), false);
+    page.submitRawAudioFrame(payload, 8, 500);
+    QCOMPARE(page.submittedAudioFrames(), quint64(6));
+    QCOMPARE(rawFrameSpy.count(), 6);
 }
 
 void DashboardTest::noiseReductionPageUsesTabbedReorderableDataFlow()
@@ -2213,6 +2367,9 @@ void DashboardTest::recordingPageProvidesChannelSelectionAndCommands()
     auto *start = window.findChild<QPushButton *>(QStringLiteral("startRecordingButton"));
     auto *statistics = window.findChild<QLabel *>(QStringLiteral("recordingStatisticsLabel"));
     auto *resetSettings = window.findChild<QPushButton *>(QStringLiteral("resetSettingsButton"));
+    auto *sourceMode = window.findChild<QComboBox *>(QStringLiteral("recordingSourceModeCombo"));
+    auto *sourceStack = window.findChild<QStackedWidget *>(QStringLiteral("recordingSourceStack"));
+    auto *fileLayout = window.findChild<QComboBox *>(QStringLiteral("recordingFileLayoutCombo"));
     QVERIFY(tabs != nullptr);
     QVERIFY(recordingPage != nullptr);
     QVERIFY(tabs->indexOf(recordingPage) >= 0);
@@ -2223,6 +2380,23 @@ void DashboardTest::recordingPageProvidesChannelSelectionAndCommands()
     QVERIFY(start != nullptr);
     QVERIFY(statistics != nullptr);
     QVERIFY(resetSettings != nullptr);
+    QVERIFY(sourceMode != nullptr);
+    QVERIFY(sourceStack != nullptr);
+    QVERIFY(fileLayout != nullptr);
+    QCOMPARE(sourceMode->count(), 2);
+    QCOMPARE(sourceMode->itemText(0), QStringLiteral("阵列通道"));
+    QCOMPARE(sourceMode->itemData(0).toInt(), static_cast<int>(RecordingInputSource::Array));
+    QCOMPARE(sourceMode->itemText(1), QStringLiteral("降噪数据流"));
+    QCOMPARE(sourceMode->itemData(1).toInt(), static_cast<int>(RecordingInputSource::NoiseReductionStages));
+    QCOMPARE(sourceMode->currentIndex(), 0);
+    QCOMPARE(sourceStack->count(), 2);
+    QCOMPARE(sourceStack->currentIndex(), 0);
+    QCOMPARE(fileLayout->count(), 2);
+    QCOMPARE(fileLayout->itemText(0), QStringLiteral("单个多通道文件"));
+    QCOMPARE(fileLayout->itemData(0).toInt(), static_cast<int>(RecordingFileLayout::SingleMultichannel));
+    QCOMPARE(fileLayout->itemText(1), QStringLiteral("分离为单声道文件"));
+    QCOMPARE(fileLayout->itemData(1).toInt(), static_cast<int>(RecordingFileLayout::SeparateTracks));
+    QCOMPARE(fileLayout->currentIndex(), 0);
     QVERIFY(statistics->text().contains(QStringLiteral("0 B")));
     QVERIFY(!start->isEnabled());
 
@@ -2264,6 +2438,718 @@ void DashboardTest::recordingPageProvidesChannelSelectionAndCommands()
     QVERIFY(!channels.at(17)->isEnabled());
     QVERIFY(!sampleRate->isEnabled());
     QVERIFY(!resetSettings->isEnabled());
+    QVERIFY(!sourceMode->isEnabled());
+    QVERIFY(!sourceStack->isEnabled());
+    QVERIFY(!fileLayout->isEnabled());
+}
+
+void DashboardTest::recordingSourceSelectionControlsStartAvailability()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+
+    MainWindow window;
+    window.show();
+    auto *recordingPage = window.findChild<QWidget *>(QStringLiteral("recordingPage"));
+    auto *sourceMode = window.findChild<QComboBox *>(QStringLiteral("recordingSourceModeCombo"));
+    auto *sourceStack = window.findChild<QStackedWidget *>(QStringLiteral("recordingSourceStack"));
+    auto *start = window.findChild<QPushButton *>(QStringLiteral("startRecordingButton"));
+    auto *quick = window.findChild<QPushButton *>(
+        QStringLiteral("noiseQuickRecordingButton"));
+    auto *noiseEnabled = window.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionEnabledCheck"));
+    auto *noiseStatus = window.findChild<QLabel *>(
+        QStringLiteral("noiseReductionStatusLabel"));
+    QVERIFY(recordingPage != nullptr);
+    QVERIFY(sourceMode != nullptr);
+    QVERIFY(sourceStack != nullptr);
+    QVERIFY(start != nullptr);
+    QVERIFY(quick != nullptr);
+    QVERIFY(noiseEnabled != nullptr);
+    QVERIFY(noiseStatus != nullptr);
+
+    QLabel *stateLabel = nullptr;
+    QLabel *errorLabel = nullptr;
+    for (QLabel *label : recordingPage->findChildren<QLabel *>()) {
+        if (label->text().startsWith(QStringLiteral("状态:"))) {
+            stateLabel = label;
+        }
+        if (label->styleSheet().contains(QStringLiteral("#c74343"))) {
+            errorLabel = label;
+        }
+    }
+    QVERIFY(stateLabel != nullptr);
+    QVERIFY(errorLabel != nullptr);
+    noiseEnabled->setChecked(false);
+
+    const QStringList stageObjectNames {
+        QStringLiteral("recordingNoiseStage_suppression"),
+        QStringLiteral("recordingNoiseStage_bandpass"),
+        QStringLiteral("recordingNoiseStage_logmmse"),
+        QStringLiteral("recordingNoiseStage_agc"),
+    };
+    const QStringList stageNames {
+        QStringLiteral("降噪抑制"),
+        QStringLiteral("带通滤波"),
+        QStringLiteral("LogMMSE"),
+        QStringLiteral("自动增益控制"),
+    };
+    QVector<QAbstractButton *> stageButtons;
+    for (qsizetype index = 0; index < stageObjectNames.size(); ++index) {
+        auto *button = window.findChild<QAbstractButton *>(stageObjectNames.at(index));
+        QVERIFY(button != nullptr);
+        QVERIFY(button->isCheckable());
+        QVERIFY(button->isChecked());
+        QCOMPARE(button->text(), stageNames.at(index));
+        stageButtons.append(button);
+    }
+
+    sourceMode->setCurrentIndex(1);
+    QCOMPARE(sourceStack->currentIndex(), 1);
+
+    const auto recordingEdits = recordingPage->findChildren<QLineEdit *>();
+    QCOMPARE(recordingEdits.size(), 1);
+    QTemporaryDir outputDirectory;
+    QVERIFY(outputDirectory.isValid());
+    recordingEdits.first()->setText(outputDirectory.path());
+
+    QGroupBox *connectionGroup = nullptr;
+    for (QGroupBox *group : window.findChildren<QGroupBox *>()) {
+        if (group->title() == QStringLiteral("设备连接")) {
+            connectionGroup = group;
+            break;
+        }
+    }
+    QVERIFY(connectionGroup != nullptr);
+    auto *connectionForm = qobject_cast<QFormLayout *>(connectionGroup->layout());
+    QVERIFY(connectionForm != nullptr);
+    auto *host = qobject_cast<QLineEdit *>(connectionForm->itemAt(1, QFormLayout::FieldRole)->widget());
+    auto *port = qobject_cast<QSpinBox *>(connectionForm->itemAt(2, QFormLayout::FieldRole)->widget());
+    auto *connectButton = qobject_cast<QPushButton *>(connectionForm->itemAt(4, QFormLayout::FieldRole)->widget());
+    QVERIFY(host != nullptr);
+    QVERIFY(port != nullptr);
+    QVERIFY(connectButton != nullptr);
+    host->setText(QStringLiteral("127.0.0.1"));
+    port->setValue(server.serverPort());
+    QTest::mouseClick(connectButton, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(server.hasPendingConnections(), 1000);
+    QCoreApplication::processEvents();
+    QVERIFY(!start->isEnabled());
+    QVERIFY(!quick->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(&window, "startRecording"));
+    QCOMPARE(stateLabel->text(), QStringLiteral("状态: 空闲"));
+    QVERIFY(errorLabel->text().contains(QStringLiteral("启用降噪处理")));
+    QVERIFY(noiseStatus->text().contains(QStringLiteral("启用降噪处理")));
+
+    noiseEnabled->setChecked(true);
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 1000);
+    QVERIFY(quick->isEnabled());
+
+    for (QAbstractButton *button : stageButtons) {
+        button->setChecked(false);
+    }
+    QVERIFY(!start->isEnabled());
+    QVERIFY(!quick->isEnabled());
+    stageButtons.first()->setChecked(true);
+    QVERIFY(start->isEnabled());
+    QVERIFY(quick->isEnabled());
+}
+
+void DashboardTest::recordingRoutesOnlyFramesFromTheActiveSource()
+{
+    const auto stateLabelFor = [](QWidget *page) {
+        for (QLabel *label : page->findChildren<QLabel *>()) {
+            if (label->text().startsWith(QStringLiteral("状态:"))) {
+                return label;
+            }
+        }
+        return static_cast<QLabel *>(nullptr);
+    };
+    const auto errorLabelFor = [](QWidget *page) {
+        for (QLabel *label : page->findChildren<QLabel *>()) {
+            if (label->styleSheet().contains(QStringLiteral("#c74343"))) {
+                return label;
+            }
+        }
+        return static_cast<QLabel *>(nullptr);
+    };
+    const auto readOnlyDirectoryEditFor = [](QWidget *page) {
+        for (QLineEdit *edit : page->findChildren<QLineEdit *>()) {
+            if (edit->isReadOnly()) {
+                return edit;
+            }
+        }
+        return static_cast<QLineEdit *>(nullptr);
+    };
+    const auto readManifest = [](const QTemporaryDir &directory) {
+        const QStringList manifests = QDir(directory.path()).entryList(
+            {QStringLiteral("*.json")}, QDir::Files);
+        if (manifests.size() != 1) {
+            return QJsonObject {};
+        }
+        QFile file(QDir(directory.path()).filePath(manifests.first()));
+        if (!file.open(QIODevice::ReadOnly)) {
+            return QJsonObject {};
+        }
+        return QJsonDocument::fromJson(file.readAll()).object();
+    };
+
+    HostFrame rawFrame;
+    rawFrame.type = FrameType::Audio;
+    rawFrame.timestampSeconds = 7;
+    rawFrame.timestampMicros = 500;
+    rawFrame.payload = QByteArray(AudioFrameDecoder::FramePayloadBytes, char(0));
+    NoiseReductionRecordingFrame noiseFrame;
+    noiseFrame.sampleRate = 48000;
+    noiseFrame.timestampSeconds = 7;
+    noiseFrame.timestampMicros = 500;
+    noiseFrame.stages.append({NoiseReductionDataFlowStage::Suppression,
+                              QVector<float>(AudioFrameDecoder::SamplesPerFrame, 0.25F)});
+
+    QTemporaryDir noiseDirectory;
+    QVERIFY(noiseDirectory.isValid());
+    {
+        MainWindow window;
+        auto *page = window.findChild<QWidget *>(QStringLiteral("recordingPage"));
+        auto *sourceMode = window.findChild<QComboBox *>(QStringLiteral("recordingSourceModeCombo"));
+        auto *fileLayout = window.findChild<QComboBox *>(QStringLiteral("recordingFileLayoutCombo"));
+        auto *stop = window.findChild<QPushButton *>(QStringLiteral("stopRecordingButton"));
+        auto *noiseEnabled = window.findChild<QCheckBox *>(
+            QStringLiteral("noiseReductionEnabledCheck"));
+        QVERIFY(page != nullptr);
+        QVERIFY(sourceMode != nullptr);
+        QVERIFY(fileLayout != nullptr);
+        QVERIFY(stop != nullptr);
+        QVERIFY(noiseEnabled != nullptr);
+        QLabel *stateLabel = stateLabelFor(page);
+        QLabel *errorLabel = errorLabelFor(page);
+        QLineEdit *directoryEdit = readOnlyDirectoryEditFor(page);
+        QVERIFY(stateLabel != nullptr);
+        QVERIFY(errorLabel != nullptr);
+        QVERIFY(directoryEdit != nullptr);
+        directoryEdit->setText(noiseDirectory.path());
+        sourceMode->setCurrentIndex(1);
+        fileLayout->setCurrentIndex(1);
+        noiseEnabled->setChecked(true);
+        const QStringList stageObjectNames {
+            QStringLiteral("recordingNoiseStage_suppression"),
+            QStringLiteral("recordingNoiseStage_bandpass"),
+            QStringLiteral("recordingNoiseStage_logmmse"),
+            QStringLiteral("recordingNoiseStage_agc"),
+        };
+        for (qsizetype index = 0; index < stageObjectNames.size(); ++index) {
+            auto *button = window.findChild<QAbstractButton *>(stageObjectNames.at(index));
+            QVERIFY(button != nullptr);
+            button->setChecked(index == 0);
+        }
+
+        QVERIFY(QMetaObject::invokeMethod(&window, "startRecording"));
+        QTRY_VERIFY_WITH_TIMEOUT(stateLabel->text().contains(QStringLiteral("录制中")), 1000);
+        QVERIFY(!sourceMode->isEnabled());
+        QVERIFY(!fileLayout->isEnabled());
+        sourceMode->setCurrentIndex(0);
+        fileLayout->setCurrentIndex(0);
+        QVERIFY(QMetaObject::invokeMethod(&window,
+                                          "enqueueAudioFrame",
+                                          Qt::DirectConnection,
+                                          Q_ARG(MicArray::HostFrame, rawFrame)));
+        QCOMPARE(window.property("audioFramesInFlight").toInt(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(window.property("audioFramesInFlight").toInt(), 0, 1000);
+        QVERIFY(errorLabel->text().isEmpty());
+        QVERIFY(stateLabel->text().contains(QStringLiteral("录制中")));
+        QVERIFY(QMetaObject::invokeMethod(
+            &window,
+            "enqueueNoiseReductionRecordingFrame",
+            Qt::DirectConnection,
+            Q_ARG(MicArray::NoiseReductionRecordingFrame, noiseFrame)));
+        QVERIFY(QMetaObject::invokeMethod(&window, "stopRecording"));
+        QTRY_VERIFY_WITH_TIMEOUT(!stop->isEnabled(), 1000);
+        QVERIFY(errorLabel->text().isEmpty());
+    }
+    const QJsonObject noiseManifest = readManifest(noiseDirectory);
+    QVERIFY(!noiseManifest.isEmpty());
+    QCOMPARE(noiseManifest.value(QStringLiteral("inputSource")).toString(),
+             QStringLiteral("noiseReductionStages"));
+    QCOMPARE(noiseManifest.value(QStringLiteral("fileLayout")).toString(),
+             QStringLiteral("separateTracks"));
+    QCOMPARE(noiseManifest.value(QStringLiteral("inputFrames")).toInt(), 1);
+    QVERIFY(noiseManifest.value(QStringLiteral("dataBytes")).toInt() > 0);
+
+    QTemporaryDir arrayDirectory;
+    QVERIFY(arrayDirectory.isValid());
+    {
+        MainWindow window;
+        auto *page = window.findChild<QWidget *>(QStringLiteral("recordingPage"));
+        auto *sourceMode = window.findChild<QComboBox *>(QStringLiteral("recordingSourceModeCombo"));
+        auto *fileLayout = window.findChild<QComboBox *>(QStringLiteral("recordingFileLayoutCombo"));
+        auto *stop = window.findChild<QPushButton *>(QStringLiteral("stopRecordingButton"));
+        QVERIFY(page != nullptr);
+        QVERIFY(sourceMode != nullptr);
+        QVERIFY(fileLayout != nullptr);
+        QVERIFY(stop != nullptr);
+        QLabel *stateLabel = stateLabelFor(page);
+        QLabel *errorLabel = errorLabelFor(page);
+        QLineEdit *directoryEdit = readOnlyDirectoryEditFor(page);
+        QVERIFY(stateLabel != nullptr);
+        QVERIFY(errorLabel != nullptr);
+        QVERIFY(directoryEdit != nullptr);
+        directoryEdit->setText(arrayDirectory.path());
+        sourceMode->setCurrentIndex(0);
+
+        QVERIFY(QMetaObject::invokeMethod(&window, "startRecording"));
+        QTRY_VERIFY_WITH_TIMEOUT(stateLabel->text().contains(QStringLiteral("录制中")), 1000);
+        QVERIFY(!sourceMode->isEnabled());
+        QVERIFY(!fileLayout->isEnabled());
+        sourceMode->setCurrentIndex(1);
+        fileLayout->setCurrentIndex(1);
+        QVERIFY(QMetaObject::invokeMethod(
+            &window,
+            "enqueueNoiseReductionRecordingFrame",
+            Qt::DirectConnection,
+            Q_ARG(MicArray::NoiseReductionRecordingFrame, noiseFrame)));
+        QVERIFY(errorLabel->text().isEmpty());
+        QVERIFY(stateLabel->text().contains(QStringLiteral("录制中")));
+        QVERIFY(QMetaObject::invokeMethod(&window,
+                                          "enqueueAudioFrame",
+                                          Qt::DirectConnection,
+                                          Q_ARG(MicArray::HostFrame, rawFrame)));
+        QCOMPARE(window.property("audioFramesInFlight").toInt(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(window.property("audioFramesInFlight").toInt(), 0, 1000);
+        QVERIFY(QMetaObject::invokeMethod(&window, "stopRecording"));
+        QTRY_VERIFY_WITH_TIMEOUT(!stop->isEnabled(), 1000);
+        QVERIFY(errorLabel->text().isEmpty());
+    }
+    const QJsonObject arrayManifest = readManifest(arrayDirectory);
+    QVERIFY(!arrayManifest.isEmpty());
+    QCOMPARE(arrayManifest.value(QStringLiteral("inputSource")).toString(),
+             QStringLiteral("array"));
+    QCOMPARE(arrayManifest.value(QStringLiteral("fileLayout")).toString(),
+             QStringLiteral("singleMultichannel"));
+    QCOMPARE(arrayManifest.value(QStringLiteral("inputFrames")).toInt(), 1);
+    QVERIFY(arrayManifest.value(QStringLiteral("dataBytes")).toInt() > 0);
+}
+
+void DashboardTest::quickNoiseRecordingReusesRecordingPageConfiguration()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QTemporaryDir outputDirectory;
+    QVERIFY(outputDirectory.isValid());
+
+    MainWindow window;
+    window.show();
+    auto *recordingPage = window.findChild<QWidget *>(
+        QStringLiteral("recordingPage"));
+    auto *sourceMode = window.findChild<QComboBox *>(
+        QStringLiteral("recordingSourceModeCombo"));
+    auto *fileLayout = window.findChild<QComboBox *>(
+        QStringLiteral("recordingFileLayoutCombo"));
+    auto *quick = window.findChild<QPushButton *>(
+        QStringLiteral("noiseQuickRecordingButton"));
+    auto *start = window.findChild<QPushButton *>(
+        QStringLiteral("startRecordingButton"));
+    auto *stop = window.findChild<QPushButton *>(
+        QStringLiteral("stopRecordingButton"));
+    auto *statistics = window.findChild<QLabel *>(
+        QStringLiteral("recordingStatisticsLabel"));
+    auto *noisePage = window.findChild<NoiseReductionPage *>(
+        QStringLiteral("noiseReductionPage"));
+    auto *noiseEnabled = window.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionEnabledCheck"));
+    auto *monitorEnabled = window.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionMonitorEnabledCheck"));
+    QVERIFY(recordingPage != nullptr);
+    QVERIFY(sourceMode != nullptr);
+    QVERIFY(fileLayout != nullptr);
+    QVERIFY(quick != nullptr);
+    QVERIFY(start != nullptr);
+    QVERIFY(stop != nullptr);
+    QVERIFY(statistics != nullptr);
+    QVERIFY(noisePage != nullptr);
+    QVERIFY(noiseEnabled != nullptr);
+    QVERIFY(monitorEnabled != nullptr);
+
+    QLineEdit *directoryEdit = nullptr;
+    QLabel *stateLabel = nullptr;
+    for (QLineEdit *edit : recordingPage->findChildren<QLineEdit *>()) {
+        if (edit->isReadOnly()) {
+            directoryEdit = edit;
+            break;
+        }
+    }
+    for (QLabel *label : recordingPage->findChildren<QLabel *>()) {
+        if (label->text().startsWith(QStringLiteral("状态:"))) {
+            stateLabel = label;
+            break;
+        }
+    }
+    QVERIFY(directoryEdit != nullptr);
+    QVERIFY(stateLabel != nullptr);
+    directoryEdit->setText(outputDirectory.path());
+    sourceMode->setCurrentIndex(1);
+    fileLayout->setCurrentIndex(1);
+    monitorEnabled->setChecked(false);
+    noiseEnabled->setChecked(true);
+    const QStringList stageObjectNames {
+        QStringLiteral("recordingNoiseStage_suppression"),
+        QStringLiteral("recordingNoiseStage_bandpass"),
+        QStringLiteral("recordingNoiseStage_logmmse"),
+        QStringLiteral("recordingNoiseStage_agc"),
+    };
+    QVector<QAbstractButton *> stageButtons;
+    for (qsizetype index = 0; index < stageObjectNames.size(); ++index) {
+        auto *button = window.findChild<QAbstractButton *>(
+            stageObjectNames.at(index));
+        QVERIFY(button != nullptr);
+        button->setChecked(index == 0);
+        stageButtons.append(button);
+    }
+
+    QGroupBox *connectionGroup = nullptr;
+    for (QGroupBox *group : window.findChildren<QGroupBox *>()) {
+        if (group->title() == QStringLiteral("设备连接")) {
+            connectionGroup = group;
+            break;
+        }
+    }
+    QVERIFY(connectionGroup != nullptr);
+    auto *connectionForm =
+        qobject_cast<QFormLayout *>(connectionGroup->layout());
+    QVERIFY(connectionForm != nullptr);
+    auto *host = qobject_cast<QLineEdit *>(
+        connectionForm->itemAt(1, QFormLayout::FieldRole)->widget());
+    auto *port = qobject_cast<QSpinBox *>(
+        connectionForm->itemAt(2, QFormLayout::FieldRole)->widget());
+    auto *connectButton = qobject_cast<QPushButton *>(
+        connectionForm->itemAt(4, QFormLayout::FieldRole)->widget());
+    QVERIFY(host != nullptr);
+    QVERIFY(port != nullptr);
+    QVERIFY(connectButton != nullptr);
+    host->setText(QStringLiteral("127.0.0.1"));
+    port->setValue(server.serverPort());
+    QTest::mouseClick(connectButton, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(quick->isEnabled(), 1000);
+
+    const int sourceBefore = sourceMode->currentIndex();
+    const int layoutBefore = fileLayout->currentIndex();
+    const QString directoryBefore = directoryEdit->text();
+    QVector<bool> stagesBefore;
+    for (QAbstractButton *button : stageButtons) {
+        stagesBefore.append(button->isChecked());
+    }
+
+    QTest::mouseClick(quick, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("录制中")), 1000);
+    QCOMPARE(quick->text(), QStringLiteral("停止录制"));
+    QVERIFY(quick->isEnabled());
+    QVERIFY(!start->isEnabled());
+    QVERIFY(stop->isEnabled());
+    QCOMPARE(sourceMode->currentIndex(), sourceBefore);
+    QCOMPARE(fileLayout->currentIndex(), layoutBefore);
+    QCOMPARE(directoryEdit->text(), directoryBefore);
+    for (qsizetype index = 0; index < stageButtons.size(); ++index) {
+        QCOMPARE(stageButtons.at(index)->isChecked(),
+                 stagesBefore.at(index));
+    }
+
+    QSignalSpy typedFrames(
+        noisePage, &NoiseReductionPage::noiseRecordingFrameReady);
+    const QByteArray payload(
+        AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int frameIndex = 0; frameIndex < 6; ++frameIndex) {
+        noisePage->submitRawAudioFrame(
+            payload, 17, 250 + frameIndex * 4167);
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!typedFrames.isEmpty(), 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(noisePage->pendingAudioFrames(), 0, 2000);
+
+    QTest::qWait(250);
+    for (int frameIndex = 6; frameIndex < 9; ++frameIndex) {
+        noisePage->submitRawAudioFrame(
+            payload, 17, 250 + frameIndex * 4167);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(noisePage->pendingAudioFrames(), 0, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !statistics->text().contains(QStringLiteral("已写帧: 0")),
+        2000);
+    QTest::mouseClick(quick, Qt::LeftButton);
+    QCOMPARE(quick->text(), QStringLiteral("正在停止…"));
+    QVERIFY(!quick->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("空闲")), 1000);
+    QVERIFY(!stop->isEnabled());
+    QCOMPARE(quick->text(), QStringLiteral("开始录制"));
+    QVERIFY(quick->isEnabled());
+    QVERIFY(!statistics->text().contains(QStringLiteral("已写帧: 0")));
+    QCOMPARE(sourceMode->currentIndex(), sourceBefore);
+    QCOMPARE(fileLayout->currentIndex(), layoutBefore);
+    QCOMPARE(directoryEdit->text(), directoryBefore);
+
+    const QStringList manifests = QDir(outputDirectory.path()).entryList(
+        {QStringLiteral("*.json")}, QDir::Files);
+    QCOMPARE(manifests.size(), 1);
+    QFile manifestFile(
+        QDir(outputDirectory.path()).filePath(manifests.first()));
+    QVERIFY(manifestFile.open(QIODevice::ReadOnly));
+    const QJsonObject manifest =
+        QJsonDocument::fromJson(manifestFile.readAll()).object();
+    const QString baseName =
+        manifest.value(QStringLiteral("baseName")).toString();
+    QVERIFY(baseName.startsWith(QStringLiteral("MicArray_")));
+    QCOMPARE(QFileInfo(manifestFile.fileName()).completeBaseName(),
+             baseName);
+    QCOMPARE(manifest.value(QStringLiteral("inputSource")).toString(),
+             QStringLiteral("noiseReductionStages"));
+    QCOMPARE(manifest.value(QStringLiteral("fileLayout")).toString(),
+             QStringLiteral("separateTracks"));
+    QVERIFY(manifest.value(QStringLiteral("inputFrames")).toInt() > 0);
+    const QJsonArray tracks =
+        manifest.value(QStringLiteral("tracks")).toArray();
+    QCOMPARE(tracks.size(), 1);
+    QCOMPARE(tracks.first().toObject()
+                 .value(QStringLiteral("stage"))
+                 .toString(),
+             QStringLiteral("suppression"));
+}
+
+void DashboardTest::quickRecordingKeepsDetailedErrorAcrossRefreshes()
+{
+    QTemporaryDir outputDirectory;
+    QVERIFY(outputDirectory.isValid());
+
+    MainWindow window;
+    window.show();
+    auto *recordingPage = window.findChild<QWidget *>(
+        QStringLiteral("recordingPage"));
+    auto *sourceMode = window.findChild<QComboBox *>(
+        QStringLiteral("recordingSourceModeCombo"));
+    auto *fileLayout = window.findChild<QComboBox *>(
+        QStringLiteral("recordingFileLayoutCombo"));
+    auto *monitorBuffer = window.findChild<QSpinBox *>(
+        QStringLiteral("noiseMonitorBufferMilliseconds"));
+    auto *noiseStatus = window.findChild<QLabel *>(
+        QStringLiteral("noiseReductionStatusLabel"));
+    QVERIFY(recordingPage != nullptr);
+    QVERIFY(sourceMode != nullptr);
+    QVERIFY(fileLayout != nullptr);
+    QVERIFY(monitorBuffer != nullptr);
+    QVERIFY(noiseStatus != nullptr);
+
+    QLineEdit *directoryEdit = nullptr;
+    QLabel *stateLabel = nullptr;
+    for (QLineEdit *edit : recordingPage->findChildren<QLineEdit *>()) {
+        if (edit->isReadOnly()) {
+            directoryEdit = edit;
+            break;
+        }
+    }
+    for (QLabel *label : recordingPage->findChildren<QLabel *>()) {
+        if (label->text().startsWith(QStringLiteral("状态:"))) {
+            stateLabel = label;
+            break;
+        }
+    }
+    QVERIFY(directoryEdit != nullptr);
+    QVERIFY(stateLabel != nullptr);
+    directoryEdit->setText(outputDirectory.path());
+
+    const QString errorDetail = QStringLiteral("第二轨写入失败：磁盘已满");
+    QVERIFY(QMetaObject::invokeMethod(
+        &window,
+        "updateRecordingState",
+        Qt::DirectConnection,
+        Q_ARG(MicArray::RecordingState, MicArray::RecordingState::Error)));
+    QVERIFY(QMetaObject::invokeMethod(
+        &window,
+        "handleRecordingError",
+        Qt::DirectConnection,
+        Q_ARG(QString, errorDetail)));
+    QVERIFY(noiseStatus->text().contains(errorDetail));
+
+    sourceMode->setCurrentIndex(1);
+    QCoreApplication::processEvents();
+    QVERIFY(noiseStatus->text().contains(errorDetail));
+    fileLayout->setCurrentIndex(1);
+    QCoreApplication::processEvents();
+    QVERIFY(noiseStatus->text().contains(errorDetail));
+    monitorBuffer->setValue(monitorBuffer->value() == 250 ? 300 : 250);
+    QCoreApplication::processEvents();
+    QVERIFY(noiseStatus->text().contains(errorDetail));
+
+    sourceMode->setCurrentIndex(0);
+    fileLayout->setCurrentIndex(0);
+    QVERIFY(QMetaObject::invokeMethod(&window, "startRecording"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("录制中")), 3000);
+    QVERIFY(!noiseStatus->text().contains(errorDetail));
+    QVERIFY(QMetaObject::invokeMethod(&window, "stopRecording"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("空闲")), 3000);
+    QVERIFY(!noiseStatus->text().contains(errorDetail));
+}
+
+void DashboardTest::
+noiseRecordingContinuesAcrossPageSwitchAndStopsOnTerminalState()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    QTemporaryDir firstOutputDirectory;
+    QTemporaryDir secondOutputDirectory;
+    QVERIFY(firstOutputDirectory.isValid());
+    QVERIFY(secondOutputDirectory.isValid());
+
+    MainWindow window;
+    window.show();
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *noisePage = window.findChild<NoiseReductionPage *>(
+        QStringLiteral("noiseReductionPage"));
+    auto *recordingPage = window.findChild<QWidget *>(
+        QStringLiteral("recordingPage"));
+    auto *noiseEnabled = window.findChild<QCheckBox *>(
+        QStringLiteral("noiseReductionEnabledCheck"));
+    auto *sourceMode = window.findChild<QComboBox *>(
+        QStringLiteral("recordingSourceModeCombo"));
+    auto *quick = window.findChild<QPushButton *>(
+        QStringLiteral("noiseQuickRecordingButton"));
+    auto *start = window.findChild<QPushButton *>(
+        QStringLiteral("startRecordingButton"));
+    auto *stop = window.findChild<QPushButton *>(
+        QStringLiteral("stopRecordingButton"));
+    QVERIFY(tabs != nullptr);
+    QVERIFY(noisePage != nullptr);
+    QVERIFY(recordingPage != nullptr);
+    QVERIFY(noiseEnabled != nullptr);
+    QVERIFY(sourceMode != nullptr);
+    QVERIFY(quick != nullptr);
+    QVERIFY(start != nullptr);
+    QVERIFY(stop != nullptr);
+
+    QLineEdit *directoryEdit = nullptr;
+    QLabel *stateLabel = nullptr;
+    for (QLineEdit *edit : recordingPage->findChildren<QLineEdit *>()) {
+        if (edit->isReadOnly()) {
+            directoryEdit = edit;
+            break;
+        }
+    }
+    for (QLabel *label : recordingPage->findChildren<QLabel *>()) {
+        if (label->text().startsWith(QStringLiteral("状态:"))) {
+            stateLabel = label;
+            break;
+        }
+    }
+    QVERIFY(directoryEdit != nullptr);
+    QVERIFY(stateLabel != nullptr);
+    directoryEdit->setText(firstOutputDirectory.path());
+    sourceMode->setCurrentIndex(1);
+    noiseEnabled->setChecked(true);
+    const QStringList stageObjectNames {
+        QStringLiteral("recordingNoiseStage_suppression"),
+        QStringLiteral("recordingNoiseStage_bandpass"),
+        QStringLiteral("recordingNoiseStage_logmmse"),
+        QStringLiteral("recordingNoiseStage_agc"),
+    };
+    for (qsizetype index = 0; index < stageObjectNames.size(); ++index) {
+        auto *button = window.findChild<QAbstractButton *>(
+            stageObjectNames.at(index));
+        QVERIFY(button != nullptr);
+        button->setChecked(index == 0);
+    }
+
+    QGroupBox *connectionGroup = nullptr;
+    for (QGroupBox *group : window.findChildren<QGroupBox *>()) {
+        if (group->title() == QStringLiteral("设备连接")) {
+            connectionGroup = group;
+            break;
+        }
+    }
+    QVERIFY(connectionGroup != nullptr);
+    auto *connectionForm =
+        qobject_cast<QFormLayout *>(connectionGroup->layout());
+    QVERIFY(connectionForm != nullptr);
+    auto *host = qobject_cast<QLineEdit *>(
+        connectionForm->itemAt(1, QFormLayout::FieldRole)->widget());
+    auto *port = qobject_cast<QSpinBox *>(
+        connectionForm->itemAt(2, QFormLayout::FieldRole)->widget());
+    auto *connectButton = qobject_cast<QPushButton *>(
+        connectionForm->itemAt(4, QFormLayout::FieldRole)->widget());
+    QVERIFY(host != nullptr);
+    QVERIFY(port != nullptr);
+    QVERIFY(connectButton != nullptr);
+    host->setText(QStringLiteral("127.0.0.1"));
+    port->setValue(server.serverPort());
+    QTest::mouseClick(connectButton, Qt::LeftButton);
+
+    tabs->setCurrentWidget(noisePage);
+    QTRY_VERIFY_WITH_TIMEOUT(quick->isEnabled(), 1000);
+    QTest::mouseClick(quick, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("录制中")), 1000);
+    tabs->setCurrentWidget(recordingPage);
+    QCoreApplication::processEvents();
+
+    HostFrame rawFrame;
+    rawFrame.type = FrameType::Audio;
+    rawFrame.payload = QByteArray(
+        AudioFrameDecoder::FramePayloadBytes, char(0));
+    rawFrame.timestampSeconds = 23;
+    const quint64 submittedBefore = noisePage->submittedAudioFrames();
+    for (int frameIndex = 0; frameIndex < 6; ++frameIndex) {
+        rawFrame.timestampMicros = frameIndex * 4167;
+        QVERIFY(QMetaObject::invokeMethod(
+            &window,
+            "enqueueAudioFrame",
+            Qt::DirectConnection,
+            Q_ARG(MicArray::HostFrame, rawFrame)));
+    }
+    QCOMPARE(noisePage->submittedAudioFrames(), submittedBefore + 6);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        window.property("audioFramesInFlight").toInt(), 0, 1000);
+
+    QTest::mouseClick(stop, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("空闲")), 1000);
+    const quint64 submittedAfterIdle =
+        noisePage->submittedAudioFrames();
+    QVERIFY(QMetaObject::invokeMethod(
+        &window,
+        "enqueueAudioFrame",
+        Qt::DirectConnection,
+        Q_ARG(MicArray::HostFrame, rawFrame)));
+    QCOMPARE(noisePage->submittedAudioFrames(), submittedAfterIdle);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        window.property("audioFramesInFlight").toInt(), 0, 1000);
+
+    directoryEdit->setText(secondOutputDirectory.path());
+    QTRY_VERIFY_WITH_TIMEOUT(start->isEnabled(), 1000);
+    QTest::mouseClick(start, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("录制中")), 1000);
+    const quint64 submittedBeforeError =
+        noisePage->submittedAudioFrames();
+    QVERIFY(QMetaObject::invokeMethod(
+        &window,
+        "enqueueAudioFrame",
+        Qt::DirectConnection,
+        Q_ARG(MicArray::HostFrame, rawFrame)));
+    QCOMPARE(noisePage->submittedAudioFrames(), submittedBeforeError + 1);
+    QVERIFY(QMetaObject::invokeMethod(
+        &window,
+        "updateRecordingState",
+        Qt::DirectConnection,
+        Q_ARG(MicArray::RecordingState, MicArray::RecordingState::Error)));
+    const quint64 submittedAfterError =
+        noisePage->submittedAudioFrames();
+    QVERIFY(QMetaObject::invokeMethod(
+        &window,
+        "enqueueAudioFrame",
+        Qt::DirectConnection,
+        Q_ARG(MicArray::HostFrame, rawFrame)));
+    QCOMPARE(noisePage->submittedAudioFrames(), submittedAfterError);
+    QVERIFY(QMetaObject::invokeMethod(&window, "stopRecording"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        stateLabel->text().contains(QStringLiteral("空闲")), 1000);
 }
 
 void DashboardTest::lightThemeRecordingChannelsUseDedicatedReadableStyle()
@@ -2319,26 +3205,94 @@ void DashboardTest::recordingPageFitsAtMinimumSupportedSize()
     MainWindow window;
     window.resize(1366, 768);
     window.show();
+    QCoreApplication::processEvents();
+    const QString actualClientSize = QStringLiteral("actual client size: %1x%2")
+                                         .arg(window.width())
+                                         .arg(window.height());
+    QVERIFY2(window.width() <= 1366, qPrintable(actualClientSize));
+    QVERIFY2(window.height() <= 768, qPrintable(actualClientSize));
     auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
     auto *page = window.findChild<QWidget *>(QStringLiteral("recordingPage"));
     QVERIFY(tabs != nullptr);
     QVERIFY(page != nullptr);
+    auto *sourceMode = window.findChild<QComboBox *>(QStringLiteral("recordingSourceModeCombo"));
+    auto *sourceStack = window.findChild<QStackedWidget *>(QStringLiteral("recordingSourceStack"));
+    QVERIFY(sourceMode != nullptr);
+    QVERIFY(sourceStack != nullptr);
     tabs->setCurrentWidget(page);
-    QCoreApplication::processEvents();
-
-    QList<QRect> channelRects;
-    for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
-        auto *button = window.findChild<QToolButton *>(QStringLiteral("recordChannel_%1").arg(channel));
-        QVERIFY(button != nullptr);
-        QVERIFY(button->isVisible());
-        QVERIFY(button->width() >= 58);
-        QVERIFY(button->height() >= 44);
-        const QRect pageRect(button->mapTo(page, QPoint(0, 0)), button->size());
-        QVERIFY(page->rect().contains(pageRect));
-        for (const QRect &existing : channelRects) {
-            QVERIFY(!existing.intersects(pageRect));
+    auto *fileLayout = window.findChild<QComboBox *>(QStringLiteral("recordingFileLayoutCombo"));
+    auto *start = window.findChild<QPushButton *>(QStringLiteral("startRecordingButton"));
+    auto *stop = window.findChild<QPushButton *>(QStringLiteral("stopRecordingButton"));
+    QLineEdit *directoryEdit = nullptr;
+    QPushButton *browseButton = nullptr;
+    for (QLineEdit *edit : page->findChildren<QLineEdit *>()) {
+        if (edit->isReadOnly()) {
+            directoryEdit = edit;
         }
-        channelRects.append(pageRect);
+    }
+    for (QPushButton *button : page->findChildren<QPushButton *>()) {
+        if (button->text() == QStringLiteral("选择目录")) {
+            browseButton = button;
+        }
+    }
+    QVERIFY(fileLayout != nullptr);
+    QVERIFY(start != nullptr);
+    QVERIFY(stop != nullptr);
+    QVERIFY(directoryEdit != nullptr);
+    QVERIFY(browseButton != nullptr);
+
+    const auto verifyVisibleLeaves = [page](const QList<QWidget *> &controls) {
+        QList<QRect> rects;
+        for (QWidget *control : controls) {
+            QVERIFY(control != nullptr);
+            QVERIFY(control->isVisible());
+            const QRect rect(control->mapTo(page, QPoint(0, 0)), control->size());
+            QVERIFY(page->rect().contains(rect));
+            for (const QRect &existing : rects) {
+                QVERIFY(!existing.intersects(rect));
+            }
+            rects.append(rect);
+        }
+    };
+
+    for (int mode = 0; mode < 2; ++mode) {
+        sourceMode->setCurrentIndex(mode);
+        QCoreApplication::processEvents();
+        QCOMPARE(sourceStack->currentIndex(), mode);
+        QList<QWidget *> leaves {
+            sourceMode,
+            fileLayout,
+            directoryEdit,
+            browseButton,
+            start,
+            stop,
+        };
+        if (mode == 0) {
+            for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+                auto *button = window.findChild<QToolButton *>(
+                    QStringLiteral("recordChannel_%1").arg(channel));
+                QVERIFY(button != nullptr);
+                QVERIFY(button->width() >= 58);
+                QVERIFY(button->height() >= 44);
+                leaves.append(button);
+            }
+            for (const QString &objectName : {
+                     QStringLiteral("recordSelectAllButton"),
+                     QStringLiteral("recordClearButton"),
+                     QStringLiteral("recordInvertButton"),
+                     QStringLiteral("recordCurrentChannelButton")}) {
+                leaves.append(window.findChild<QPushButton *>(objectName));
+            }
+        } else {
+            for (const QString &objectName : {
+                     QStringLiteral("recordingNoiseStage_suppression"),
+                     QStringLiteral("recordingNoiseStage_bandpass"),
+                     QStringLiteral("recordingNoiseStage_logmmse"),
+                     QStringLiteral("recordingNoiseStage_agc")}) {
+                leaves.append(window.findChild<QAbstractButton *>(objectName));
+            }
+        }
+        verifyVisibleLeaves(leaves);
     }
 }
 

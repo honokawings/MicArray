@@ -13,6 +13,7 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
+class QSpinBox;
 class QStackedWidget;
 class QTabWidget;
 
@@ -33,6 +34,12 @@ public:
     ~NoiseReductionPage() override;
 
     void setActive(bool active);
+    void setRecordingRequired(
+        bool required,
+        const QVector<NoiseReductionDataFlowStage> &stages);
+    void setQuickRecordingState(bool active,
+                                bool canStart,
+                                const QString &message);
     void setConnected(bool connected);
     void setControlLocked(bool locked);
     void setSampleRate(int sampleRate);
@@ -58,6 +65,10 @@ signals:
                                 quint32 timestampSeconds,
                                 quint32 timestampMicros);
     void controlSendRequested(const ControlValues &values);
+    void noiseRecordingFrameReady(
+        const NoiseReductionRecordingFrame &frame);
+    void quickRecordingToggleRequested();
+    void settingsChanged();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -71,6 +82,9 @@ private:
     void restoreSettings();
     NoiseReductionSettings settingsFromUi() const;
     void applySettingsFromUi();
+    bool workerShouldBeActive() const;
+    void updateWorkerActive();
+    void refreshStatusLabel();
     void refreshProcessingAvailability();
     void refreshNodeSummaries();
     void showNodeParameters(int nodeId);
@@ -90,6 +104,11 @@ private:
     QThread m_workerThread;
     NoiseReductionWorker *m_worker = nullptr;
     bool m_active = false;
+    bool m_recordingRequired = false;
+    bool m_workerActive = false;
+    QVector<NoiseReductionDataFlowStage> m_recordingStages;
+    QString m_processingStatusMessage;
+    QString m_recordingStatusMessage;
     bool m_connected = false;
     bool m_controlLocked = false;
     int m_sampleRate = 48000;
@@ -117,6 +136,8 @@ private:
     QCheckBox *m_monitorEnabledCheck = nullptr;
     QComboBox *m_monitorSourceCombo = nullptr;
     QDoubleSpinBox *m_monitorGainSpin = nullptr;
+    QSpinBox *m_monitorBufferSpin = nullptr;
+    QPushButton *m_quickRecordingButton = nullptr;
     QCheckBox *m_bandPassEnabledCheck = nullptr;
     QComboBox *m_bandPassPresetCombo = nullptr;
     QDoubleSpinBox *m_bandPassLowSpin = nullptr;

@@ -48,6 +48,40 @@ QJsonObject gainConfigurationToJson(const GainConfiguration &configuration)
     };
 }
 
+QString recordingInputSourceKey(RecordingInputSource source)
+{
+    switch (source) {
+    case RecordingInputSource::Array:
+        return QStringLiteral("array");
+    case RecordingInputSource::NoiseReductionStages:
+        return QStringLiteral("noiseReductionStages");
+    }
+    return QStringLiteral("unknown");
+}
+
+QString recordingFileLayoutKey(RecordingFileLayout layout)
+{
+    switch (layout) {
+    case RecordingFileLayout::SingleMultichannel:
+        return QStringLiteral("singleMultichannel");
+    case RecordingFileLayout::SeparateTracks:
+        return QStringLiteral("separateTracks");
+    }
+    return QStringLiteral("unknown");
+}
+
+bool isKnownNoiseReductionStage(NoiseReductionDataFlowStage stage)
+{
+    switch (stage) {
+    case NoiseReductionDataFlowStage::Suppression:
+    case NoiseReductionDataFlowStage::BandPass:
+    case NoiseReductionDataFlowStage::LogMmse:
+    case NoiseReductionDataFlowStage::AutomaticGainControl:
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 MultiChannelWavWriter::MultiChannelWavWriter(quint64 segmentDataLimit,
@@ -79,6 +113,7 @@ MultiChannelWavWriter::~MultiChannelWavWriter()
 RecordingSummary MultiChannelWavWriter::summary() const
 {
     RecordingSummary value = m_summary;
+    value.audioFileCount = static_cast<quint64>(value.segmentPaths.size());
     if (m_file != nullptr && m_file->isOpen()) {
         value.fileBytes += static_cast<quint64>(std::max<qint64>(0, m_file->size()));
     }
@@ -238,7 +273,102 @@ bool MultiChannelWavWriter::validateSettings(RecordingSettings *settings, QStrin
 {
     settings->outputDirectory = settings->outputDirectory.trimmed();
     settings->baseName = settings->baseName.trimmed();
-    std::sort(settings->channels.begin(), settings->channels.end());
+
+    const bool explicitTrackKeys = !settings->trackKeys.isEmpty();
+    const bool explicitTrackNames = !settings->trackNames.isEmpty();
+    if (explicitTrackKeys && settings->trackKeys.size() != settings->channels.size()) {
+        setError(errorMessage, QStringLiteral("Recording track key count must match channel count"));
+        return false;
+    }
+    if (explicitTrackNames && settings->trackNames.size() != settings->channels.size()) {
+        setError(errorMessage, QStringLiteral("Recording track name count must match channel count"));
+        return false;
+    }
+
+    struct TrackBinding {
+        int channel = 0;
+        NoiseReductionDataFlowStage stage = NoiseReductionDataFlowStage::Suppression;
+        QString key;
+        QString name;
+    };
+    QVector<TrackBinding> bindings;
+    bindings.reserve(settings->channels.size());
+    if (settings->inputSource == RecordingInputSource::Array) {
+        if (!settings->noiseReductionStages.isEmpty()) {
+            setError(errorMessage, QStringLiteral("Array recording cannot select noise-reduction stages"));
+            return false;
+        }
+        for (int index = 0; index < settings->channels.size(); ++index) {
+            const int channel = settings->channels.at(index);
+            bindings.append({
+                channel,
+                NoiseReductionDataFlowStage::Suppression,
+                explicitTrackKeys
+                    ? settings->trackKeys.at(index).trimmed()
+                    : QStringLiteral("ch%1").arg(channel, 2, 10, QLatin1Char('0')),
+                explicitTrackNames
+                    ? settings->trackNames.at(index).trimmed()
+                    : QStringLiteral("CH%1").arg(channel),
+            });
+        }
+        std::sort(bindings.begin(), bindings.end(), [](const TrackBinding &left,
+                                                       const TrackBinding &right) {
+            return left.channel < right.channel;
+        });
+    } else {
+        if (settings->noiseReductionStages.size() != settings->channels.size()) {
+            setError(errorMessage,
+                     QStringLiteral("Noise-reduction stage count must match internal channel count"));
+            return false;
+        }
+        QVector<NoiseReductionDataFlowStage> seenStages;
+        for (int index = 0; index < settings->channels.size(); ++index) {
+            const NoiseReductionDataFlowStage stage = settings->noiseReductionStages.at(index);
+            if (!isKnownNoiseReductionStage(stage) || seenStages.contains(stage)) {
+                setError(errorMessage, QStringLiteral("Noise-reduction recording stages must be known and unique"));
+                return false;
+            }
+            if (index > 0 && settings->channels.at(index) <= settings->channels.at(index - 1)) {
+                setError(errorMessage,
+                         QStringLiteral("Noise-reduction internal channels must be strictly increasing"));
+                return false;
+            }
+            seenStages.append(stage);
+            bindings.append({
+                settings->channels.at(index),
+                stage,
+                explicitTrackKeys
+                    ? settings->trackKeys.at(index).trimmed()
+                    : noiseReductionDataFlowStageKey(stage),
+                explicitTrackNames
+                    ? settings->trackNames.at(index).trimmed()
+                    : noiseReductionDataFlowStageName(stage),
+            });
+        }
+    }
+
+    settings->channels.clear();
+    settings->trackKeys.clear();
+    settings->trackNames.clear();
+    if (settings->inputSource == RecordingInputSource::NoiseReductionStages) {
+        settings->noiseReductionStages.clear();
+    }
+    QSet<QString> seenTrackKeys;
+    for (const TrackBinding &binding : bindings) {
+        if (binding.key.isEmpty() || QFileInfo(binding.key).fileName() != binding.key
+            || binding.name.isEmpty() || seenTrackKeys.contains(binding.key)) {
+            setError(errorMessage,
+                     QStringLiteral("Recording track keys must be unique file-name components and names must not be empty"));
+            return false;
+        }
+        seenTrackKeys.insert(binding.key);
+        settings->channels.append(binding.channel);
+        settings->trackKeys.append(binding.key);
+        settings->trackNames.append(binding.name);
+        if (settings->inputSource == RecordingInputSource::NoiseReductionStages) {
+            settings->noiseReductionStages.append(binding.stage);
+        }
+    }
 
     if (settings->outputDirectory.isEmpty()) {
         setError(errorMessage, QStringLiteral("Recording output directory is empty"));
@@ -394,6 +524,20 @@ bool MultiChannelWavWriter::writeManifest(QString *errorMessage)
         channels.append(channel);
     }
 
+    QJsonArray tracks;
+    for (int index = 0; index < m_settings.channels.size(); ++index) {
+        QJsonObject track {
+            {QStringLiteral("channel"), m_settings.channels.at(index)},
+            {QStringLiteral("trackKey"), m_settings.trackKeys.at(index)},
+            {QStringLiteral("trackName"), m_settings.trackNames.at(index)},
+        };
+        if (m_settings.inputSource == RecordingInputSource::NoiseReductionStages) {
+            track.insert(QStringLiteral("stage"),
+                         noiseReductionDataFlowStageKey(m_settings.noiseReductionStages.at(index)));
+        }
+        tracks.append(track);
+    }
+
     QJsonArray segments;
     for (int index = 0; index < m_summary.segmentPaths.size(); ++index) {
         const quint64 dataBytes = index < m_segmentDataSizes.size() ? m_segmentDataSizes.at(index) : 0;
@@ -408,7 +552,10 @@ bool MultiChannelWavWriter::writeManifest(QString *errorMessage)
     QJsonObject root {
         {QStringLiteral("schemaVersion"), 1},
         {QStringLiteral("baseName"), m_settings.baseName},
+        {QStringLiteral("inputSource"), recordingInputSourceKey(m_settings.inputSource)},
+        {QStringLiteral("fileLayout"), recordingFileLayoutKey(m_settings.fileLayout)},
         {QStringLiteral("channels"), channels},
+        {QStringLiteral("tracks"), tracks},
         {QStringLiteral("sampleRate"), m_settings.sampleRate},
         {QStringLiteral("containerBits"), 32},
         {QStringLiteral("validBits"), 24},
@@ -421,6 +568,10 @@ bool MultiChannelWavWriter::writeManifest(QString *errorMessage)
         {QStringLiteral("segments"), segments},
         {QStringLiteral("gainApplied"), m_settings.gainApplied},
     };
+    if (m_settings.trackKeys.size() == 1) {
+        root.insert(QStringLiteral("trackKey"), m_settings.trackKeys.first());
+        root.insert(QStringLiteral("trackName"), m_settings.trackNames.first());
+    }
     if (m_settings.gainApplied) {
         root.insert(QStringLiteral("gain"), QJsonObject {
             {QStringLiteral("initial"), gainConfigurationToJson(m_settings.initialGainConfiguration)},

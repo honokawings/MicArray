@@ -482,6 +482,10 @@ NoiseReductionSettings sanitizeNoiseReductionSettings(
         || value.monitorGainDb < -60.0 || value.monitorGainDb > 48.0) {
         value.monitorGainDb = defaults.monitorGainDb;
     }
+    if (value.monitorBufferMilliseconds < 50
+        || value.monitorBufferMilliseconds > 1000) {
+        value.monitorBufferMilliseconds = defaults.monitorBufferMilliseconds;
+    }
     if (value.bandPass.preset != BandPassPreset::Voice
         && value.bandPass.preset != BandPassPreset::Music
         && value.bandPass.preset != BandPassPreset::Custom) {
@@ -992,6 +996,13 @@ NoiseReductionSettings AppSettings::noiseReduction() const
     value.monitorEnabled =
         m_settings->value(group + QStringLiteral("monitorEnabled"),
                           defaults.monitorEnabled).toBool();
+    if (!readIntegerSetting(
+            m_settings->value(
+                group + QStringLiteral("monitorBufferMilliseconds"),
+                defaults.monitorBufferMilliseconds),
+            &value.monitorBufferMilliseconds)) {
+        value.monitorBufferMilliseconds = defaults.monitorBufferMilliseconds;
+    }
     value.monitorSource = noiseSourceFromKey(
         m_settings->value(group + QStringLiteral("monitorSource"),
                           noiseSourceKey(defaults.monitorSource)).toString(),
@@ -1441,6 +1452,8 @@ void AppSettings::saveNoiseReduction(
                          value.dualB2SuppressionCoefficient);
     m_settings->setValue(group + QStringLiteral("monitorEnabled"),
                          value.monitorEnabled);
+    m_settings->setValue(group + QStringLiteral("monitorBufferMilliseconds"),
+                         value.monitorBufferMilliseconds);
     m_settings->setValue(group + QStringLiteral("monitorSource"),
                          noiseSourceKey(value.monitorSource));
     m_settings->setValue(group + QStringLiteral("monitorGainDb"),

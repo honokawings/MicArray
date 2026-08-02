@@ -8,6 +8,10 @@
 
 **Tech Stack:** C++20, Qt 6 Widgets/Multimedia/Core/Test, CMake, WAV extensible PCM, QThread queued signals.
 
+## 实施状态（2026-08-02）
+
+任务 1 至 6 的实现已集成到当前工作区；任务 7 的文档与全量验证结果记录在同目录 `task-7-report.md`。独立最终审查已由 controller 完成且无 Critical/Important；本次 Minor fix wave 后由 controller 进行 scoped re-review。
+
 ## Global Constraints
 
 - Preserve every existing unstaged workspace change; do not create a branch, stage, or commit.
@@ -187,9 +191,9 @@
 - Update: `docs/superpowers/specs/2026-08-02-noise-monitor-buffer-and-multisource-recording-design.md`
 - Update: `docs/superpowers/plans/2026-08-02-noise-monitor-buffer-and-multisource-recording.md`
 
-- [ ] Document monitor latency/smoothness trade-off, overflow behavior, four stage semantics, source exclusivity, both layouts, filenames, shortcut behavior, background processing, and failure policy.
-- [ ] Add a 2026-08-02 change-record row.
-- [ ] Run Debug full build and all six CTest targets with the Qt 6.11.1 MinGW runtime on PATH.
-- [ ] Run `python -m unittest discover -s tests/tools -p "test_*.py" -v` and `python tools/mock_device_server.py --self-test`.
-- [ ] Request a read-only independent review focused on audio continuity, bounded queues, track alignment, partial writer failure, thread transitions, shortcut reuse, and preservation of existing recording behavior; fix every Critical/Important finding.
-- [ ] Run fresh full verification, `git diff --check`, `git status --short`, and leave all changes unstaged and uncommitted.
+- [x] Document monitor latency/smoothness trade-off, overflow behavior, four stage semantics, source exclusivity, both layouts, filenames, shortcut behavior, background processing, and failure policy.
+- [x] Add a 2026-08-02 change-record row.
+- [x] Run Debug full build and all six CTest targets with the Qt 6.11.1 MinGW runtime on PATH.
+- [x] Run `python -m unittest discover -s tests/tools -p "test_*.py" -v` and `python tools/mock_device_server.py --self-test`.
+- [x] Request a read-only independent review focused on audio continuity, bounded queues, track alignment, partial writer failure, thread transitions, shortcut reuse, and preservation of existing recording behavior; fix every Critical/Important finding. （controller 最终审查已完成且无 Critical/Important；本 fix wave 随后由 controller scoped re-review。）
+- [x] Run fresh full verification, `git diff --check`, `git status --short`, and leave all changes unstaged and uncommitted.

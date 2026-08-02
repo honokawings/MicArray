@@ -12,8 +12,19 @@
 #include <memory>
 
 #include "media/channelgainprocessor.h"
+#include "media/noisereductiontypes.h"
 
 namespace MicArray {
+
+enum class RecordingInputSource {
+    Array,
+    NoiseReductionStages,
+};
+
+enum class RecordingFileLayout {
+    SingleMultichannel,
+    SeparateTracks,
+};
 
 struct RecordingSettings {
     QString outputDirectory;
@@ -22,11 +33,17 @@ struct RecordingSettings {
     int sampleRate = 48000;
     bool gainApplied = false;
     GainConfiguration initialGainConfiguration;
+    RecordingInputSource inputSource = RecordingInputSource::Array;
+    RecordingFileLayout fileLayout = RecordingFileLayout::SingleMultichannel;
+    QVector<NoiseReductionDataFlowStage> noiseReductionStages;
+    QStringList trackKeys;
+    QStringList trackNames;
 };
 
 struct RecordingSummary {
     QString manifestPath;
     QStringList segmentPaths;
+    quint64 audioFileCount = 0;
     quint64 inputFrames = 0;
     quint64 sampleFrames = 0;
     quint64 dataBytes = 0;

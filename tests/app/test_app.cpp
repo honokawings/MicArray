@@ -51,6 +51,7 @@ private slots:
     void persistsNoiseReductionSettings();
     void migratesLegacyNoiseDirectionCodesToContinuousAngles();
     void invalidNoiseReductionFieldsFallBackIndependently();
+    void invalidMonitorBufferMillisecondsFallsBackIndependently();
     void healthMonitorClassifiesFreshnessAndCalculatesRates();
     void loggerRotatesAndRetainsBoundedFiles();
     void alertCoalescerSuppressesRepeatedEventsWithinOneSecond();
@@ -785,6 +786,7 @@ void AppTest::persistsNoiseReductionSettings()
     expected.dualB1SuppressionCoefficient = 4.25;
     expected.dualB2SuppressionCoefficient = 6.75;
     expected.monitorEnabled = false;
+    expected.monitorBufferMilliseconds = 400;
     expected.monitorSource = NoiseSignalSource::SuppressionB1;
     expected.monitorGainDb = 6.5;
     expected.firstPlotSource = NoiseSignalSource::FirstElement;
@@ -847,6 +849,7 @@ void AppTest::usesNoiseReductionProcessingDefaults()
     QCOMPARE(actual.dualB1SuppressionCoefficient, 5.0);
     QCOMPARE(actual.dualB2SuppressionCoefficient, 5.0);
     QVERIFY(actual.monitorEnabled);
+    QCOMPARE(actual.monitorBufferMilliseconds, 250);
     QVERIFY(!actual.bandPass.enabled);
     QCOMPARE(actual.bandPass.preset, BandPassPreset::Voice);
     QCOMPARE(actual.bandPass.lowCutoffHz, 100.0);
@@ -965,6 +968,8 @@ void AppTest::invalidNoiseReductionFieldsFallBackIndependently()
         raw.setValue(QStringLiteral("noiseReduction/monitorSource"), QStringLiteral("missing"));
         raw.setValue(QStringLiteral("noiseReduction/monitorGainDb"),
                      std::numeric_limits<double>::infinity());
+        raw.setValue(QStringLiteral("noiseReduction/monitorBufferMilliseconds"),
+                     49);
         raw.setValue(QStringLiteral("noiseReduction/firstPlotSource"),
                      QStringLiteral("firstElement"));
         raw.setValue(QStringLiteral("noiseReduction/secondPlotSource"),
@@ -1027,6 +1032,8 @@ void AppTest::invalidNoiseReductionFieldsFallBackIndependently()
     QVERIFY(!actual.monitorEnabled);
     QCOMPARE(actual.monitorSource, defaults.monitorSource);
     QCOMPARE(actual.monitorGainDb, defaults.monitorGainDb);
+    QCOMPARE(actual.monitorBufferMilliseconds,
+             defaults.monitorBufferMilliseconds);
     QCOMPARE(actual.firstPlotSource, NoiseSignalSource::FirstElement);
     QCOMPARE(actual.secondPlotSource, NoiseSignalSource::SuppressionB2);
     QVERIFY(actual.bandPass.enabled);
@@ -1063,6 +1070,32 @@ void AppTest::invalidNoiseReductionFieldsFallBackIndependently()
     QCOMPARE(actual.mapping, defaults.mapping);
     QCOMPARE(actual.camera.centerAzimuthDegrees, 15.0);
     QCOMPARE(actual.camera.horizontalFovDegrees, 180.0);
+}
+
+void AppTest::invalidMonitorBufferMillisecondsFallsBackIndependently()
+{
+    const QList<QVariant> invalidValues {
+        QVariant(49),
+        QVariant(1001),
+        QVariant(std::numeric_limits<double>::infinity()),
+    };
+
+    for (const QVariant &invalidValue : invalidValues) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("settings.ini"));
+        {
+            QSettings raw(path, QSettings::IniFormat);
+            raw.setValue(
+                QStringLiteral("noiseReduction/monitorBufferMilliseconds"),
+                invalidValue);
+            raw.setValue(QStringLiteral("noiseReduction/monitorGainDb"), 6.5);
+        }
+
+        const NoiseReductionSettings actual = AppSettings(path).noiseReduction();
+        QCOMPARE(actual.monitorBufferMilliseconds, 250);
+        QCOMPARE(actual.monitorGainDb, 6.5);
+    }
 }
 
 void AppTest::healthMonitorClassifiesFreshnessAndCalculatesRates()

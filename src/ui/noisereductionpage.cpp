@@ -22,7 +22,9 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QSpinBox>
 #include <QStackedWidget>
+#include <QSet>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -93,6 +95,10 @@ NoiseReductionPage::NoiseReductionPage(
     buildPresentationWindow();
     restoreSettings();
     connectUi();
+    m_processingStatusMessage = m_settings.enabled
+        ? QStringLiteral("降噪处理已启用")
+        : QStringLiteral("降噪处理已关闭");
+    refreshStatusLabel();
 
     m_workerThread.setObjectName(QStringLiteral("NoiseReductionThread"));
     m_worker->moveToThread(&m_workerThread);
@@ -111,17 +117,21 @@ NoiseReductionPage::NoiseReductionPage(
     });
     connect(m_worker, &NoiseReductionWorker::plotFrameReady,
             this, &NoiseReductionPage::showPlotFrame);
+    connect(m_worker, &NoiseReductionWorker::recordingFrameReady,
+            this, &NoiseReductionPage::noiseRecordingFrameReady,
+            Qt::QueuedConnection);
     connect(m_worker, &NoiseReductionWorker::warningRaised, this,
             [this](const QString &message) {
-                m_statusLabel->setText(message);
+                m_processingStatusMessage = message;
+                refreshStatusLabel();
             });
     connect(m_worker, &NoiseReductionWorker::statusChanged, this,
             [this](const QString &message) {
-                m_statusLabel->setText(message);
+                m_processingStatusMessage = message;
+                refreshStatusLabel();
             });
     m_workerThread.start();
     emit configureWorkerRequested(m_settings, m_sampleRate);
-    emit workerActiveRequested(false);
     setProperty("pendingAudioFrames", 0);
     setProperty("droppedAudioFrames", qulonglong(0));
     setProperty("submittedAudioFrames", qulonglong(0));
@@ -152,7 +162,7 @@ NoiseReductionPage::~NoiseReductionPage()
 void NoiseReductionPage::setActive(bool active)
 {
     m_active = active;
-    emit workerActiveRequested(active && m_settings.enabled);
+    updateWorkerActive();
     if (!active) {
         setPresentationMode(false);
         m_firstWaveform->clear();
@@ -160,6 +170,59 @@ void NoiseReductionPage::setActive(bool active)
         m_firstSpectrum->clear();
         m_secondSpectrum->clear();
     }
+}
+
+void NoiseReductionPage::setRecordingRequired(
+    bool required,
+    const QVector<NoiseReductionDataFlowStage> &stages)
+{
+    QVector<NoiseReductionDataFlowStage> normalizedStages;
+    if (required) {
+        QSet<NoiseReductionDataFlowStage> selectedStages;
+        normalizedStages.reserve(stages.size());
+        for (NoiseReductionDataFlowStage stage : stages) {
+            switch (stage) {
+            case NoiseReductionDataFlowStage::Suppression:
+            case NoiseReductionDataFlowStage::BandPass:
+            case NoiseReductionDataFlowStage::LogMmse:
+            case NoiseReductionDataFlowStage::AutomaticGainControl:
+                if (!selectedStages.contains(stage)) {
+                    selectedStages.insert(stage);
+                    normalizedStages.append(stage);
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    m_recordingRequired = required;
+    m_recordingStages = normalizedStages;
+    QMetaObject::invokeMethod(
+        m_worker,
+        [worker = m_worker, normalizedStages]() {
+            worker->setRecordingStages(normalizedStages);
+        },
+        Qt::QueuedConnection);
+    updateWorkerActive();
+}
+
+void NoiseReductionPage::setQuickRecordingState(
+    bool active, bool canStart, const QString &message)
+{
+    m_recordingStatusMessage = message;
+    if (active && canStart) {
+        m_quickRecordingButton->setText(QStringLiteral("停止录制"));
+        m_quickRecordingButton->setEnabled(true);
+    } else if (active) {
+        m_quickRecordingButton->setText(QStringLiteral("正在停止…"));
+        m_quickRecordingButton->setEnabled(false);
+    } else {
+        m_quickRecordingButton->setText(QStringLiteral("开始录制"));
+        m_quickRecordingButton->setEnabled(canStart);
+    }
+    refreshStatusLabel();
 }
 
 void NoiseReductionPage::setConnected(bool connected)
@@ -193,7 +256,7 @@ void NoiseReductionPage::submitRawAudioFrame(
     quint32 timestampSeconds,
     quint32 timestampMicros)
 {
-    if (!m_active || !m_settings.enabled) {
+    if (!workerShouldBeActive()) {
         return;
     }
     if (m_pendingAudioFrames >= MaximumPendingFrames) {
@@ -215,8 +278,9 @@ void NoiseReductionPage::submitRawAudioFrame(
 void NoiseReductionPage::setControlSendResult(
     bool success, const QString &message)
 {
-    m_statusLabel->setText(
-        success ? QStringLiteral("方向控制已发送：%1").arg(message) : message);
+    m_processingStatusMessage =
+        success ? QStringLiteral("方向控制已发送：%1").arg(message) : message;
+    refreshStatusLabel();
 }
 
 void NoiseReductionPage::showPresentation()
@@ -397,9 +461,24 @@ void NoiseReductionPage::buildUi()
     m_monitorGainSpin->setRange(-60.0, 48.0);
     m_monitorGainSpin->setDecimals(1);
     m_monitorGainSpin->setSuffix(QStringLiteral(" dB"));
+    m_monitorBufferSpin = new QSpinBox(monitorGroup);
+    m_monitorBufferSpin->setObjectName(
+        QStringLiteral("noiseMonitorBufferMilliseconds"));
+    m_monitorBufferSpin->setRange(50, 1000);
+    m_monitorBufferSpin->setSingleStep(50);
+    m_monitorBufferSpin->setSuffix(QStringLiteral(" ms"));
+    m_monitorBufferSpin->installEventFilter(this);
+    m_wheelBlockedControls.append(m_monitorBufferSpin);
+    m_quickRecordingButton = new QPushButton(
+        QStringLiteral("开始录制"), monitorGroup);
+    m_quickRecordingButton->setObjectName(
+        QStringLiteral("noiseQuickRecordingButton"));
+    m_quickRecordingButton->setEnabled(false);
     monitorLayout->addRow(m_monitorEnabledCheck);
     monitorLayout->addRow(QStringLiteral("监听源"), m_monitorSourceCombo);
     monitorLayout->addRow(QStringLiteral("监听增益"), m_monitorGainSpin);
+    monitorLayout->addRow(QStringLiteral("监听缓冲"), m_monitorBufferSpin);
+    monitorLayout->addRow(m_quickRecordingButton);
     monitorPanelLayout->addWidget(monitorGroup);
     monitorPanelLayout->addStretch();
 
@@ -794,6 +873,10 @@ void NoiseReductionPage::connectUi()
             this, settingsChanged);
     connect(m_monitorGainSpin, &QDoubleSpinBox::valueChanged,
             this, settingsChanged);
+    connect(m_monitorBufferSpin, &QSpinBox::valueChanged,
+            this, settingsChanged);
+    connect(m_quickRecordingButton, &QPushButton::clicked,
+            this, &NoiseReductionPage::quickRecordingToggleRequested);
     connect(m_bandPassEnabledCheck, &QCheckBox::toggled,
             this, settingsChanged);
     connect(m_bandPassPresetCombo, &QComboBox::currentIndexChanged,
@@ -961,6 +1044,8 @@ void NoiseReductionPage::restoreSettings()
     selectData(m_monitorSourceCombo,
                static_cast<int>(m_settings.monitorSource));
     m_monitorGainSpin->setValue(m_settings.monitorGainDb);
+    m_monitorBufferSpin->setValue(
+        m_settings.monitorBufferMilliseconds);
     m_bandPassEnabledCheck->setChecked(m_settings.bandPass.enabled);
     selectData(m_bandPassPresetCombo,
                static_cast<int>(m_settings.bandPass.preset));
@@ -1052,6 +1137,7 @@ NoiseReductionSettings NoiseReductionPage::settingsFromUi() const
     value.monitorSource = static_cast<NoiseSignalSource>(
         m_monitorSourceCombo->currentData().toInt());
     value.monitorGainDb = m_monitorGainSpin->value();
+    value.monitorBufferMilliseconds = m_monitorBufferSpin->value();
     value.bandPass.enabled = m_bandPassEnabledCheck->isChecked();
     value.bandPass.preset = static_cast<BandPassPreset>(
         m_bandPassPresetCombo->currentData().toInt());
@@ -1139,13 +1225,41 @@ void NoiseReductionPage::applySettingsFromUi()
     refreshNodeSummaries();
     refreshDirectionViews();
     emit configureWorkerRequested(m_settings, m_sampleRate);
-    emit workerActiveRequested(m_active && m_settings.enabled);
+    updateWorkerActive();
+    emit settingsChanged();
     if (!m_settings.enabled) {
         m_firstWaveform->clear();
         m_secondWaveform->clear();
         m_firstSpectrum->clear();
         m_secondSpectrum->clear();
     }
+}
+
+bool NoiseReductionPage::workerShouldBeActive() const
+{
+    return (m_active || m_recordingRequired) && m_settings.enabled;
+}
+
+void NoiseReductionPage::updateWorkerActive()
+{
+    const bool active = workerShouldBeActive();
+    if (m_workerActive == active) {
+        return;
+    }
+    m_workerActive = active;
+    emit workerActiveRequested(active);
+}
+
+void NoiseReductionPage::refreshStatusLabel()
+{
+    QString message = m_processingStatusMessage;
+    if (!m_recordingStatusMessage.isEmpty()) {
+        if (!message.isEmpty()) {
+            message += QLatin1Char('\n');
+        }
+        message += m_recordingStatusMessage;
+    }
+    m_statusLabel->setText(message);
 }
 
 void NoiseReductionPage::refreshProcessingAvailability()

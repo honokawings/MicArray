@@ -18,6 +18,8 @@
 #include <QToolButton>
 #include <QVector>
 
+#include <optional>
+
 #include "app/appsettings.h"
 #include "app/logger.h"
 #include "control/controlvalues.h"
@@ -41,6 +43,7 @@
 
 class QKeyEvent;
 class QSplitter;
+class QStackedWidget;
 class QVBoxLayout;
 
 namespace MicArray {
@@ -87,9 +90,12 @@ private slots:
     void resetSettingsToDefaults();
     void startRecording();
     void stopRecording();
+    void toggleRecording();
     void chooseRecordingDirectory();
     void updateRecordingState(RecordingState state);
     void updateRecordingStatistics(const RecordingStatistics &statistics);
+    void handleRecordingError(const QString &message);
+    void enqueueNoiseReductionRecordingFrame(const NoiseReductionRecordingFrame &frame);
     void saveGainProfile();
     void loadGainProfile();
 
@@ -117,8 +123,12 @@ private:
     QVector<qint16> currentControlVector() const;
     void setControlVector(const QVector<qint16> &values);
     QVector<int> selectedRecordingChannels() const;
+    QVector<NoiseReductionDataFlowStage> selectedNoiseRecordingStages() const;
+    RecordingSettings recordingSettingsFromUi() const;
+    bool recordingConfigurationIsValid() const;
     void setRecordingConfigurationEnabled(bool enabled);
-    void updateRecordingStartEnabled();
+    void updateRecordingStartEnabled(
+        const QString &message = QString());
     void persistGainConfiguration();
     void applyUiTheme(UiTheme theme, bool persist);
     void setPresentationMode(bool enabled);
@@ -237,6 +247,9 @@ private:
     QToolButton *m_themeButton = nullptr;
     QPushButton *m_exportDiagnosticsButton = nullptr;
     QLineEdit *m_recordingDirectoryEdit = nullptr;
+    QComboBox *m_recordingSourceModeCombo = nullptr;
+    QStackedWidget *m_recordingSourceStack = nullptr;
+    QComboBox *m_recordingFileLayoutCombo = nullptr;
     QPushButton *m_recordingBrowseButton = nullptr;
     QPushButton *m_recordingStartButton = nullptr;
     QPushButton *m_recordingStopButton = nullptr;
@@ -245,6 +258,9 @@ private:
     QLabel *m_recordingErrorLabel = nullptr;
     QWidget *m_recordingSelectionCommands = nullptr;
     QVector<QToolButton *> m_recordingChannelButtons;
+    QVector<QCheckBox *> m_recordingNoiseStageButtons;
+    std::optional<RecordingInputSource> m_activeRecordingInputSource;
+    QString m_lastRecordingError;
     bool m_controlDirty = false;
 };
 

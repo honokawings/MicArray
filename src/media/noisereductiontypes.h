@@ -44,6 +44,25 @@ enum class NoisePostProcessingNode {
     AutomaticGainControl,
 };
 
+enum class NoiseReductionDataFlowStage {
+    Suppression,
+    BandPass,
+    LogMmse,
+    AutomaticGainControl,
+};
+
+struct NoiseReductionStageSamples {
+    NoiseReductionDataFlowStage stage;
+    QVector<float> samples;
+};
+
+struct NoiseReductionRecordingFrame {
+    QVector<NoiseReductionStageSamples> stages;
+    int sampleRate;
+    quint32 timestampSeconds;
+    quint32 timestampMicros;
+};
+
 struct BandPassFilterSettings {
     bool enabled = false;
     BandPassPreset preset = BandPassPreset::Voice;
@@ -102,6 +121,7 @@ struct NoiseReductionSettings {
     double dualB1SuppressionCoefficient = 5.0;
     double dualB2SuppressionCoefficient = 5.0;
     bool monitorEnabled = true;
+    int monitorBufferMilliseconds = 250;
     NoiseSignalSource monitorSource = NoiseSignalSource::Denoised;
     double monitorGainDb = 0.0;
     NoiseSignalSource firstPlotSource = NoiseSignalSource::EnhancedA;
@@ -140,6 +160,8 @@ struct NoiseReductionPlotFrame {
 };
 
 QString noiseSignalSourceName(NoiseSignalSource source);
+QString noiseReductionDataFlowStageName(NoiseReductionDataFlowStage stage);
+QString noiseReductionDataFlowStageKey(NoiseReductionDataFlowStage stage);
 QVector<NoisePostProcessingNode> normalizedPostProcessingOrder(
     const QVector<NoisePostProcessingNode> &order);
 
@@ -150,5 +172,8 @@ Q_DECLARE_METATYPE(MicArray::NoiseReductionAlgorithm)
 Q_DECLARE_METATYPE(MicArray::NoiseSignalSource)
 Q_DECLARE_METATYPE(MicArray::NoiseDirectionSelection)
 Q_DECLARE_METATYPE(MicArray::NoisePostProcessingNode)
+Q_DECLARE_METATYPE(MicArray::NoiseReductionDataFlowStage)
+Q_DECLARE_METATYPE(MicArray::NoiseReductionStageSamples)
+Q_DECLARE_METATYPE(MicArray::NoiseReductionRecordingFrame)
 Q_DECLARE_METATYPE(MicArray::NoiseReductionSettings)
 Q_DECLARE_METATYPE(MicArray::NoiseReductionPlotFrame)

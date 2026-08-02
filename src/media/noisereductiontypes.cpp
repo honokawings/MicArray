@@ -19,6 +19,36 @@ QString noiseSignalSourceName(NoiseSignalSource source)
     return QStringLiteral("未知音频源");
 }
 
+QString noiseReductionDataFlowStageName(NoiseReductionDataFlowStage stage)
+{
+    switch (stage) {
+    case NoiseReductionDataFlowStage::Suppression:
+        return QStringLiteral("降噪抑制");
+    case NoiseReductionDataFlowStage::BandPass:
+        return QStringLiteral("带通滤波");
+    case NoiseReductionDataFlowStage::LogMmse:
+        return QStringLiteral("LogMMSE");
+    case NoiseReductionDataFlowStage::AutomaticGainControl:
+        return QStringLiteral("自动增益控制");
+    }
+    return QStringLiteral("未知阶段");
+}
+
+QString noiseReductionDataFlowStageKey(NoiseReductionDataFlowStage stage)
+{
+    switch (stage) {
+    case NoiseReductionDataFlowStage::Suppression:
+        return QStringLiteral("suppression");
+    case NoiseReductionDataFlowStage::BandPass:
+        return QStringLiteral("bandpass");
+    case NoiseReductionDataFlowStage::LogMmse:
+        return QStringLiteral("logmmse");
+    case NoiseReductionDataFlowStage::AutomaticGainControl:
+        return QStringLiteral("agc");
+    }
+    return QStringLiteral("unknown");
+}
+
 QVector<NoisePostProcessingNode> normalizedPostProcessingOrder(
     const QVector<NoisePostProcessingNode> &order)
 {

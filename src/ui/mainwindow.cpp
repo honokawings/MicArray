@@ -24,10 +24,12 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPropertyAnimation>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStandardPaths>
+#include <QStackedWidget>
 #include <QTabBar>
 #include <QTime>
 #include <QToolButton>
@@ -191,6 +193,7 @@ void MainWindow::buildUi()
 
     m_mainTabs = new QTabWidget(central);
     m_mainTabs->setObjectName(QStringLiteral("mainTabs"));
+    m_mainTabs->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
     m_mainTabs->addTab(buildMonitorPage(), QStringLiteral("音视频融合"));
     m_noiseReductionPage = new NoiseReductionPage(&m_settings, m_mainTabs);
     m_mainTabs->addTab(m_noiseReductionPage, QStringLiteral("降噪处理"));
@@ -236,7 +239,12 @@ QWidget *MainWindow::buildMonitorPage()
     m_monitorSplitter = mainSplitter;
     mainSplitter->setChildrenCollapsible(false);
 
-    auto *left = new QWidget(mainSplitter);
+    auto *leftScroll = new QScrollArea(mainSplitter);
+    leftScroll->setObjectName(QStringLiteral("monitorLeftScrollArea"));
+    leftScroll->setWidgetResizable(true);
+    leftScroll->setFrameShape(QFrame::NoFrame);
+    leftScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *left = new QWidget;
     left->setObjectName(QStringLiteral("monitorLeftPanel"));
     m_monitorLeftPanel = left;
     auto *leftLayout = new QVBoxLayout(left);
@@ -324,7 +332,8 @@ QWidget *MainWindow::buildMonitorPage()
     settingsLayout->addRow(QString(), m_resetSettingsButton);
     leftLayout->addWidget(settingsGroup);
     leftLayout->addStretch();
-    mainSplitter->addWidget(left);
+    leftScroll->setWidget(left);
+    mainSplitter->addWidget(leftScroll);
 
     auto *center = new QWidget(mainSplitter);
     center->setObjectName(QStringLiteral("monitorCenterPanel"));
@@ -434,15 +443,31 @@ QWidget *MainWindow::buildRecordingPage()
     page->setObjectName(QStringLiteral("recordingPage"));
     auto *layout = new QHBoxLayout(page);
 
-    auto *channelGroup = new QGroupBox(QStringLiteral("录制通道"), page);
-    auto *channelLayout = new QVBoxLayout(channelGroup);
+    auto *sourceGroup = new QGroupBox(QStringLiteral("录制来源"), page);
+    auto *sourceLayout = new QVBoxLayout(sourceGroup);
+    m_recordingSourceModeCombo = new QComboBox(sourceGroup);
+    m_recordingSourceModeCombo->setObjectName(QStringLiteral("recordingSourceModeCombo"));
+    m_recordingSourceModeCombo->addItem(
+        QStringLiteral("阵列通道"),
+        static_cast<int>(RecordingInputSource::Array));
+    m_recordingSourceModeCombo->addItem(
+        QStringLiteral("降噪数据流"),
+        static_cast<int>(RecordingInputSource::NoiseReductionStages));
+    sourceLayout->addWidget(m_recordingSourceModeCombo);
+
+    m_recordingSourceStack = new QStackedWidget(sourceGroup);
+    m_recordingSourceStack->setObjectName(QStringLiteral("recordingSourceStack"));
+
+    auto *channelPanel = new QWidget(m_recordingSourceStack);
+    auto *channelLayout = new QVBoxLayout(channelPanel);
+    channelLayout->setContentsMargins(0, 0, 0, 0);
     auto *channelGrid = new QGridLayout();
     channelGrid->setSpacing(6);
     m_recordingChannelButtons.clear();
     for (int row = 0; row < AudioFrameDecoder::Rows; ++row) {
         for (int column = 0; column < AudioFrameDecoder::Columns; ++column) {
             const int channel = row * AudioFrameDecoder::Columns + column;
-            auto *button = new QToolButton(channelGroup);
+            auto *button = new QToolButton(channelPanel);
             button->setObjectName(QStringLiteral("recordChannel_%1").arg(channel));
             button->setText(QStringLiteral("CH%1").arg(channel));
             button->setProperty("recordingChannelButton", true);
@@ -459,13 +484,13 @@ QWidget *MainWindow::buildRecordingPage()
     }
     channelLayout->addLayout(channelGrid);
 
-    m_recordingSelectionCommands = new QWidget(channelGroup);
+    m_recordingSelectionCommands = new QWidget(channelPanel);
     auto *selectionCommands = new QHBoxLayout(m_recordingSelectionCommands);
     selectionCommands->setContentsMargins(0, 0, 0, 0);
-    auto *selectAll = new QPushButton(QStringLiteral("全选"), channelGroup);
-    auto *clear = new QPushButton(QStringLiteral("清空"), channelGroup);
-    auto *invert = new QPushButton(QStringLiteral("反选"), channelGroup);
-    auto *selectCurrent = new QPushButton(QStringLiteral("当前播放通道"), channelGroup);
+    auto *selectAll = new QPushButton(QStringLiteral("全选"), channelPanel);
+    auto *clear = new QPushButton(QStringLiteral("清空"), channelPanel);
+    auto *invert = new QPushButton(QStringLiteral("反选"), channelPanel);
+    auto *selectCurrent = new QPushButton(QStringLiteral("当前播放通道"), channelPanel);
     selectAll->setObjectName(QStringLiteral("recordSelectAllButton"));
     clear->setObjectName(QStringLiteral("recordClearButton"));
     invert->setObjectName(QStringLiteral("recordInvertButton"));
@@ -476,7 +501,35 @@ QWidget *MainWindow::buildRecordingPage()
     selectionCommands->addWidget(selectCurrent);
     channelLayout->addWidget(m_recordingSelectionCommands);
     channelLayout->addStretch();
-    layout->addWidget(channelGroup, 3);
+    m_recordingSourceStack->addWidget(channelPanel);
+
+    auto *noiseStagePanel = new QWidget(m_recordingSourceStack);
+    auto *noiseStageLayout = new QVBoxLayout(noiseStagePanel);
+    noiseStageLayout->setContentsMargins(0, 0, 0, 0);
+    noiseStageLayout->setSpacing(8);
+    const QVector<NoiseReductionDataFlowStage> noiseStages {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::BandPass,
+        NoiseReductionDataFlowStage::LogMmse,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+    m_recordingNoiseStageButtons.clear();
+    for (NoiseReductionDataFlowStage stage : noiseStages) {
+        auto *button = new QCheckBox(noiseReductionDataFlowStageName(stage), noiseStagePanel);
+        button->setObjectName(
+            QStringLiteral("recordingNoiseStage_%1")
+                .arg(noiseReductionDataFlowStageKey(stage)));
+        button->setChecked(true);
+        noiseStageLayout->addWidget(button);
+        m_recordingNoiseStageButtons.append(button);
+        connect(button, &QCheckBox::toggled, this, [this]() {
+            updateRecordingStartEnabled();
+        });
+    }
+    noiseStageLayout->addStretch();
+    m_recordingSourceStack->addWidget(noiseStagePanel);
+    sourceLayout->addWidget(m_recordingSourceStack, 1);
+    layout->addWidget(sourceGroup, 3);
 
     auto *details = new QWidget(page);
     auto *detailsLayout = new QVBoxLayout(details);
@@ -505,7 +558,16 @@ QWidget *MainWindow::buildRecordingPage()
     recordingCommandLayout->setContentsMargins(0, 0, 0, 0);
     recordingCommandLayout->addWidget(m_recordingStartButton);
     recordingCommandLayout->addWidget(m_recordingStopButton);
+    m_recordingFileLayoutCombo = new QComboBox(storageGroup);
+    m_recordingFileLayoutCombo->setObjectName(QStringLiteral("recordingFileLayoutCombo"));
+    m_recordingFileLayoutCombo->addItem(
+        QStringLiteral("单个多通道文件"),
+        static_cast<int>(RecordingFileLayout::SingleMultichannel));
+    m_recordingFileLayoutCombo->addItem(
+        QStringLiteral("分离为单声道文件"),
+        static_cast<int>(RecordingFileLayout::SeparateTracks));
     storageLayout->addRow(QStringLiteral("保存目录"), directoryRow);
+    storageLayout->addRow(QStringLiteral("文件布局"), m_recordingFileLayoutCombo);
     storageLayout->addRow(QStringLiteral("录制格式"), new QLabel(QStringLiteral("多通道 WAV · 32-bit 容器 / 24-bit 有效位"), storageGroup));
     storageLayout->addRow(QString(), recordingCommands);
     detailsLayout->addWidget(storageGroup);
@@ -547,6 +609,19 @@ QWidget *MainWindow::buildRecordingPage()
             m_recordingChannelButtons.at(channel)->setChecked(channel == currentChannel);
         }
     });
+    connect(m_recordingSourceModeCombo,
+            &QComboBox::currentIndexChanged,
+            this,
+            [this](int index) {
+                m_recordingSourceStack->setCurrentIndex(index);
+                updateRecordingStartEnabled();
+            });
+    connect(m_recordingFileLayoutCombo,
+            &QComboBox::currentIndexChanged,
+            this,
+            [this]() {
+                updateRecordingStartEnabled();
+            });
 
     return page;
 }
@@ -679,6 +754,20 @@ void MainWindow::connectSignals()
     connect(m_recordingBrowseButton, &QPushButton::clicked, this, &MainWindow::chooseRecordingDirectory);
     connect(m_recordingStartButton, &QPushButton::clicked, this, &MainWindow::startRecording);
     connect(m_recordingStopButton, &QPushButton::clicked, this, &MainWindow::stopRecording);
+    connect(m_noiseReductionPage,
+            &NoiseReductionPage::quickRecordingToggleRequested,
+            this,
+            &MainWindow::toggleRecording);
+    connect(m_noiseReductionPage,
+            &NoiseReductionPage::noiseRecordingFrameReady,
+            this,
+            &MainWindow::enqueueNoiseReductionRecordingFrame);
+    connect(m_noiseReductionPage,
+            &NoiseReductionPage::settingsChanged,
+            this,
+            [this]() {
+                updateRecordingStartEnabled();
+            });
     connect(m_videoLabel, &VideoPreviewWidget::fullScreenRequested, this, &MainWindow::togglePresentationMode);
     connect(m_dashboardHeatmap, &ArrayHeatmapWidget::channelSelected, this, [this](int channel) {
         m_outputChannelSpin->setValue(channel);
@@ -807,7 +896,9 @@ void MainWindow::connectSignals()
                 if (gainStateChanged) {
                     m_dashboardHeatmap->setGainSnapshot(snapshot);
                 }
-                if (m_audioRecorder.state() == RecordingState::Recording) {
+                if (m_audioRecorder.state() == RecordingState::Recording
+                    && m_activeRecordingInputSource
+                           == RecordingInputSource::Array) {
                     m_audioRecorder.enqueueFrame(payload, m_gainConfiguration);
                 }
                 m_liveLocalizationPage->submitAdjustedAudioFrame(
@@ -842,10 +933,8 @@ void MainWindow::connectSignals()
     });
     connect(&m_audioRecorder, &AudioRecorder::stateChanged, this, &MainWindow::updateRecordingState);
     connect(&m_audioRecorder, &AudioRecorder::statisticsChanged, this, &MainWindow::updateRecordingStatistics);
-    connect(&m_audioRecorder, &AudioRecorder::recordingError, this, [this](const QString &message) {
-        m_recordingErrorLabel->setText(QStringLiteral("错误: %1").arg(message));
-        m_logger.error(QStringLiteral("recording"), message);
-    });
+    connect(&m_audioRecorder, &AudioRecorder::recordingError,
+            this, &MainWindow::handleRecordingError);
 }
 
 void MainWindow::loadSettings()
@@ -1054,27 +1143,66 @@ void MainWindow::updateConnectionState(DeviceState state)
 
 void MainWindow::startRecording()
 {
-    const QVector<int> channels = selectedRecordingChannels();
-    if (channels.isEmpty()) {
-        m_recordingErrorLabel->setText(QStringLiteral("错误: 请至少选择一个录制通道"));
+    if (m_audioRecorder.state() != RecordingState::Idle
+        && m_audioRecorder.state() != RecordingState::Error) {
+        return;
+    }
+    const RecordingSettings settings = recordingSettingsFromUi();
+    if (!recordingConfigurationIsValid()) {
+        QString message;
+        if (settings.inputSource == RecordingInputSource::Array
+            && settings.channels.isEmpty()) {
+            message = QStringLiteral("错误: 请至少选择一个录制通道");
+        } else if (settings.inputSource
+                       == RecordingInputSource::NoiseReductionStages
+                   && !m_noiseReductionPage->currentSettings().enabled) {
+            message = QStringLiteral(
+                "错误: 录制降噪数据流前请先启用降噪处理");
+        } else if (settings.inputSource
+                       == RecordingInputSource::NoiseReductionStages
+                   && settings.noiseReductionStages.isEmpty()) {
+            message = QStringLiteral("错误: 请至少选择一个降噪数据流阶段");
+        } else {
+            message = QStringLiteral("错误: 录制目录或文件名无效");
+        }
+        m_recordingErrorLabel->setText(message);
+        updateRecordingStartEnabled(message);
         return;
     }
 
-    RecordingSettings settings;
-    settings.outputDirectory = m_recordingDirectoryEdit->text();
-    settings.baseName = QStringLiteral("MicArray_%1")
-                            .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz")));
-    settings.channels = channels;
-    settings.sampleRate = static_cast<int>(m_sampleRateSpin->value() * 1000.0);
-    settings.gainApplied = true;
-    settings.initialGainConfiguration = m_gainConfiguration;
     m_recordingErrorLabel->clear();
-    m_audioRecorder.startRecording(settings);
+    const bool noiseRecording = settings.inputSource
+        == RecordingInputSource::NoiseReductionStages;
+    m_noiseReductionPage->setRecordingRequired(
+        noiseRecording,
+        noiseRecording ? settings.noiseReductionStages
+                       : QVector<NoiseReductionDataFlowStage> {});
+    if (m_audioRecorder.startRecording(settings)) {
+        m_activeRecordingInputSource = settings.inputSource;
+    } else if (noiseRecording) {
+        m_noiseReductionPage->setRecordingRequired(false, {});
+    }
 }
 
 void MainWindow::stopRecording()
 {
     m_audioRecorder.stopRecording(QStringLiteral("user"));
+}
+
+void MainWindow::toggleRecording()
+{
+    switch (m_audioRecorder.state()) {
+    case RecordingState::Idle:
+    case RecordingState::Error:
+        startRecording();
+        break;
+    case RecordingState::Starting:
+    case RecordingState::Recording:
+        stopRecording();
+        break;
+    case RecordingState::Stopping:
+        break;
+    }
 }
 
 void MainWindow::chooseRecordingDirectory()
@@ -1158,9 +1286,28 @@ void MainWindow::updateRecordingState(RecordingState state)
     const bool active = state == RecordingState::Starting
         || state == RecordingState::Recording
         || state == RecordingState::Stopping;
+    if (state == RecordingState::Starting || state == RecordingState::Idle) {
+        m_lastRecordingError.clear();
+        m_recordingErrorLabel->clear();
+    }
+    if (state == RecordingState::Idle || state == RecordingState::Error) {
+        if (m_noiseReductionPage != nullptr) {
+            m_noiseReductionPage->setRecordingRequired(false, {});
+        }
+        m_activeRecordingInputSource.reset();
+    }
     setRecordingConfigurationEnabled(!active);
     m_recordingStopButton->setEnabled(active);
     updateRecordingStartEnabled();
+}
+
+void MainWindow::handleRecordingError(const QString &message)
+{
+    m_lastRecordingError = message;
+    m_recordingErrorLabel->setText(QStringLiteral("错误: %1").arg(message));
+    updateRecordingStartEnabled(
+        QStringLiteral("录制错误：%1").arg(message));
+    m_logger.error(QStringLiteral("recording"), message);
 }
 
 void MainWindow::updateRecordingStatistics(const RecordingStatistics &statistics)
@@ -1515,6 +1662,16 @@ void MainWindow::togglePresentationMode()
     setPresentationMode(!m_presentationMode);
 }
 
+void MainWindow::enqueueNoiseReductionRecordingFrame(
+    const NoiseReductionRecordingFrame &frame)
+{
+    if (m_audioRecorder.state() == RecordingState::Recording
+        && m_activeRecordingInputSource
+               == RecordingInputSource::NoiseReductionStages) {
+        m_audioRecorder.enqueueNoiseReductionFrame(frame);
+    }
+}
+
 void MainWindow::toggleCurrentPagePresentation()
 {
     if (m_mainTabs->currentWidget() == m_noiseReductionPage) {
@@ -1843,6 +2000,9 @@ void MainWindow::resetSettingsToDefaults()
     m_settings.resetAll();
     loadSettings();
     refreshControlPresets();
+    m_lastRecordingError.clear();
+    m_recordingErrorLabel->clear();
+    updateRecordingStartEnabled();
     appendAlert(LogLevel::Info, QStringLiteral("全部本地设置已恢复默认值"));
 }
 
@@ -1857,11 +2017,79 @@ QVector<int> MainWindow::selectedRecordingChannels() const
     return channels;
 }
 
+QVector<NoiseReductionDataFlowStage> MainWindow::selectedNoiseRecordingStages() const
+{
+    const QVector<NoiseReductionDataFlowStage> stages {
+        NoiseReductionDataFlowStage::Suppression,
+        NoiseReductionDataFlowStage::BandPass,
+        NoiseReductionDataFlowStage::LogMmse,
+        NoiseReductionDataFlowStage::AutomaticGainControl,
+    };
+    QVector<NoiseReductionDataFlowStage> selected;
+    for (qsizetype index = 0;
+         index < stages.size() && index < m_recordingNoiseStageButtons.size();
+         ++index) {
+        if (m_recordingNoiseStageButtons.at(index)->isChecked()) {
+            selected.append(stages.at(index));
+        }
+    }
+    return selected;
+}
+
+RecordingSettings MainWindow::recordingSettingsFromUi() const
+{
+    RecordingSettings settings;
+    settings.outputDirectory = m_recordingDirectoryEdit->text();
+    settings.baseName = QStringLiteral("MicArray_%1")
+                            .arg(QDateTime::currentDateTime().toString(
+                                QStringLiteral("yyyyMMdd_HHmmss_zzz")));
+    settings.sampleRate = static_cast<int>(m_sampleRateSpin->value() * 1000.0);
+    settings.inputSource = static_cast<RecordingInputSource>(
+        m_recordingSourceModeCombo->currentData().toInt());
+    settings.fileLayout = static_cast<RecordingFileLayout>(
+        m_recordingFileLayoutCombo->currentData().toInt());
+    if (settings.inputSource == RecordingInputSource::Array) {
+        settings.channels = selectedRecordingChannels();
+        settings.gainApplied = true;
+        settings.initialGainConfiguration = m_gainConfiguration;
+    } else {
+        settings.noiseReductionStages = selectedNoiseRecordingStages();
+    }
+    return settings;
+}
+
+bool MainWindow::recordingConfigurationIsValid() const
+{
+    const RecordingSettings settings = recordingSettingsFromUi();
+    const QFileInfo directoryInfo(settings.outputDirectory);
+    const bool baseNameIsValid = !settings.baseName.trimmed().isEmpty()
+        && QFileInfo(settings.baseName).fileName() == settings.baseName;
+    const bool selectionIsValid = settings.inputSource
+            == RecordingInputSource::Array
+        ? !settings.channels.isEmpty()
+        : !settings.noiseReductionStages.isEmpty();
+    const bool processingIsValid = settings.inputSource
+            == RecordingInputSource::Array
+        || (m_noiseReductionPage != nullptr
+            && m_noiseReductionPage->currentSettings().enabled);
+    return directoryInfo.isDir()
+        && directoryInfo.isWritable()
+        && baseNameIsValid
+        && selectionIsValid
+        && processingIsValid;
+}
+
 void MainWindow::setRecordingConfigurationEnabled(bool enabled)
 {
     for (QToolButton *button : m_recordingChannelButtons) {
         button->setEnabled(enabled);
     }
+    for (QCheckBox *button : m_recordingNoiseStageButtons) {
+        button->setEnabled(enabled);
+    }
+    m_recordingSourceModeCombo->setEnabled(enabled);
+    m_recordingSourceStack->setEnabled(enabled);
+    m_recordingFileLayoutCombo->setEnabled(enabled);
     m_recordingBrowseButton->setEnabled(enabled);
     m_recordingDirectoryEdit->setEnabled(enabled);
     m_recordingSelectionCommands->setEnabled(enabled);
@@ -1869,18 +2097,36 @@ void MainWindow::setRecordingConfigurationEnabled(bool enabled)
     m_resetSettingsButton->setEnabled(enabled);
 }
 
-void MainWindow::updateRecordingStartEnabled()
+void MainWindow::updateRecordingStartEnabled(const QString &message)
 {
     const RecordingState recordingState = m_audioRecorder.state();
     const bool idle = recordingState == RecordingState::Idle
         || recordingState == RecordingState::Error;
-    const QFileInfo directoryInfo(m_recordingDirectoryEdit->text());
     const bool canStart = idle
         && m_client.state() == DeviceState::Connected
-        && !selectedRecordingChannels().isEmpty()
-        && directoryInfo.isDir()
-        && directoryInfo.isWritable();
+        && recordingConfigurationIsValid();
     m_recordingStartButton->setEnabled(canStart);
+    if (m_noiseReductionPage == nullptr) {
+        return;
+    }
+    const bool active = recordingState == RecordingState::Starting
+        || recordingState == RecordingState::Recording
+        || recordingState == RecordingState::Stopping;
+    const bool actionEnabled = recordingState == RecordingState::Starting
+            || recordingState == RecordingState::Recording
+        ? true
+        : recordingState == RecordingState::Stopping ? false : canStart;
+    QString statusMessage = message;
+    if (statusMessage.isEmpty() && !m_lastRecordingError.isEmpty()) {
+        statusMessage = QStringLiteral("录制错误：%1")
+                            .arg(m_lastRecordingError);
+    }
+    if (statusMessage.isEmpty()) {
+        statusMessage = QStringLiteral("录制状态：%1").arg(
+            recordingStateName(recordingState));
+    }
+    m_noiseReductionPage->setQuickRecordingState(
+        active, actionEnabled, statusMessage);
 }
 
 QString MainWindow::bytesToHexPreview(const QByteArray &bytes)

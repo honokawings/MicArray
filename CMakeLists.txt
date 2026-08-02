@@ -31,6 +31,7 @@ set(MICARRAY_SOURCES
     src/diagnostics/alertcoalescer.cpp
     src/diagnostics/diagnosticexporter.cpp
     src/media/audioframedecoder.cpp
+    src/media/audiomonitorbuffer.cpp
     src/media/automaticgaincontrol.cpp
     src/media/audioprocessor.cpp
     src/media/audiorecorder.cpp
@@ -91,6 +92,7 @@ set(MICARRAY_HEADERS
     src/diagnostics/alertcoalescer.h
     src/diagnostics/diagnosticexporter.h
     src/media/audioframedecoder.h
+    src/media/audiomonitorbuffer.h
     src/media/automaticgaincontrol.h
     src/media/audioprocessor.h
     src/media/audiorecorder.h
