@@ -48,6 +48,10 @@ signals:
                              quint32 timestampMicros);
     void calibrationSampleRequested(quint64 requestId);
 
+protected:
+    void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     static constexpr int MaxPendingAudioFrames = 32;
 
@@ -70,6 +74,7 @@ private:
     void finishCalibration();
     void refreshCalibrationOverlay();
     void refreshCalibrationDetails();
+    void updateCalibrationTableHeight();
 
     AppSettings *m_settingsStore = nullptr;
     LiveLocalizationSettings m_settings;
@@ -94,6 +99,7 @@ private:
     QDoubleSpinBox
         *m_neuralPeakEnhancementStrengthSpin = nullptr;
     QDoubleSpinBox *m_heatmapOpacitySpin = nullptr;
+    QDoubleSpinBox *m_heatmapFocusSpin = nullptr;
     QSpinBox *m_heatmapGridColumnsSpin = nullptr;
     QSpinBox *m_heatmapGridRowsSpin = nullptr;
     QSpinBox *m_updateIntervalSpin = nullptr;

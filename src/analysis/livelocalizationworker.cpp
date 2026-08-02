@@ -317,6 +317,7 @@ void LiveLocalizationWorker::analyzeLatest(qint64 timestampMicroseconds)
     response.timestampMicroseconds = timestampMicroseconds;
     response.generation = m_gridGeneration;
     response.reliability = spatial.reliability;
+    response.trustedDirection = !directions.isEmpty();
     response.hasRefinedPeak = spatial.hasRefinedPeak;
     response.refinedPeak = spatial.refinedPeak;
     response.physicalPeak = spatial.physicalPeak;
@@ -339,10 +340,23 @@ void LiveLocalizationWorker::analyzeLatest(qint64 timestampMicroseconds)
     response.neuralElevationCorrectionDegrees =
         spatial.neuralElevationCorrectionDegrees;
     emit spatialResponseReady(response);
-    emit statusChanged(
-        directions.isEmpty()
-            ? QStringLiteral("未检测到可信声源")
-            : QStringLiteral("实时声源定位正常"));
+    if (!directions.isEmpty()) {
+        emit statusChanged(QStringLiteral("实时声源定位正常"));
+    } else if (spatial.reliability
+               < m_settings.confidenceThreshold) {
+        emit statusChanged(
+            QStringLiteral("候选可靠度 %1%，未达到门限 %2%")
+                .arg(spatial.reliability * 100.0, 0, 'f', 1)
+                .arg(m_settings.confidenceThreshold * 100.0,
+                     0, 'f', 1));
+    } else {
+        emit statusChanged(
+            QStringLiteral(
+                "候选可靠度 %1%，物理证据不足（门限 %2%）")
+                .arg(spatial.reliability * 100.0, 0, 'f', 1)
+                .arg(m_settings.confidenceThreshold * 100.0,
+                     0, 'f', 1));
+    }
 }
 
 void LiveLocalizationWorker::publishEmptySpatialResponse(

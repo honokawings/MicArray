@@ -10,6 +10,12 @@
 
 namespace MicArray {
 
+namespace {
+
+constexpr double UntrustedHeatmapScale = 0.35;
+
+} // namespace
+
 LiveLocalizationView::LiveLocalizationView(QWidget *parent)
     : VideoPreviewWidget(parent)
 {
@@ -76,6 +82,19 @@ void LiveLocalizationView::setDisplayMode(const QString &mode)
 void LiveLocalizationView::setHeatmapOpacity(double opacity)
 {
     m_heatmapOpacity = std::clamp(opacity, 0.0, 1.0);
+    update();
+}
+
+void LiveLocalizationView::setHeatmapFocusExponent(double exponent)
+{
+    const double bounded = std::isfinite(exponent)
+        ? std::clamp(exponent, 0.5, 4.0)
+        : 1.5;
+    if (qFuzzyCompare(m_heatmapFocusExponent, bounded)) {
+        return;
+    }
+    m_heatmapFocusExponent = bounded;
+    invalidateHeatmapCache();
     update();
 }
 
@@ -255,7 +274,8 @@ QImage LiveLocalizationView::heatmapImage() const
     QPointF azimuthBasisPixels;
     QPointF elevationBasisPixels;
     bool renderRefinedPeak =
-        m_response.hasRefinedPeak
+        m_response.trustedDirection
+        && m_response.hasRefinedPeak
         && m_response.reliability > 0.0
         && std::isfinite(
             m_response.azimuthStandardDeviationDegrees)
@@ -332,8 +352,12 @@ QImage LiveLocalizationView::heatmapImage() const
         }
     }
 
-    const auto colorForValue = [](double value) {
+    const auto colorForValue = [this](double value) {
         value = std::clamp(value, 0.0, 1.0);
+        value = std::pow(value, m_heatmapFocusExponent);
+        if (!m_response.trustedDirection) {
+            value *= UntrustedHeatmapScale;
+        }
         const int hue = static_cast<int>(
             (1.0 - value) * 240.0);
         return QColor::fromHsv(hue, 255, 255, 230).rgba();

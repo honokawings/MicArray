@@ -111,6 +111,7 @@ struct LiveSpatialResponse {
     qint64 timestampMicroseconds = 0;
     quint64 generation = 0;
     double reliability = 0.0;
+    bool trustedDirection = false;
     bool hasRefinedPeak = false;
     ScanDirection refinedPeak;
     ScanDirection physicalPeak;

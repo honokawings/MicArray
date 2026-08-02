@@ -15,6 +15,7 @@
 #include <QJsonObject>
 #include <QtTest>
 
+#include <cmath>
 #include <functional>
 #include <limits>
 
@@ -41,8 +42,11 @@ private slots:
     void persistsAudioAnalysisSettings();
     void invalidAudioAnalysisFieldsFallBackIndependently();
     void persistsLiveLocalizationSettings();
+    void migratesLegacyLiveTrustThreshold();
+    void invalidPreferredLiveTrustThresholdFallsBack();
     void persistsSpatialResolutionMode();
     void invalidLiveLocalizationFieldsFallBackIndependently();
+    void invalidHeatmapFocusFallsBackIndependently();
     void usesNoiseReductionProcessingDefaults();
     void persistsNoiseReductionSettings();
     void migratesLegacyNoiseDirectionCodesToContinuousAngles();
@@ -536,13 +540,14 @@ void AppTest::persistsLiveLocalizationSettings()
     expected.enabled = true;
     expected.displayMode = QStringLiteral("heatmap");
     expected.heatmapOpacity = 0.55;
+    expected.heatmapFocusExponent = 2.4;
     expected.heatmapGridColumns = 320;
     expected.heatmapGridRows = 180;
     expected.windowSamples = 4096;
     expected.updateIntervalMs = 120;
     expected.soundSpeedMetersPerSecond = 344.0;
     expected.smoothingFactor = 0.25;
-    expected.confidenceThreshold = 0.6;
+    expected.confidenceThreshold = 0.34;
     expected.neuralPeakEnhancementEnabled = false;
     expected.neuralPeakEnhancementStrength = 0.8;
     expected.camera.centerAzimuthDegrees = 12.0;
@@ -566,6 +571,97 @@ void AppTest::persistsLiveLocalizationSettings()
 
     AppSettings reloaded(path);
     QCOMPARE(reloaded.liveLocalization(), expected);
+    QSettings raw(path, QSettings::IniFormat);
+    QCOMPARE(
+        raw.value(QStringLiteral(
+            "liveLocalization/trustedSourceThreshold")).toDouble(),
+        expected.confidenceThreshold);
+    QCOMPARE(
+        raw.value(QStringLiteral(
+            "liveLocalization/confidenceThreshold")).toDouble(),
+        expected.confidenceThreshold);
+}
+
+void AppTest::migratesLegacyLiveTrustThreshold()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    const QString defaultPath = directory.filePath(
+        QStringLiteral("default.ini"));
+    QCOMPARE(AppSettings(defaultPath)
+                 .liveLocalization().confidenceThreshold,
+             0.40);
+
+    const QString legacyDefaultPath = directory.filePath(
+        QStringLiteral("legacy-default.ini"));
+    {
+        QSettings raw(legacyDefaultPath, QSettings::IniFormat);
+        raw.setValue(
+            QStringLiteral(
+                "liveLocalization/confidenceThreshold"),
+            0.45);
+    }
+    QCOMPARE(AppSettings(legacyDefaultPath)
+                 .liveLocalization().confidenceThreshold,
+             0.40);
+
+    const QString legacyCustomPath = directory.filePath(
+        QStringLiteral("legacy-custom.ini"));
+    {
+        QSettings raw(legacyCustomPath, QSettings::IniFormat);
+        raw.setValue(
+            QStringLiteral(
+                "liveLocalization/confidenceThreshold"),
+            0.38);
+    }
+    QCOMPARE(AppSettings(legacyCustomPath)
+                 .liveLocalization().confidenceThreshold,
+             0.38);
+
+    const QString nearLegacyDefaultPath = directory.filePath(
+        QStringLiteral("legacy-near-default.ini"));
+    const double nearLegacyDefault = std::nextafter(0.45, 1.0);
+    {
+        QSettings raw(nearLegacyDefaultPath, QSettings::IniFormat);
+        raw.setValue(
+            QStringLiteral(
+                "liveLocalization/confidenceThreshold"),
+            nearLegacyDefault);
+    }
+    QCOMPARE(AppSettings(nearLegacyDefaultPath)
+                 .liveLocalization().confidenceThreshold,
+             nearLegacyDefault);
+}
+
+void AppTest::invalidPreferredLiveTrustThresholdFallsBack()
+{
+    const QVector<QVariant> invalidValues {
+        QVariant::fromValue(
+            std::numeric_limits<double>::quiet_NaN()),
+        -0.01,
+        1.01,
+    };
+    for (int index = 0; index < invalidValues.size(); ++index) {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(
+            QStringLiteral("invalid-%1.ini").arg(index));
+        {
+            QSettings raw(path, QSettings::IniFormat);
+            raw.setValue(
+                QStringLiteral(
+                    "liveLocalization/confidenceThreshold"),
+                0.38);
+            raw.setValue(
+                QStringLiteral(
+                    "liveLocalization/trustedSourceThreshold"),
+                invalidValues.at(index));
+        }
+        QCOMPARE(AppSettings(path)
+                     .liveLocalization().confidenceThreshold,
+                 0.40);
+    }
 }
 
 void AppTest::persistsSpatialResolutionMode()
@@ -597,6 +693,7 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
         raw.setValue(QStringLiteral("liveLocalization/spatialResolutionMode"),
                      QStringLiteral("unknown"));
         raw.setValue(QStringLiteral("liveLocalization/heatmapOpacity"), 4.0);
+        raw.setValue(QStringLiteral("liveLocalization/heatmapFocusExponent"), 4.1);
         raw.setValue(QStringLiteral("liveLocalization/heatmapGridColumns"), 641);
         raw.setValue(QStringLiteral("liveLocalization/heatmapGridRows"), 8);
         raw.setValue(QStringLiteral("liveLocalization/windowSamples"), 1000);
@@ -624,6 +721,7 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
     QCOMPARE(actual.spatialResolutionMode,
              SpatialResolutionMode::RealtimeEnhanced);
     QCOMPARE(actual.heatmapOpacity, defaults.heatmapOpacity);
+    QCOMPARE(actual.heatmapFocusExponent, defaults.heatmapFocusExponent);
     QCOMPARE(actual.heatmapGridColumns, defaults.heatmapGridColumns);
     QCOMPARE(actual.heatmapGridRows, defaults.heatmapGridRows);
     QCOMPARE(actual.windowSamples, defaults.windowSamples);
@@ -640,6 +738,37 @@ void AppTest::invalidLiveLocalizationFieldsFallBackIndependently()
     QVERIFY(actual.calibrationSamples.isEmpty());
     QCOMPARE(actual.calibrationReferenceVideoSize,
              defaults.calibrationReferenceVideoSize);
+}
+
+void AppTest::invalidHeatmapFocusFallsBackIndependently()
+{
+    const QVector<double> invalidValues {
+        std::numeric_limits<double>::quiet_NaN(),
+        0.4,
+        4.1,
+    };
+    for (int index = 0; index < invalidValues.size(); ++index)
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(
+            QStringLiteral("settings-%1.ini").arg(index));
+        {
+            QSettings raw(path, QSettings::IniFormat);
+            raw.setValue(
+                QStringLiteral(
+                    "liveLocalization/heatmapFocusExponent"),
+                invalidValues.at(index));
+            raw.setValue(
+                QStringLiteral("liveLocalization/heatmapOpacity"),
+                0.7);
+        }
+
+        const LiveLocalizationSettings actual =
+            AppSettings(path).liveLocalization();
+        QCOMPARE(actual.heatmapFocusExponent, 1.5);
+        QCOMPARE(actual.heatmapOpacity, 0.7);
+    }
 }
 
 void AppTest::persistsNoiseReductionSettings()

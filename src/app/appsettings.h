@@ -65,13 +65,14 @@ struct LiveLocalizationSettings {
     SpatialResolutionMode spatialResolutionMode =
         SpatialResolutionMode::RealtimeEnhanced;
     double heatmapOpacity = 0.45;
+    double heatmapFocusExponent = 1.5;
     int heatmapGridColumns = 64;
     int heatmapGridRows = 36;
     int windowSamples = 2048;
     int updateIntervalMs = 100;
     double soundSpeedMetersPerSecond = 343.0;
     double smoothingFactor = 0.35;
-    double confidenceThreshold = 0.45;
+    double confidenceThreshold = 0.40;
     bool neuralPeakEnhancementEnabled = true;
     double neuralPeakEnhancementStrength = 0.30;
     CameraViewSettings camera;

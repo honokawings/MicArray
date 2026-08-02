@@ -231,6 +231,11 @@ LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettin
         || value.heatmapOpacity < 0.0 || value.heatmapOpacity > 1.0) {
         value.heatmapOpacity = defaults.heatmapOpacity;
     }
+    if (!std::isfinite(value.heatmapFocusExponent)
+        || value.heatmapFocusExponent < 0.5
+        || value.heatmapFocusExponent > 4.0) {
+        value.heatmapFocusExponent = defaults.heatmapFocusExponent;
+    }
     if (value.heatmapGridColumns < 16 || value.heatmapGridColumns > 640) {
         value.heatmapGridColumns = defaults.heatmapGridColumns;
     }
@@ -836,6 +841,11 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
         m_settings->value(QStringLiteral("liveLocalization/heatmapOpacity"),
                           defaults.heatmapOpacity),
         &value.heatmapOpacity);
+    readFiniteNumberSetting(
+        m_settings->value(
+            QStringLiteral("liveLocalization/heatmapFocusExponent"),
+            defaults.heatmapFocusExponent),
+        &value.heatmapFocusExponent);
     readIntegerSetting(
         m_settings->value(QStringLiteral("liveLocalization/heatmapGridColumns"),
                           defaults.heatmapGridColumns),
@@ -858,10 +868,28 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
         m_settings->value(QStringLiteral("liveLocalization/smoothingFactor"),
                           defaults.smoothingFactor),
         &value.smoothingFactor);
-    readFiniteNumberSetting(
-        m_settings->value(QStringLiteral("liveLocalization/confidenceThreshold"),
-                          defaults.confidenceThreshold),
-        &value.confidenceThreshold);
+    const QString trustedSourceThresholdKey = QStringLiteral(
+        "liveLocalization/trustedSourceThreshold");
+    const QString legacyConfidenceThresholdKey = QStringLiteral(
+        "liveLocalization/confidenceThreshold");
+    if (m_settings->contains(trustedSourceThresholdKey)) {
+        if (!readFiniteNumberSetting(
+                m_settings->value(trustedSourceThresholdKey),
+                &value.confidenceThreshold)) {
+            value.confidenceThreshold =
+                defaults.confidenceThreshold;
+        }
+    } else if (m_settings->contains(
+                   legacyConfidenceThresholdKey)) {
+        double legacyThreshold = defaults.confidenceThreshold;
+        if (readFiniteNumberSetting(
+                m_settings->value(
+                    legacyConfidenceThresholdKey),
+                &legacyThreshold)
+            && legacyThreshold != 0.45) {
+            value.confidenceThreshold = legacyThreshold;
+        }
+    }
     value.neuralPeakEnhancementEnabled =
         m_settings->value(
             QStringLiteral(
@@ -1327,6 +1355,8 @@ void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsV
     m_settings->setValue(group + QStringLiteral("spatialResolutionMode"),
                          spatialResolutionModeKey(value.spatialResolutionMode));
     m_settings->setValue(group + QStringLiteral("heatmapOpacity"), value.heatmapOpacity);
+    m_settings->setValue(group + QStringLiteral("heatmapFocusExponent"),
+                         value.heatmapFocusExponent);
     m_settings->setValue(group + QStringLiteral("heatmapGridColumns"),
                          value.heatmapGridColumns);
     m_settings->setValue(group + QStringLiteral("heatmapGridRows"),
@@ -1338,6 +1368,9 @@ void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsV
     m_settings->setValue(group + QStringLiteral("smoothingFactor"), value.smoothingFactor);
     m_settings->setValue(group + QStringLiteral("confidenceThreshold"),
                          value.confidenceThreshold);
+    m_settings->setValue(
+        group + QStringLiteral("trustedSourceThreshold"),
+        value.confidenceThreshold);
     m_settings->setValue(
         group
             + QStringLiteral(

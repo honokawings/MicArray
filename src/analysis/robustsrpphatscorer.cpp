@@ -209,6 +209,7 @@ void sharpenNeuralSrpHeatmap(
     if (peakAmplitude <= 0.0) {
         return;
     }
+    constexpr double EdgeBlendStartSquared = 4.0;
     constexpr double MaximumMahalanobisSquared = 9.0;
     for (int index = 0;
          index < normalizedValues->size();
@@ -249,10 +250,17 @@ void sharpenNeuralSrpHeatmap(
             peakAmplitude
             * std::exp(
                 -0.5 * mahalanobisSquared);
+        const double enhanced = std::clamp(
+            std::max(shoulder, kernel), 0.0, 1.0);
+        const double edgeBlend = smoothStep(
+            EdgeBlendStartSquared,
+            MaximumMahalanobisSquared,
+            mahalanobisSquared);
         (*normalizedValues)[index] =
             static_cast<float>(
                 std::clamp(
-                    std::max(shoulder, kernel),
+                    enhanced * (1.0 - edgeBlend)
+                        + value * edgeBlend,
                     0.0, 1.0));
     }
 }
@@ -1788,7 +1796,6 @@ bool RobustSrpPhatScorer::refineContinuousPeak(
 
     result->hasDirection =
         result->reliability > 0.0
-        && result->steeredChannelCoherence >= 0.15
         && result->azimuthStandardDeviationDegrees > 0.0
         && result->elevationStandardDeviationDegrees > 0.0;
     result->peakToSidelobeRatio =

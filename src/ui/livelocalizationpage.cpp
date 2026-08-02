@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -23,6 +24,8 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -220,14 +223,28 @@ void LiveLocalizationPage::buildUi()
     auto *splitter = new QSplitter(Qt::Horizontal, this);
     splitter->setChildrenCollapsible(false);
     m_view = new LiveLocalizationView(splitter);
-    auto *scroll = new QScrollArea(splitter);
-    scroll->setWidgetResizable(true);
-    scroll->setMinimumWidth(300);
-    scroll->setMaximumWidth(410);
-    auto *panel = new QWidget(scroll);
-    auto *panelLayout = new QVBoxLayout(panel);
+    auto *controlTabs = new QTabWidget(splitter);
+    controlTabs->setObjectName(
+        QStringLiteral("liveLocalizationControlTabs"));
+    controlTabs->setMinimumWidth(520);
+    controlTabs->setMaximumWidth(680);
 
-    auto *localizationGroup = new QGroupBox(QStringLiteral("实时定位"), panel);
+    auto *realtimeTab = new QScrollArea(controlTabs);
+    realtimeTab->setObjectName(
+        QStringLiteral("liveLocalizationRealtimeTab"));
+    realtimeTab->setWidgetResizable(true);
+    realtimeTab->setFrameShape(QFrame::NoFrame);
+    auto *realtimePanel = new QWidget(realtimeTab);
+    auto *realtimePanelLayout = new QVBoxLayout(realtimePanel);
+
+    auto *calibrationTab = new QWidget(controlTabs);
+    calibrationTab->setObjectName(
+        QStringLiteral("liveLocalizationCalibrationTab"));
+    auto *calibrationTabLayout =
+        new QVBoxLayout(calibrationTab);
+
+    auto *localizationGroup = new QGroupBox(
+        QStringLiteral("实时定位"), realtimePanel);
     auto *localizationLayout = new QFormLayout(localizationGroup);
     m_enabledCheck = new QCheckBox(QStringLiteral("启用实时定位"), localizationGroup);
     m_enabledCheck->setObjectName(QStringLiteral("liveLocalizationEnabledCheck"));
@@ -276,6 +293,15 @@ void LiveLocalizationPage::buildUi()
     m_heatmapOpacitySpin->setObjectName(QStringLiteral("liveHeatmapOpacitySpin"));
     m_heatmapOpacitySpin->setRange(0.0, 1.0);
     m_heatmapOpacitySpin->setSingleStep(0.05);
+    m_heatmapFocusSpin = new QDoubleSpinBox(localizationGroup);
+    m_heatmapFocusSpin->setObjectName(
+        QStringLiteral("liveHeatmapFocusSpin"));
+    m_heatmapFocusSpin->setRange(0.5, 4.0);
+    m_heatmapFocusSpin->setDecimals(1);
+    m_heatmapFocusSpin->setSingleStep(0.1);
+    m_heatmapFocusSpin->setToolTip(
+        QStringLiteral(
+            "1.0 保持原始响应；数值越大，热力主峰显示越聚焦"));
     m_heatmapGridColumnsSpin = new QSpinBox(localizationGroup);
     m_heatmapGridColumnsSpin->setObjectName(
         QStringLiteral("liveHeatmapGridColumnsSpin"));
@@ -292,7 +318,12 @@ void LiveLocalizationPage::buildUi()
     m_confidenceSpin->setObjectName(
         QStringLiteral("liveLocalizationConfidenceSpin"));
     m_confidenceSpin->setRange(0.0, 1.0);
-    m_confidenceSpin->setSingleStep(0.05);
+    m_confidenceSpin->setDecimals(2);
+    m_confidenceSpin->setSingleStep(0.02);
+    m_confidenceSpin->setToolTip(QStringLiteral(
+        "综合判断声源是否可信的阈值。数值越低越容易检出弱声源，"
+        "但误报风险越高；数值越高则判定越严格。建议从 0.40 开始调节。"));
+    m_confidenceSpin->installEventFilter(this);
     localizationLayout->addRow(m_enabledCheck);
     localizationLayout->addRow(QStringLiteral("算法"), m_locatorCombo);
     localizationLayout->addRow(QStringLiteral("显示方式"), m_displayModeCombo);
@@ -300,18 +331,29 @@ void LiveLocalizationPage::buildUi()
         QStringLiteral("空间精度"),
         m_spatialResolutionModeCombo);
     localizationLayout->addRow(QStringLiteral("热力图透明度"), m_heatmapOpacitySpin);
+    localizationLayout->addRow(
+        QStringLiteral("热力聚焦强度"),
+        m_heatmapFocusSpin);
     localizationLayout->addRow(QStringLiteral("方向网格宽度"), m_heatmapGridColumnsSpin);
     localizationLayout->addRow(QStringLiteral("方向网格高度"), m_heatmapGridRowsSpin);
     localizationLayout->addRow(QStringLiteral("更新周期"), m_updateIntervalSpin);
-    localizationLayout->addRow(QStringLiteral("置信度门限"), m_confidenceSpin);
+    auto *confidenceLabel = new QLabel(
+        QStringLiteral("可信判定阈值"), localizationGroup);
+    confidenceLabel->setObjectName(
+        QStringLiteral("liveLocalizationConfidenceLabel"));
+    confidenceLabel->setBuddy(m_confidenceSpin);
+    localizationLayout->addRow(confidenceLabel, m_confidenceSpin);
     localizationLayout->addRow(
         m_neuralPeakEnhancementCheck);
     localizationLayout->addRow(
         QStringLiteral("神经锐化强度"),
         m_neuralPeakEnhancementStrengthSpin);
-    panelLayout->addWidget(localizationGroup);
+    realtimePanelLayout->addWidget(localizationGroup);
+    realtimePanelLayout->addStretch();
+    realtimeTab->setWidget(realtimePanel);
 
-    auto *cameraGroup = new QGroupBox(QStringLiteral("视频视角参数"), panel);
+    auto *cameraGroup = new QGroupBox(
+        QStringLiteral("视频视角参数"), calibrationTab);
     auto *cameraLayout = new QFormLayout(cameraGroup);
     m_centerAzimuthSpin = angleSpin(
         cameraGroup, QStringLiteral("liveCameraCenterAzimuthSpin"), -180.0, 180.0);
@@ -334,9 +376,10 @@ void LiveLocalizationPage::buildUi()
     restoreRow->addWidget(m_restoreSavedButton);
     restoreRow->addWidget(m_restoreDefaultsButton);
     cameraLayout->addRow(restoreRow);
-    panelLayout->addWidget(cameraGroup);
+    calibrationTabLayout->addWidget(cameraGroup);
 
-    auto *calibrationGroup = new QGroupBox(QStringLiteral("四点视频校准"), panel);
+    auto *calibrationGroup = new QGroupBox(
+        QStringLiteral("四点视频校准"), calibrationTab);
     auto *calibrationLayout = new QVBoxLayout(calibrationGroup);
     auto *calibrationButtons = new QHBoxLayout;
     m_startCalibrationButton = new QPushButton(QStringLiteral("开始四点校准"),
@@ -376,8 +419,12 @@ void LiveLocalizationPage::buildUi()
     m_calibrationSamplesTable->setSelectionMode(QAbstractItemView::NoSelection);
     m_calibrationSamplesTable->verticalHeader()->setVisible(false);
     m_calibrationSamplesTable->horizontalHeader()->setSectionResizeMode(
-        QHeaderView::ResizeToContents);
-    m_calibrationSamplesTable->horizontalHeader()->setStretchLastSection(true);
+        QHeaderView::Stretch);
+    m_calibrationSamplesTable->setVerticalScrollBarPolicy(
+        Qt::ScrollBarAlwaysOff);
+    m_calibrationSamplesTable->setHorizontalScrollBarPolicy(
+        Qt::ScrollBarAlwaysOff);
+    updateCalibrationTableHeight();
     m_exportCalibrationButton = new QPushButton(QStringLiteral("保存校准文件"),
                                                 calibrationGroup);
     m_exportCalibrationButton->setObjectName(
@@ -400,11 +447,13 @@ void LiveLocalizationPage::buildUi()
     calibrationLayout->addLayout(profileButtons);
     calibrationLayout->addWidget(m_progressLabel);
     calibrationLayout->addWidget(m_rmsLabel);
-    panelLayout->addWidget(calibrationGroup);
-    panelLayout->addStretch();
-    scroll->setWidget(panel);
+    calibrationTabLayout->addWidget(calibrationGroup, 1);
+    controlTabs->addTab(
+        realtimeTab, QStringLiteral("实时定位"));
+    controlTabs->addTab(
+        calibrationTab, QStringLiteral("视角校准"));
     splitter->addWidget(m_view);
-    splitter->addWidget(scroll);
+    splitter->addWidget(controlTabs);
     splitter->setStretchFactor(0, 1);
     root->addWidget(splitter, 1);
     m_resultLabel = new QLabel(QStringLiteral("方位角 --　俯仰角 --"), this);
@@ -412,6 +461,59 @@ void LiveLocalizationPage::buildUi()
     m_statusLabel = new QLabel(QStringLiteral("等待实时音视频"), this);
     root->addWidget(m_resultLabel);
     root->addWidget(m_statusLabel);
+}
+
+void LiveLocalizationPage::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (m_calibrationSamplesTable == nullptr) {
+        return;
+    }
+    if (event->type() == QEvent::StyleChange
+        || event->type() == QEvent::FontChange
+        || event->type() == QEvent::ApplicationFontChange
+        || event->type() == QEvent::Polish) {
+        QTimer::singleShot(
+            0, this,
+            &LiveLocalizationPage::updateCalibrationTableHeight);
+    }
+}
+
+bool LiveLocalizationPage::eventFilter(
+    QObject *watched, QEvent *event)
+{
+    if (watched == m_confidenceSpin
+        && event->type() == QEvent::Wheel) {
+        event->accept();
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void LiveLocalizationPage::updateCalibrationTableHeight()
+{
+    if (m_calibrationSamplesTable == nullptr) {
+        return;
+    }
+    m_calibrationSamplesTable->ensurePolished();
+    m_calibrationSamplesTable->resizeRowsToContents();
+    int rowsHeight = 0;
+    for (int row = 0;
+         row < m_calibrationSamplesTable->rowCount();
+         ++row) {
+        rowsHeight += m_calibrationSamplesTable->rowHeight(row);
+    }
+    const int headerHeight = std::max(
+        m_calibrationSamplesTable->horizontalHeader()->height(),
+        m_calibrationSamplesTable->horizontalHeader()
+            ->sizeHint().height());
+    const int requiredHeight = headerHeight + rowsHeight
+        + 2 * m_calibrationSamplesTable->frameWidth() + 2;
+    if (m_calibrationSamplesTable->minimumHeight()
+        != requiredHeight) {
+        m_calibrationSamplesTable->setMinimumHeight(
+            requiredHeight);
+    }
 }
 
 void LiveLocalizationPage::connectUi()
@@ -473,6 +575,15 @@ void LiveLocalizationPage::connectUi()
     connect(m_heatmapOpacitySpin, &QDoubleSpinBox::valueChanged, this, [this](double value) {
         m_settings.heatmapOpacity = value;
         m_view->setHeatmapOpacity(value);
+        persistSettings();
+    });
+    connect(
+        m_heatmapFocusSpin,
+        &QDoubleSpinBox::valueChanged,
+        this,
+        [this](double value) {
+        m_settings.heatmapFocusExponent = value;
+        m_view->setHeatmapFocusExponent(value);
         persistSettings();
     });
     connect(m_heatmapGridColumnsSpin, &QSpinBox::valueChanged, this, [this](int value) {
@@ -583,6 +694,8 @@ void LiveLocalizationPage::restoreSettings()
             static_cast<int>(
                 m_settings.spatialResolutionMode))));
     m_heatmapOpacitySpin->setValue(m_settings.heatmapOpacity);
+    m_heatmapFocusSpin->setValue(
+        m_settings.heatmapFocusExponent);
     m_neuralPeakEnhancementCheck->setChecked(
         m_settings.neuralPeakEnhancementEnabled);
     m_neuralPeakEnhancementStrengthSpin->setValue(
@@ -598,6 +711,8 @@ void LiveLocalizationPage::restoreSettings()
     m_view->setCameraView(m_settings.camera);
     m_view->setDisplayMode(m_settings.displayMode);
     m_view->setHeatmapOpacity(m_settings.heatmapOpacity);
+    m_view->setHeatmapFocusExponent(
+        m_settings.heatmapFocusExponent);
     m_rmsLabel->setText(m_settings.calibrationSamples.size() == 4
         ? QStringLiteral("RMS 误差：%1 px").arg(m_settings.calibrationRmsPixels, 0, 'f', 1)
         : QStringLiteral("RMS 误差：--"));

@@ -21,6 +21,7 @@ public:
     void setSpatialResponse(const LiveSpatialResponse &response);
     void setDisplayMode(const QString &mode);
     void setHeatmapOpacity(double opacity);
+    void setHeatmapFocusExponent(double exponent);
     void setCalibrationMode(bool enabled);
     void setCalibrationSamples(const QVector<VideoCalibrationSample> &samples,
                                const QVector<QPointF> &predictedPoints = {});
@@ -51,6 +52,7 @@ private:
     mutable QSize m_cachedHeatmapSize;
     mutable QImage m_cachedHeatmap;
     double m_heatmapOpacity = 0.45;
+    double m_heatmapFocusExponent = 1.5;
     bool m_spatialResponseActive = true;
     bool m_calibrationMode = false;
 };
