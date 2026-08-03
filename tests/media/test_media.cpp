@@ -15,6 +15,7 @@
 #include <numbers>
 #include <random>
 
+#include "analysis/arraygeometry.h"
 #include "control/directioncontrolmapper.h"
 #include "media/audioframedecoder.h"
 #include "media/audiomonitorbuffer.h"
@@ -23,6 +24,7 @@
 #include "media/audiorecorder.h"
 #include "media/bandpassfilter.h"
 #include "media/channelgainprocessor.h"
+#include "media/fractionaldelaybeamformer.h"
 #include "media/gainprofilestore.h"
 #include "media/logmmseprocessor.h"
 #include "media/videodecoder.h"
@@ -99,6 +101,64 @@ double rootMeanSquare(const QVector<float> &samples, int skipSamples)
     }
     return count > 0
         ? std::sqrt(power / static_cast<double>(count)) : 0.0;
+}
+
+QByteArray planeWavePayload(qint64 firstSample,
+                            double azimuthDegrees,
+                            double elevationDegrees,
+                            double frequencyHz,
+                            double amplitude = 0.35)
+{
+    constexpr double SoundSpeedMetresPerSecond = 343.0;
+    constexpr int SampleRate = 48000;
+    const double azimuth = qDegreesToRadians(azimuthDegrees);
+    const double elevation = qDegreesToRadians(elevationDegrees);
+    const double directionX = std::sin(azimuth) * std::cos(elevation);
+    const double directionY = std::sin(elevation);
+    const double directionZ = std::cos(azimuth) * std::cos(elevation);
+    const QVector<MicrophonePosition> microphones = createDefaultArrayGeometry();
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame; ++sample) {
+        for (int channel = 0; channel < microphones.size(); ++channel) {
+            const MicrophonePosition &microphone = microphones.at(channel);
+            const double propagationSamples =
+                (microphone.xMeters * directionX
+                 + microphone.yMeters * directionY
+                 + microphone.zMeters * directionZ)
+                * SampleRate / SoundSpeedMetresPerSecond;
+            const double phase =
+                2.0 * std::numbers::pi * frequencyHz
+                * (static_cast<double>(firstSample + sample) - propagationSamples)
+                / SampleRate;
+            const qint32 pcm24 = static_cast<qint32>(
+                std::lround(amplitude * std::sin(phase) * 32768.0));
+            putSample(payload, sample, channel, pcm24 * 256);
+        }
+    }
+    return payload;
+}
+
+QByteArray constantArrayPayload(float value)
+{
+    const qint32 pcm24 = static_cast<qint32>(
+        std::lround(static_cast<double>(value) * 32768.0));
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame; ++sample) {
+        for (int channel = 0; channel < AudioFrameDecoder::ChannelCount; ++channel) {
+            putSample(payload, sample, channel, pcm24 * 256);
+        }
+    }
+    return payload;
+}
+
+int firstNonZeroSample(const QVector<float> &samples)
+{
+    for (int index = 0; index < samples.size(); ++index) {
+        if (std::abs(samples.at(index)) > 1.0e-6f) {
+            return index;
+        }
+    }
+    return -1;
 }
 
 void fillChannelSamples(QByteArray &payload, int channel, qint32 sample)
@@ -247,6 +307,15 @@ private slots:
     void mapsNoiseReductionDirectionsToSixControlInterfaces();
     void quantizesContinuousNoiseDirectionsOnlyAtControlBoundary();
     void clampsAndRejectsInvalidNoiseReductionDirectionMappings();
+    void beamformerProcessesFrontToneAndDecodesFirstElement();
+    void beamformerSaturatesRaw48SamplesLikeFrameDecoder();
+    void beamformerPreservesDirectionSignAndFractionalDelaySelectivity();
+    void beamformerKeepsAllDirectionsOnOneAbsoluteTimebase();
+    void beamformerDoesNotQuantizeDirectionsAtControlBoundary();
+    void beamformerUsesCommonReferenceAndPreservesFrameHistory();
+    void beamformerClampsAndFallsBackFromInvalidDirections();
+    void beamformerBoundsPublicSampleRate();
+    void beamformerRejectsWrongPayloadSizeWithoutResettingHistory();
     void decodesOnlyFirstFourNoiseReductionChannels();
     void rejectsInvalidNoiseReductionPayload();
     void suppressesOneAndTwoReferenceComponentsWithWienerFilter();
@@ -260,6 +329,15 @@ private slots:
     void noiseReductionWorkerCapturesRequestedBypassedStages();
     void noiseReductionWorkerCapturesConfiguredPostProcessingOrder();
     void noiseReductionWorkerStopsCapturingWhenStagesAreCleared();
+    void noiseReductionWorkerKeepsFpgaLogicalChannelMapping();
+    void noiseReductionWorkerUsesSoftwareBeamformingDirections();
+    void noiseReductionWorkerKeepsHistoryAcrossAngleChanges();
+    void noiseReductionWorkerResetsBeamformerAfterDeactivate();
+    void noiseReductionWorkerResetsBeamformerAfterEnableChange();
+    void noiseReductionWorkerResetsAfterInputModeChange();
+    void noiseReductionWorkerResetsAfterSampleRateChange();
+    void noiseReductionWorkerRejectsInvalidDirectFrameAndContinues();
+    void noiseReductionWorkerResetsRaw48WarningLatchAtEpochBoundaries();
     void noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources();
     void filtersDenoisedWorkerOutputWhileMonitoringIsDisabled();
     void noiseReductionWorkerHonorsPostProcessingOrder();
@@ -2244,6 +2322,339 @@ void MediaTest::clampsAndRejectsInvalidNoiseReductionDirectionMappings()
     QCOMPARE(DirectionControlMapper::azimuthDegrees(3, mapping), 0.0);
 }
 
+void MediaTest::beamformerProcessesFrontToneAndDecodesFirstElement()
+{
+    FractionalDelayBeamformer beamformer;
+    const ContinuousDirectionTarget front {0.0, 0.0};
+    beamformer.configure(48000, front, front, front);
+
+    const QByteArray payload = planeWavePayload(0, 0.0, 0.0, 1000.0, 0.40);
+    const BeamformedDirectionFrame frame = beamformer.process(payload);
+
+    QVERIFY2(frame.valid, qPrintable(frame.error));
+    QCOMPARE(frame.firstElement.size(), AudioFrameDecoder::SamplesPerFrame);
+    QCOMPARE(frame.enhancedA.size(), AudioFrameDecoder::SamplesPerFrame);
+    QCOMPARE(frame.suppressionB1.size(), AudioFrameDecoder::SamplesPerFrame);
+    QCOMPARE(frame.suppressionB2.size(), AudioFrameDecoder::SamplesPerFrame);
+    QCOMPARE(frame.firstElement.at(1),
+             static_cast<float>((readSample(payload, 1, 0) >> 8) / 32768.0));
+    QVERIFY(toneAmplitude(frame.enhancedA, 1000.0, 48000, 100) > 0.35);
+}
+
+void MediaTest::beamformerSaturatesRaw48SamplesLikeFrameDecoder()
+{
+    const auto verifyExtreme = [](qint32 containerValue) {
+        QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+        for (int sample = 0;
+             sample < AudioFrameDecoder::SamplesPerFrame;
+             ++sample) {
+            for (int channel = 0;
+                 channel < AudioFrameDecoder::ChannelCount;
+                 ++channel) {
+                putSample(payload, sample, channel, containerValue);
+            }
+        }
+
+        const NoiseReductionInputFrame decoded =
+            NoiseReductionFrameDecoder().decode(payload);
+        QVERIFY(decoded.valid);
+
+        FractionalDelayBeamformer beamformer;
+        beamformer.configure(48000,
+                             {-73.5, 42.25},
+                             {17.75, -31.5},
+                             {68.25, 26.75});
+        const BeamformedDirectionFrame frame = beamformer.process(payload);
+        QVERIFY2(frame.valid, qPrintable(frame.error));
+        QCOMPARE(frame.firstElement, decoded.channels.at(0));
+
+        const std::array<const QVector<float> *, 3> outputs {{
+            &frame.enhancedA,
+            &frame.suppressionB1,
+            &frame.suppressionB2,
+        }};
+        for (const QVector<float> *output : outputs) {
+            const int startupEnd = firstNonZeroSample(*output);
+            QVERIFY(startupEnd > 0);
+            for (int sample = startupEnd; sample < output->size(); ++sample) {
+                QVERIFY(std::isfinite(output->at(sample)));
+                QVERIFY(output->at(sample) >= -1.0f);
+                QVERIFY(output->at(sample) <= 1.0f);
+            }
+        }
+    };
+
+    verifyExtreme(std::numeric_limits<qint32>::max());
+    verifyExtreme(std::numeric_limits<qint32>::min());
+}
+
+void MediaTest::beamformerPreservesDirectionSignAndFractionalDelaySelectivity()
+{
+    constexpr double SourceAzimuth = 17.3;
+    constexpr double SourceElevation = 20.7;
+    constexpr double FrequencyHz = 3500.0;
+    FractionalDelayBeamformer beamformer;
+    beamformer.configure(48000,
+                         {SourceAzimuth, SourceElevation},
+                         {-37.0, -31.0},
+                         {55.0, -45.0});
+
+    QVector<float> matched;
+    QVector<float> offset;
+    for (int frameIndex = 0; frameIndex < 6; ++frameIndex) {
+        const BeamformedDirectionFrame frame = beamformer.process(
+            planeWavePayload(frameIndex * AudioFrameDecoder::SamplesPerFrame,
+                             SourceAzimuth,
+                             SourceElevation,
+                             FrequencyHz));
+        QVERIFY2(frame.valid, qPrintable(frame.error));
+        matched += frame.enhancedA;
+        offset += frame.suppressionB1;
+    }
+
+    const double matchedRms = rootMeanSquare(matched, 200);
+    const double offsetRms = rootMeanSquare(offset, 200);
+    QVERIFY2(matchedRms >= offsetRms * 1.5,
+             qPrintable(QStringLiteral("matched RMS %1, offset RMS %2")
+                            .arg(matchedRms)
+                            .arg(offsetRms)));
+
+    double maximumRadiusMetres = 0.0;
+    for (const MicrophonePosition &microphone : createDefaultArrayGeometry()) {
+        maximumRadiusMetres = std::max(
+            maximumRadiusMetres,
+            std::hypot(microphone.xMeters, microphone.yMeters));
+    }
+    const double commonReferenceSamples =
+        std::ceil(maximumRadiusMetres * 48000.0 / 343.0) + 2.0;
+    QVector<float> expected(matched.size());
+    for (int sample = 0; sample < expected.size(); ++sample) {
+        expected[sample] = static_cast<float>(
+            0.35 * std::sin(2.0 * std::numbers::pi * FrequencyHz
+                            * (sample - commonReferenceSamples) / 48000.0));
+    }
+    const double fractionalDelayError = rootMeanSquareError(matched, expected, 200);
+    QVERIFY2(fractionalDelayError < 1.0e-3,
+             qPrintable(QStringLiteral("fractional-delay RMS error %1")
+                            .arg(fractionalDelayError)));
+}
+
+void MediaTest::beamformerKeepsAllDirectionsOnOneAbsoluteTimebase()
+{
+    constexpr double FrequencyHz = 3200.0;
+    constexpr double Amplitude = 0.30;
+    const std::array<ContinuousDirectionTarget, 3> targets {{
+        {-72.5, 46.25},
+        {17.3, -20.7},
+        {68.75, 31.5},
+    }};
+
+    QString processingError;
+    const auto matchedOutput = [&](int selectedDirection) -> QVector<float> {
+        FractionalDelayBeamformer beamformer;
+        beamformer.configure(48000, targets[0], targets[1], targets[2]);
+        QVector<float> output;
+        for (int frameIndex = 0; frameIndex < 6; ++frameIndex) {
+            const BeamformedDirectionFrame frame = beamformer.process(
+                planeWavePayload(frameIndex * AudioFrameDecoder::SamplesPerFrame,
+                                 targets[static_cast<size_t>(selectedDirection)]
+                                     .azimuthDegrees,
+                                 targets[static_cast<size_t>(selectedDirection)]
+                                     .elevationDegrees,
+                                 FrequencyHz,
+                                 Amplitude));
+            if (!frame.valid) {
+                processingError = frame.error;
+                return {};
+            }
+            if (selectedDirection == 0) {
+                output += frame.enhancedA;
+            } else if (selectedDirection == 1) {
+                output += frame.suppressionB1;
+            } else {
+                output += frame.suppressionB2;
+            }
+        }
+        return output;
+    };
+
+    const QVector<float> enhancedA = matchedOutput(0);
+    const QVector<float> suppressionB1 = matchedOutput(1);
+    const QVector<float> suppressionB2 = matchedOutput(2);
+    QVERIFY2(processingError.isEmpty(), qPrintable(processingError));
+    QCOMPARE(enhancedA.size(), suppressionB1.size());
+    QCOMPARE(enhancedA.size(), suppressionB2.size());
+
+    double maximumRadiusMetres = 0.0;
+    for (const MicrophonePosition &microphone : createDefaultArrayGeometry()) {
+        maximumRadiusMetres = std::max(
+            maximumRadiusMetres,
+            std::hypot(microphone.xMeters, microphone.yMeters));
+    }
+    const double commonReferenceSamples =
+        std::ceil(maximumRadiusMetres * 48000.0 / 343.0) + 2.0;
+    QVector<float> expected(enhancedA.size());
+    for (int sample = 0; sample < expected.size(); ++sample) {
+        expected[sample] = static_cast<float>(
+            Amplitude * std::sin(2.0 * std::numbers::pi * FrequencyHz
+                                 * (sample - commonReferenceSamples) / 48000.0));
+    }
+
+    const double enhancedError = rootMeanSquareError(enhancedA, expected, 200);
+    const double b1Error = rootMeanSquareError(suppressionB1, expected, 200);
+    const double b2Error = rootMeanSquareError(suppressionB2, expected, 200);
+    QVERIFY2(enhancedError < 1.0e-3,
+             qPrintable(QStringLiteral("enhancedA absolute-time RMS error %1")
+                            .arg(enhancedError)));
+    QVERIFY2(b1Error < 1.0e-3,
+             qPrintable(QStringLiteral("suppressionB1 absolute-time RMS error %1")
+                            .arg(b1Error)));
+    QVERIFY2(b2Error < 1.0e-3,
+             qPrintable(QStringLiteral("suppressionB2 absolute-time RMS error %1")
+                            .arg(b2Error)));
+}
+
+void MediaTest::beamformerDoesNotQuantizeDirectionsAtControlBoundary()
+{
+    const ContinuousDirectionTarget first {-10.0, -14.0};
+    const ContinuousDirectionTarget second {10.0, 14.0};
+    const DirectionControlMapping mapping;
+    QCOMPARE(DirectionControlMapper::azimuthCode(first.azimuthDegrees, mapping),
+             DirectionControlMapper::azimuthCode(second.azimuthDegrees, mapping));
+    QCOMPARE(DirectionControlMapper::elevationCode(first.elevationDegrees, mapping),
+             DirectionControlMapper::elevationCode(second.elevationDegrees, mapping));
+
+    FractionalDelayBeamformer beamformer;
+    beamformer.configure(48000, first, second, {75.0, -60.0});
+    QVector<float> firstOutput;
+    QVector<float> secondOutput;
+    for (int frameIndex = 0; frameIndex < 5; ++frameIndex) {
+        const BeamformedDirectionFrame frame = beamformer.process(
+            planeWavePayload(frameIndex * AudioFrameDecoder::SamplesPerFrame,
+                             first.azimuthDegrees,
+                             first.elevationDegrees,
+                             5000.0));
+        QVERIFY2(frame.valid, qPrintable(frame.error));
+        firstOutput += frame.enhancedA;
+        secondOutput += frame.suppressionB1;
+    }
+
+    QVERIFY(rootMeanSquare(firstOutput, 200)
+            > rootMeanSquare(secondOutput, 200) * 1.05);
+    QVERIFY(rootMeanSquareError(firstOutput, secondOutput, 200) > 1.0e-3);
+}
+
+void MediaTest::beamformerUsesCommonReferenceAndPreservesFrameHistory()
+{
+    FractionalDelayBeamformer beamformer;
+    beamformer.configure(48000, {-80.0, 70.0}, {0.0, 0.0}, {80.0, -70.0});
+    const QByteArray dcPayload = constantArrayPayload(0.25f);
+    const BeamformedDirectionFrame first = beamformer.process(dcPayload);
+    QVERIFY2(first.valid, qPrintable(first.error));
+
+    const int enhancedStart = firstNonZeroSample(first.enhancedA);
+    QCOMPARE(enhancedStart, firstNonZeroSample(first.suppressionB1));
+    QCOMPARE(enhancedStart, firstNonZeroSample(first.suppressionB2));
+    QVERIFY(enhancedStart > 0);
+    for (int sample = enhancedStart; sample < AudioFrameDecoder::SamplesPerFrame; ++sample) {
+        QVERIFY(std::abs(first.enhancedA.at(sample) - 0.25f) < 1.0e-5f);
+        QVERIFY(std::abs(first.suppressionB1.at(sample) - 0.25f) < 1.0e-5f);
+        QVERIFY(std::abs(first.suppressionB2.at(sample) - 0.25f) < 1.0e-5f);
+    }
+
+    beamformer.configure(48000, {-45.5, 11.25}, {16.75, -22.5}, {71.0, 33.0});
+    const BeamformedDirectionFrame continued = beamformer.process(dcPayload);
+    QVERIFY2(continued.valid, qPrintable(continued.error));
+    QVERIFY(std::abs(continued.enhancedA.first() - 0.25f) < 1.0e-5f);
+    QVERIFY(std::abs(continued.suppressionB1.first() - 0.25f) < 1.0e-5f);
+    QVERIFY(std::abs(continued.suppressionB2.first() - 0.25f) < 1.0e-5f);
+
+    beamformer.reset();
+    const BeamformedDirectionFrame reset = beamformer.process(dcPayload);
+    QCOMPARE(firstNonZeroSample(reset.enhancedA), enhancedStart);
+}
+
+void MediaTest::beamformerClampsAndFallsBackFromInvalidDirections()
+{
+    FractionalDelayBeamformer sanitized;
+    sanitized.configure(48000, {0.0, 0.0}, {90.0, -90.0}, {-90.0, 90.0});
+    FractionalDelayBeamformer invalid;
+    invalid.configure(48000,
+                      {std::numeric_limits<double>::quiet_NaN(),
+                       std::numeric_limits<double>::infinity()},
+                      {120.0, -120.0},
+                      {-120.0, 120.0});
+
+    for (int frameIndex = 0; frameIndex < 3; ++frameIndex) {
+        const QByteArray payload = planeWavePayload(
+            frameIndex * AudioFrameDecoder::SamplesPerFrame,
+            23.0,
+            -17.0,
+            4200.0);
+        const BeamformedDirectionFrame expected = sanitized.process(payload);
+        const BeamformedDirectionFrame actual = invalid.process(payload);
+        QVERIFY2(actual.valid, qPrintable(actual.error));
+        QCOMPARE(actual.enhancedA, expected.enhancedA);
+        QCOMPARE(actual.suppressionB1, expected.suppressionB1);
+        QCOMPARE(actual.suppressionB2, expected.suppressionB2);
+    }
+}
+
+void MediaTest::beamformerBoundsPublicSampleRate()
+{
+    const auto verifyEquivalent = [](int suppliedSampleRate,
+                                     int expectedSampleRate) {
+        const ContinuousDirectionTarget enhancedA {-41.25, 28.5};
+        const ContinuousDirectionTarget suppressionB1 {16.75, -33.25};
+        const ContinuousDirectionTarget suppressionB2 {72.5, 44.75};
+        FractionalDelayBeamformer supplied;
+        supplied.configure(suppliedSampleRate,
+                           enhancedA,
+                           suppressionB1,
+                           suppressionB2);
+        FractionalDelayBeamformer expected;
+        expected.configure(expectedSampleRate,
+                           enhancedA,
+                           suppressionB1,
+                           suppressionB2);
+
+        const QByteArray payload = constantArrayPayload(0.25f);
+        for (int frameIndex = 0; frameIndex < 2; ++frameIndex) {
+            const BeamformedDirectionFrame actual = supplied.process(payload);
+            const BeamformedDirectionFrame reference = expected.process(payload);
+            QVERIFY2(actual.valid, qPrintable(actual.error));
+            QVERIFY2(reference.valid, qPrintable(reference.error));
+            QCOMPARE(actual.firstElement, reference.firstElement);
+            QCOMPARE(actual.enhancedA, reference.enhancedA);
+            QCOMPARE(actual.suppressionB1, reference.suppressionB1);
+            QCOMPARE(actual.suppressionB2, reference.suppressionB2);
+        }
+    };
+
+    verifyEquivalent(10'000'000, 192000);
+    verifyEquivalent(0, AudioFrameDecoder::DefaultSampleRate);
+    verifyEquivalent(std::numeric_limits<int>::min(),
+                     AudioFrameDecoder::DefaultSampleRate);
+}
+
+void MediaTest::beamformerRejectsWrongPayloadSizeWithoutResettingHistory()
+{
+    FractionalDelayBeamformer beamformer;
+    beamformer.configure(48000, {0.0, 0.0}, {20.0, 10.0}, {-20.0, -10.0});
+    const QByteArray dcPayload = constantArrayPayload(0.25f);
+    QVERIFY(beamformer.process(dcPayload).valid);
+
+    const BeamformedDirectionFrame invalid = beamformer.process(
+        QByteArray(AudioFrameDecoder::FramePayloadBytes - 1, char(0)));
+    QVERIFY(!invalid.valid);
+    QVERIFY(!invalid.error.isEmpty());
+
+    const BeamformedDirectionFrame continued = beamformer.process(dcPayload);
+    QVERIFY2(continued.valid, qPrintable(continued.error));
+    QCOMPARE(continued.enhancedA.size(), AudioFrameDecoder::SamplesPerFrame);
+    QVERIFY(std::abs(continued.enhancedA.first() - 0.25f) < 1.0e-5f);
+}
+
 void MediaTest::decodesOnlyFirstFourNoiseReductionChannels()
 {
     QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
@@ -2797,6 +3208,490 @@ void MediaTest::mapsNoiseReductionStagesToStableRecordingTracks()
     const RecordingSettings settings;
     QCOMPARE(settings.inputSource, RecordingInputSource::Array);
     QCOMPARE(settings.fileLayout, RecordingFileLayout::SingleMultichannel);
+}
+
+void MediaTest::noiseReductionWorkerKeepsFpgaLogicalChannelMapping()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::FpgaBeamformedChannels;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::SuppressionB1;
+    settings.enhancedA = {41.0, -17.0};
+    settings.suppressionB1 = {-52.0, 33.0};
+    settings.suppressionB2 = {68.0, -29.0};
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    QByteArray payload(AudioFrameDecoder::FramePayloadBytes, char(0));
+    fillChannelSamples(payload, 0, 1000 << 8);
+    fillChannelSamples(payload, 1, 2000 << 8);
+    fillChannelSamples(payload, 2, -3000 * 256);
+    fillChannelSamples(payload, 3, 4000 << 8);
+    for (int channel = 4; channel < AudioFrameDecoder::ChannelCount;
+         ++channel) {
+        fillChannelSamples(payload, channel, (10000 + channel * 100) << 8);
+    }
+
+    for (int frame = 0; frame < 7; ++frame) {
+        worker.processRawFrame(payload, 1, frame * 50000);
+    }
+    QVERIFY(!plots.isEmpty());
+    const NoiseReductionPlotFrame firstPlot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    QCOMPARE(firstPlot.first.source, NoiseSignalSource::EnhancedA);
+    QCOMPARE(firstPlot.second.source, NoiseSignalSource::SuppressionB1);
+    for (float sample : firstPlot.first.waveform) {
+        QCOMPARE(sample, 2000.0f / 32768.0f);
+    }
+    for (float sample : firstPlot.second.waveform) {
+        QCOMPARE(sample, -3000.0f / 32768.0f);
+    }
+
+    settings.firstPlotSource = NoiseSignalSource::SuppressionB2;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    worker.configure(settings, 48000);
+    plots.clear();
+    worker.processRawFrame(payload, 1, 350000);
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame secondPlot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    for (float sample : secondPlot.first.waveform) {
+        QCOMPARE(sample, 4000.0f / 32768.0f);
+    }
+    for (float sample : secondPlot.second.waveform) {
+        QCOMPARE(sample, 1000.0f / 32768.0f);
+    }
+}
+
+void MediaTest::noiseReductionWorkerUsesSoftwareBeamformingDirections()
+{
+    constexpr double SourceAzimuth = 23.5;
+    constexpr double SourceElevation = -18.25;
+    constexpr double FrequencyHz = 4200.0;
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::SuppressionB1;
+    settings.enhancedA = {SourceAzimuth, SourceElevation};
+    settings.suppressionB1 = {-47.0, 31.0};
+    settings.suppressionB2 = {69.0, 42.0};
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    FractionalDelayBeamformer expectedBeamformer;
+    expectedBeamformer.configure(48000,
+                                 settings.enhancedA,
+                                 settings.suppressionB1,
+                                 settings.suppressionB2);
+    QVector<float> expectedFirstElement;
+    QVector<float> expectedEnhancedA;
+    QVector<float> expectedSuppressionB1;
+    QVector<float> expectedSuppressionB2;
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    for (int frame = 0; frame < 7; ++frame) {
+        QByteArray payload = planeWavePayload(
+            frame * AudioFrameDecoder::SamplesPerFrame,
+            SourceAzimuth,
+            SourceElevation,
+            FrequencyHz);
+        fillChannelSamples(payload, 1, 24000 << 8);
+        fillChannelSamples(payload, 2, -16000 * 256);
+        fillChannelSamples(payload, 3, 8000 << 8);
+        const BeamformedDirectionFrame expected =
+            expectedBeamformer.process(payload);
+        QVERIFY2(expected.valid, qPrintable(expected.error));
+        expectedFirstElement += expected.firstElement;
+        expectedEnhancedA += expected.enhancedA;
+        expectedSuppressionB1 += expected.suppressionB1;
+        expectedSuppressionB2 += expected.suppressionB2;
+        worker.processRawFrame(payload, 2, frame * 50000);
+    }
+
+    QVERIFY(!plots.isEmpty());
+    const NoiseReductionPlotFrame firstPlot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    QCOMPARE(firstPlot.first.waveform,
+             expectedEnhancedA.first(firstPlot.first.waveform.size()));
+    QCOMPARE(firstPlot.second.waveform,
+             expectedSuppressionB1.first(firstPlot.second.waveform.size()));
+
+    settings.firstPlotSource = NoiseSignalSource::SuppressionB2;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    worker.configure(settings, 48000);
+    plots.clear();
+    QByteArray payload = planeWavePayload(
+        7 * AudioFrameDecoder::SamplesPerFrame,
+        SourceAzimuth,
+        SourceElevation,
+        FrequencyHz);
+    fillChannelSamples(payload, 1, 24000 << 8);
+    fillChannelSamples(payload, 2, -16000 * 256);
+    fillChannelSamples(payload, 3, 8000 << 8);
+    const BeamformedDirectionFrame expected = expectedBeamformer.process(payload);
+    QVERIFY2(expected.valid, qPrintable(expected.error));
+    expectedFirstElement += expected.firstElement;
+    expectedSuppressionB2 += expected.suppressionB2;
+    worker.processRawFrame(payload, 2, 350000);
+
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame secondPlot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    QCOMPARE(secondPlot.first.waveform, expectedSuppressionB2);
+    QCOMPARE(secondPlot.second.waveform, expectedFirstElement);
+}
+
+void MediaTest::noiseReductionWorkerKeepsHistoryAcrossAngleChanges()
+{
+    constexpr double SourceAzimuth = 37.25;
+    constexpr double SourceElevation = -21.5;
+    constexpr double FrequencyHz = 4200.0;
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    settings.enhancedA = {-63.0, 47.0};
+    settings.suppressionB1 = {0.0, 0.0};
+    settings.suppressionB2 = {63.0, -47.0};
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    FractionalDelayBeamformer updatedBeamformer;
+    updatedBeamformer.configure(48000,
+                                settings.enhancedA,
+                                settings.suppressionB1,
+                                settings.suppressionB2);
+    FractionalDelayBeamformer staleBeamformer;
+    staleBeamformer.configure(48000,
+                              settings.enhancedA,
+                              settings.suppressionB1,
+                              settings.suppressionB2);
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    for (int frame = 0; frame < 7; ++frame) {
+        const QByteArray payload = planeWavePayload(
+            frame * AudioFrameDecoder::SamplesPerFrame,
+            SourceAzimuth,
+            SourceElevation,
+            FrequencyHz);
+        QVERIFY(updatedBeamformer.process(payload).valid);
+        QVERIFY(staleBeamformer.process(payload).valid);
+        worker.processRawFrame(payload, 3, frame * 50000);
+    }
+    QVERIFY(!plots.isEmpty());
+    plots.clear();
+
+    settings.enhancedA = {SourceAzimuth, SourceElevation};
+    settings.suppressionB1 = {-18.75, 9.5};
+    settings.suppressionB2 = {72.0, 33.0};
+    worker.configure(settings, 48000);
+    updatedBeamformer.configure(48000,
+                                settings.enhancedA,
+                                settings.suppressionB1,
+                                settings.suppressionB2);
+    const QByteArray payload = planeWavePayload(
+        7 * AudioFrameDecoder::SamplesPerFrame,
+        SourceAzimuth,
+        SourceElevation,
+        FrequencyHz);
+    const BeamformedDirectionFrame expected =
+        updatedBeamformer.process(payload);
+    const BeamformedDirectionFrame stale = staleBeamformer.process(payload);
+    QVERIFY2(expected.valid, qPrintable(expected.error));
+    QVERIFY2(stale.valid, qPrintable(stale.error));
+    QVERIFY(rootMeanSquareError(expected.enhancedA, stale.enhancedA, 0)
+            > 1.0e-3);
+    worker.processRawFrame(payload, 3, 350000);
+
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame plot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    const int firstNewSample = 7 * AudioFrameDecoder::SamplesPerFrame;
+    QCOMPARE(plot.first.waveform.size(),
+             8 * AudioFrameDecoder::SamplesPerFrame);
+    QCOMPARE(plot.first.waveform.mid(
+                 firstNewSample, AudioFrameDecoder::SamplesPerFrame),
+             expected.enhancedA);
+    QVERIFY(std::abs(plot.first.waveform.at(firstNewSample)) > 1.0e-6f);
+}
+
+void MediaTest::noiseReductionWorkerResetsBeamformerAfterDeactivate()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    const QByteArray payload = constantArrayPayload(0.25f);
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    for (int frame = 0; frame < 7; ++frame) {
+        worker.processRawFrame(payload, 4, frame * 50000);
+    }
+    QVERIFY(!plots.isEmpty());
+
+    worker.setActive(false);
+    worker.setActive(true);
+    plots.clear();
+    for (int frame = 0; frame < 6; ++frame) {
+        worker.processRawFrame(payload, 5, frame * 50000);
+    }
+
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame restarted =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.first().at(0));
+    QCOMPARE(restarted.first.waveform.size(),
+             6 * AudioFrameDecoder::SamplesPerFrame);
+    QVERIFY(firstNonZeroSample(restarted.first.waveform) > 0);
+}
+
+void MediaTest::noiseReductionWorkerResetsBeamformerAfterEnableChange()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    const QByteArray payload = constantArrayPayload(0.25f);
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    for (int frame = 0; frame < 7; ++frame) {
+        worker.processRawFrame(payload, 6, frame * 50000);
+    }
+    QVERIFY(!plots.isEmpty());
+
+    settings.enabled = false;
+    worker.configure(settings, 48000);
+    settings.enabled = true;
+    worker.configure(settings, 48000);
+    plots.clear();
+    for (int frame = 0; frame < 6; ++frame) {
+        worker.processRawFrame(payload, 7, frame * 50000);
+    }
+
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame restarted =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.first().at(0));
+    QCOMPARE(restarted.first.waveform.size(),
+             6 * AudioFrameDecoder::SamplesPerFrame);
+    QVERIFY(firstNonZeroSample(restarted.first.waveform) > 0);
+}
+
+void MediaTest::noiseReductionWorkerResetsAfterInputModeChange()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    const QByteArray payload = constantArrayPayload(0.25f);
+    for (int frame = 0; frame < 7; ++frame) {
+        worker.processRawFrame(payload, 4, frame * 50000);
+    }
+    QVERIFY(!plots.isEmpty());
+
+    settings.inputMode = NoiseReductionInputMode::FpgaBeamformedChannels;
+    worker.configure(settings, 48000);
+    plots.clear();
+    for (int frame = 0; frame < 5; ++frame) {
+        worker.processRawFrame(payload, 5, frame * 50000);
+    }
+    QCOMPARE(plots.count(), 0);
+    worker.processRawFrame(payload, 5, 250000);
+
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame plot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    QCOMPARE(plot.first.waveform.size(),
+             6 * AudioFrameDecoder::SamplesPerFrame);
+    QCOMPARE(firstNonZeroSample(plot.first.waveform), 0);
+
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    worker.configure(settings, 48000);
+    plots.clear();
+    for (int frame = 0; frame < 5; ++frame) {
+        worker.processRawFrame(payload, 6, frame * 50000);
+    }
+    QCOMPARE(plots.count(), 0);
+    worker.processRawFrame(payload, 6, 250000);
+
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame directPlot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    QCOMPARE(directPlot.first.waveform.size(),
+             6 * AudioFrameDecoder::SamplesPerFrame);
+    QVERIFY(firstNonZeroSample(directPlot.first.waveform) > 0);
+}
+
+void MediaTest::noiseReductionWorkerResetsAfterSampleRateChange()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    const QByteArray payload = constantArrayPayload(0.25f);
+    for (int frame = 0; frame < 7; ++frame) {
+        worker.processRawFrame(payload, 6, frame * 50000);
+    }
+    QVERIFY(!plots.isEmpty());
+
+    worker.configure(settings, 999999);
+    plots.clear();
+    for (int frame = 0; frame < 5; ++frame) {
+        worker.processRawFrame(payload, 7, frame * 50000);
+    }
+    QCOMPARE(plots.count(), 0);
+    worker.processRawFrame(payload, 7, 250000);
+
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame plot =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    QCOMPARE(plot.sampleRate, 192000);
+    const int startupEnd = firstNonZeroSample(plot.first.waveform);
+    QVERIFY(startupEnd > 0);
+    QVERIFY(startupEnd < AudioFrameDecoder::SamplesPerFrame * 6);
+}
+
+void MediaTest::noiseReductionWorkerRejectsInvalidDirectFrameAndContinues()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    settings.algorithm = NoiseReductionAlgorithm::FixedParameterWiener;
+    settings.singleSuppressionCoefficient = 0.0;
+    settings.firstPlotSource = NoiseSignalSource::EnhancedA;
+    settings.secondPlotSource = NoiseSignalSource::FirstElement;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    const QByteArray payload = constantArrayPayload(0.25f);
+    QSignalSpy consumed(&worker, &NoiseReductionWorker::frameConsumed);
+    QSignalSpy plots(&worker, &NoiseReductionWorker::plotFrameReady);
+    QSignalSpy warnings(&worker, &NoiseReductionWorker::warningRaised);
+    for (int frame = 0; frame < 7; ++frame) {
+        worker.processRawFrame(payload, 8, frame * 50000);
+    }
+    QVERIFY(!plots.isEmpty());
+    consumed.clear();
+    plots.clear();
+    warnings.clear();
+
+    const QByteArray invalidPayload(
+        AudioFrameDecoder::FramePayloadBytes - 4, char(0));
+    for (int frame = 0; frame < 3; ++frame) {
+        worker.processRawFrame(
+            invalidPayload, 8, 350000 + frame * 50000);
+    }
+    QCOMPARE(consumed.count(), 3);
+    QCOMPARE(warnings.count(), 1);
+    QVERIFY(!warnings.first().at(0).toString().isEmpty());
+    QCOMPARE(plots.count(), 0);
+
+    worker.processRawFrame(payload, 8, 500000);
+    QCOMPARE(consumed.count(), 4);
+    QCOMPARE(warnings.count(), 1);
+    QCOMPARE(plots.count(), 1);
+    const NoiseReductionPlotFrame continued =
+        qvariant_cast<NoiseReductionPlotFrame>(plots.last().at(0));
+    const int firstNewSample = 7 * AudioFrameDecoder::SamplesPerFrame;
+    QCOMPARE(continued.first.waveform.size(),
+             8 * AudioFrameDecoder::SamplesPerFrame);
+    QVERIFY(std::abs(continued.first.waveform.at(firstNewSample) - 0.25f)
+            < 1.0e-5f);
+
+    worker.processRawFrame(invalidPayload, 8, 550000);
+    QCOMPARE(consumed.count(), 5);
+    QCOMPARE(warnings.count(), 2);
+    QCOMPARE(plots.count(), 1);
+}
+
+void MediaTest::
+    noiseReductionWorkerResetsRaw48WarningLatchAtEpochBoundaries()
+{
+    NoiseReductionWorker worker;
+    NoiseReductionSettings settings;
+    settings.enabled = true;
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.monitorEnabled = false;
+    worker.configure(settings, 48000);
+    worker.setActive(true);
+
+    const QByteArray invalidPayload(
+        AudioFrameDecoder::FramePayloadBytes - 4, char(0));
+    QSignalSpy consumed(&worker, &NoiseReductionWorker::frameConsumed);
+    QSignalSpy warnings(&worker, &NoiseReductionWorker::warningRaised);
+
+    worker.processRawFrame(invalidPayload, 9, 0);
+    QCOMPARE(warnings.count(), 1);
+
+    worker.setActive(false);
+    worker.setActive(true);
+    worker.processRawFrame(invalidPayload, 10, 0);
+    QCOMPARE(warnings.count(), 2);
+
+    settings.enabled = false;
+    worker.configure(settings, 48000);
+    settings.enabled = true;
+    worker.configure(settings, 48000);
+    worker.processRawFrame(invalidPayload, 11, 0);
+    QCOMPARE(warnings.count(), 3);
+
+    worker.configure(settings, 96000);
+    worker.processRawFrame(invalidPayload, 12, 0);
+    QCOMPARE(warnings.count(), 4);
+
+    settings.inputMode = NoiseReductionInputMode::FpgaBeamformedChannels;
+    worker.configure(settings, 96000);
+    settings.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    worker.configure(settings, 96000);
+    worker.processRawFrame(invalidPayload, 13, 0);
+    QCOMPARE(warnings.count(), 5);
+    QCOMPARE(consumed.count(), 5);
 }
 
 void MediaTest::noiseReductionWorkerConsumesRawFramesAndPublishesSelectedSources()

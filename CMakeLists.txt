@@ -37,6 +37,7 @@ set(MICARRAY_SOURCES
     src/media/audiorecorder.cpp
     src/media/bandpassfilter.cpp
     src/media/channelgainprocessor.cpp
+    src/media/fractionaldelaybeamformer.cpp
     src/media/gainprofilestore.cpp
     src/media/logmmseprocessor.cpp
     src/media/mediaframequeue.cpp
@@ -98,6 +99,7 @@ set(MICARRAY_HEADERS
     src/media/audiorecorder.h
     src/media/bandpassfilter.h
     src/media/channelgainprocessor.h
+    src/media/fractionaldelaybeamformer.h
     src/media/gainprofilestore.h
     src/media/logmmseprocessor.h
     src/media/mediaframequeue.h

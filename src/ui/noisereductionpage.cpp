@@ -57,7 +57,7 @@ QDoubleSpinBox *angleSpin(
     spin->setObjectName(objectName);
     spin->setRange(minimum, maximum);
     spin->setDecimals(1);
-    spin->setSingleStep(1.0);
+    spin->setSingleStep(0.1);
     spin->setSuffix(QStringLiteral("°"));
     return spin;
 }
@@ -162,6 +162,9 @@ NoiseReductionPage::~NoiseReductionPage()
 void NoiseReductionPage::setActive(bool active)
 {
     m_active = active;
+    if (active) {
+        refreshDirectionViews();
+    }
     updateWorkerActive();
     if (!active) {
         setPresentationMode(false);
@@ -645,6 +648,45 @@ void NoiseReductionPage::buildUi()
         m_wheelBlockedControls.append(control);
     }
 
+    auto *inputProcessingGroup =
+        new QGroupBox(QStringLiteral("输入处理"), directionPanel);
+    auto *inputProcessingLayout =
+        new QFormLayout(inputProcessingGroup);
+    m_inputModeCombo = new QComboBox(inputProcessingGroup);
+    m_inputModeCombo->setObjectName(
+        QStringLiteral("noiseInputModeCombo"));
+    m_inputModeCombo->addItem(
+        QStringLiteral("FPGA 波束形成通道（CH1/CH2/CH3）"),
+        static_cast<int>(
+            NoiseReductionInputMode::FpgaBeamformedChannels));
+    m_inputModeCombo->addItem(
+        QStringLiteral("48 通道软件波束形成（CH0–CH47）"),
+        static_cast<int>(
+            NoiseReductionInputMode::Raw48SoftwareBeamforming));
+    m_reuseLocalizationCalibrationCheck = new QCheckBox(
+        QStringLiteral("复用声源定位视频校准"),
+        inputProcessingGroup);
+    m_reuseLocalizationCalibrationCheck->setObjectName(
+        QStringLiteral("noiseReuseLocalizationCalibrationCheck"));
+    auto *inputModeExplanation = new QLabel(
+        QStringLiteral(
+            "该选项只改变本机处理；设备端必须已输出 48 通道原始阵元数据，"
+            "不会向 FPGA 发送模式切换命令。"),
+        inputProcessingGroup);
+    inputModeExplanation->setObjectName(
+        QStringLiteral("noiseInputModeExplanationLabel"));
+    inputModeExplanation->setWordWrap(true);
+    m_inputModeCombo->setToolTip(inputModeExplanation->text());
+    m_reuseLocalizationCalibrationCheck->setToolTip(
+        QStringLiteral(
+            "仅在 48 通道软件波束形成时复用声源定位页的最新视频校准。"));
+    inputProcessingLayout->addRow(QStringLiteral("输入模式"),
+                                  m_inputModeCombo);
+    inputProcessingLayout->addRow(
+        m_reuseLocalizationCalibrationCheck);
+    inputProcessingLayout->addRow(inputModeExplanation);
+    directionPanelLayout->addWidget(inputProcessingGroup);
+
     auto *directionGroup =
         new QGroupBox(QStringLiteral("方向控制"), directionPanel);
     auto *directionLayout = new QFormLayout(directionGroup);
@@ -957,6 +999,10 @@ void NoiseReductionPage::connectUi()
             this, settingsChanged);
     connect(m_secondPlotSourceCombo, &QComboBox::currentIndexChanged,
             this, settingsChanged);
+    connect(m_inputModeCombo, &QComboBox::currentIndexChanged,
+            this, settingsChanged);
+    connect(m_reuseLocalizationCalibrationCheck, &QCheckBox::toggled,
+            this, settingsChanged);
     connect(m_showMarkersCheck, &QCheckBox::toggled,
             this, settingsChanged);
     for (QDoubleSpinBox *spin : m_directionSpins) {
@@ -975,10 +1021,14 @@ void NoiseReductionPage::connectUi()
             this, [this] {
                 refreshDirectionViews();
             });
-    connect(m_videoView, &NoiseReductionVideoWidget::videoPointClicked,
-            this, &NoiseReductionPage::handleVideoPoint);
     for (NoiseReductionVideoWidget *view :
          {m_videoView, m_presentationVideo}) {
+        connect(view,
+                &NoiseReductionVideoWidget::videoPointClicked,
+                this,
+                [this, view](const QPointF &point) {
+                    handleVideoPoint(view, point);
+                });
         connect(view,
                 &NoiseReductionVideoWidget::directionDragStarted,
                 this,
@@ -993,18 +1043,18 @@ void NoiseReductionPage::connectUi()
         connect(view,
                 &NoiseReductionVideoWidget::directionDragged,
                 this,
-                [this](NoiseDirectionSelection selection,
-                       const QPointF &point) {
+                [this, view](NoiseDirectionSelection selection,
+                             const QPointF &point) {
                     handleDirectionDragPoint(
-                        selection, point, false);
+                        view, selection, point, false);
                 });
         connect(view,
                 &NoiseReductionVideoWidget::directionDragFinished,
                 this,
-                [this](NoiseDirectionSelection selection,
-                       const QPointF &point) {
+                [this, view](NoiseDirectionSelection selection,
+                             const QPointF &point) {
                     handleDirectionDragPoint(
-                        selection, point, true);
+                        view, selection, point, true);
                 });
     }
     connect(m_sendDirectionButton, &QPushButton::clicked,
@@ -1032,6 +1082,10 @@ void NoiseReductionPage::restoreSettings()
     m_settings = m_settingsStore != nullptr
         ? m_settingsStore->noiseReduction() : NoiseReductionSettings {};
     m_enabledCheck->setChecked(m_settings.enabled);
+    selectData(m_inputModeCombo,
+               static_cast<int>(m_settings.inputMode));
+    m_reuseLocalizationCalibrationCheck->setChecked(
+        m_settings.reuseLocalizationVideoCalibration);
     selectData(m_algorithmCombo, static_cast<int>(m_settings.algorithm));
     selectData(m_modeCombo, static_cast<int>(m_settings.mode));
     m_singleCoefficientSpin->setValue(
@@ -1123,6 +1177,10 @@ NoiseReductionSettings NoiseReductionPage::settingsFromUi() const
 {
     NoiseReductionSettings value;
     value.enabled = m_enabledCheck->isChecked();
+    value.inputMode = static_cast<NoiseReductionInputMode>(
+        m_inputModeCombo->currentData().toInt());
+    value.reuseLocalizationVideoCalibration =
+        m_reuseLocalizationCalibrationCheck->isChecked();
     value.algorithm = static_cast<NoiseReductionAlgorithm>(
         m_algorithmCombo->currentData().toInt());
     value.mode = static_cast<NoiseReductionMode>(
@@ -1224,6 +1282,7 @@ void NoiseReductionPage::applySettingsFromUi()
     refreshProcessingAvailability();
     refreshNodeSummaries();
     refreshDirectionViews();
+    refreshControlAvailability();
     emit configureWorkerRequested(m_settings, m_sampleRate);
     updateWorkerActive();
     emit settingsChanged();
@@ -1343,6 +1402,38 @@ void NoiseReductionPage::showNodeParameters(int nodeId)
     }
 }
 
+bool NoiseReductionPage::usesLocalizationCalibration() const
+{
+    return m_settings.inputMode
+            == NoiseReductionInputMode::Raw48SoftwareBeamforming
+        && m_settings.reuseLocalizationVideoCalibration;
+}
+
+CameraViewSettings NoiseReductionPage::effectiveDirectionCamera() const
+{
+    if (usesLocalizationCalibration() && m_settingsStore != nullptr) {
+        return m_settingsStore->liveLocalization().camera;
+    }
+    return m_settings.camera;
+}
+
+void NoiseReductionPage::refreshDirectionProjection()
+{
+    const bool calibrated = usesLocalizationCalibration();
+    const CameraViewSettings camera = effectiveDirectionCamera();
+    for (NoiseReductionVideoWidget *view :
+         {m_videoView, m_presentationVideo}) {
+        if (view == nullptr) {
+            continue;
+        }
+        view->setProjectionMode(
+            calibrated
+                ? NoiseDirectionProjectionMode::CalibratedPinhole
+                : NoiseDirectionProjectionMode::AngularWideAngle);
+        view->setCameraView(camera);
+    }
+}
+
 void NoiseReductionPage::refreshDirectionViews()
 {
     const double directions[6] {
@@ -1375,12 +1466,12 @@ void NoiseReductionPage::refreshDirectionViews()
     const NoiseDirectionSelection selection =
         static_cast<NoiseDirectionSelection>(
             m_directionSelectionCombo->currentData().toInt());
+    refreshDirectionProjection();
     for (NoiseReductionVideoWidget *view :
          {m_videoView, m_presentationVideo}) {
         if (view == nullptr) {
             continue;
         }
-        view->setCameraView(m_settings.camera);
         view->setControlMapping(m_settings.mapping);
         view->setDirectionTargets(m_settings.enhancedA,
                                   m_settings.suppressionB1,
@@ -1392,18 +1483,34 @@ void NoiseReductionPage::refreshDirectionViews()
 
 void NoiseReductionPage::refreshControlAvailability()
 {
-    if (m_sendDirectionButton == nullptr) {
+    if (m_sendDirectionButton == nullptr
+        || m_inputModeCombo == nullptr
+        || m_reuseLocalizationCalibrationCheck == nullptr) {
         return;
     }
-    m_sendDirectionButton->setEnabled(m_connected && !m_controlLocked);
+    const bool raw48 = static_cast<NoiseReductionInputMode>(
+                           m_inputModeCombo->currentData().toInt())
+        == NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    m_reuseLocalizationCalibrationCheck->setEnabled(raw48);
+    m_sendDirectionButton->setEnabled(
+        !raw48 && m_connected && !m_controlLocked);
+    m_sendDirectionButton->setToolTip(
+        raw48
+            ? QStringLiteral(
+                  "连续实际角度已直接用于软件波束形成，无需向 FPGA 发送方向控制。")
+            : QStringLiteral(
+                  "按当前连接与控制锁定状态向 FPGA 发送 A/B1/B2 方向控制值。"));
 }
 
 void NoiseReductionPage::handleVideoPoint(
+    NoiseReductionVideoWidget *view,
     const QPointF &normalizedPoint)
 {
+    if (view == nullptr) {
+        return;
+    }
     const ScanDirection direction =
-        unprojectVideoPointAngular(
-            normalizedPoint, m_settings.camera);
+        view->unprojectVideoPointForCurrentMode(normalizedPoint);
     const ContinuousDirectionTarget target =
         DirectionControlMapper::clampDirection(
             {direction.azimuthDegrees, direction.elevationDegrees},
@@ -1424,13 +1531,16 @@ void NoiseReductionPage::handleVideoPoint(
 }
 
 void NoiseReductionPage::handleDirectionDragPoint(
+    NoiseReductionVideoWidget *view,
     NoiseDirectionSelection selection,
     const QPointF &normalizedPoint,
     bool finished)
 {
+    if (view == nullptr) {
+        return;
+    }
     const ScanDirection direction =
-        unprojectVideoPointAngular(
-            normalizedPoint, m_settings.camera);
+        view->unprojectVideoPointForCurrentMode(normalizedPoint);
     const ContinuousDirectionTarget target =
         DirectionControlMapper::clampDirection(
             {direction.azimuthDegrees, direction.elevationDegrees},
@@ -1457,10 +1567,22 @@ void NoiseReductionPage::handleDirectionDragPoint(
     }
     m_settings = settingsFromUi();
     refreshDirectionViews();
+    if (m_settings.inputMode
+        == NoiseReductionInputMode::Raw48SoftwareBeamforming) {
+        emit configureWorkerRequested(m_settings, m_sampleRate);
+    }
 }
 
 void NoiseReductionPage::requestControlSend()
 {
+    if (m_settings.inputMode
+        == NoiseReductionInputMode::Raw48SoftwareBeamforming) {
+        setControlSendResult(
+            false,
+            QStringLiteral(
+                "连续实际角度已直接用于软件波束形成，无需向 FPGA 发送方向控制。"));
+        return;
+    }
     if (!m_connected) {
         setControlSendResult(
             false, QStringLiteral("设备未连接，方向值尚未发送"));

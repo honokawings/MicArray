@@ -329,6 +329,21 @@ QString noiseModeKey(NoiseReductionMode mode)
         ? QStringLiteral("twoPoint") : QStringLiteral("singlePoint");
 }
 
+QString noiseInputModeKey(NoiseReductionInputMode inputMode)
+{
+    return inputMode == NoiseReductionInputMode::Raw48SoftwareBeamforming
+        ? QStringLiteral("raw-48-software")
+        : QStringLiteral("fpga-beamformed");
+}
+
+NoiseReductionInputMode noiseInputModeFromKey(const QString &key)
+{
+    if (key == QStringLiteral("raw-48-software")) {
+        return NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    }
+    return NoiseReductionInputMode::FpgaBeamformedChannels;
+}
+
 QString noiseAlgorithmKey(NoiseReductionAlgorithm algorithm)
 {
     return algorithm == NoiseReductionAlgorithm::AdaptiveWiener
@@ -448,6 +463,10 @@ NoiseReductionSettings sanitizeNoiseReductionSettings(
     NoiseReductionSettings value)
 {
     const NoiseReductionSettings defaults;
+    if (value.inputMode != NoiseReductionInputMode::FpgaBeamformedChannels
+        && value.inputMode != NoiseReductionInputMode::Raw48SoftwareBeamforming) {
+        value.inputMode = defaults.inputMode;
+    }
     if (value.algorithm != NoiseReductionAlgorithm::FixedParameterWiener
         && value.algorithm != NoiseReductionAlgorithm::AdaptiveWiener) {
         value.algorithm = defaults.algorithm;
@@ -985,6 +1004,15 @@ NoiseReductionSettings AppSettings::noiseReduction() const
     value.enabled =
         m_settings->value(group + QStringLiteral("enabled"), defaults.enabled)
             .toBool();
+    value.inputMode = noiseInputModeFromKey(
+        m_settings->value(group + QStringLiteral("inputMode"),
+                          noiseInputModeKey(defaults.inputMode)).toString());
+    value.reuseLocalizationVideoCalibration =
+        m_settings->value(
+                      group + QStringLiteral(
+                                  "reuseLocalizationVideoCalibration"),
+                      defaults.reuseLocalizationVideoCalibration)
+            .toBool();
     const QString algorithm =
         m_settings->value(group + QStringLiteral("algorithm"),
                           noiseAlgorithmKey(defaults.algorithm)).toString();
@@ -1440,6 +1468,11 @@ void AppSettings::saveNoiseReduction(
         sanitizeNoiseReductionSettings(settingsValue);
     const QString group = QStringLiteral("noiseReduction/");
     m_settings->setValue(group + QStringLiteral("enabled"), value.enabled);
+    m_settings->setValue(group + QStringLiteral("inputMode"),
+                         noiseInputModeKey(value.inputMode));
+    m_settings->setValue(
+        group + QStringLiteral("reuseLocalizationVideoCalibration"),
+        value.reuseLocalizationVideoCalibration);
     m_settings->setValue(group + QStringLiteral("algorithm"),
                          noiseAlgorithmKey(value.algorithm));
     m_settings->setValue(group + QStringLiteral("mode"),

@@ -58,6 +58,24 @@ void NoiseReductionVideoWidget::setMarkersVisible(bool visible)
     update();
 }
 
+void NoiseReductionVideoWidget::setProjectionMode(
+    NoiseDirectionProjectionMode mode)
+{
+    m_projectionMode = mode;
+    update();
+}
+
+ScanDirection NoiseReductionVideoWidget::
+    unprojectVideoPointForCurrentMode(
+        const QPointF &normalizedPoint) const
+{
+    if (m_projectionMode
+        == NoiseDirectionProjectionMode::CalibratedPinhole) {
+        return unprojectVideoPoint(normalizedPoint, m_camera);
+    }
+    return unprojectVideoPointAngular(normalizedPoint, m_camera);
+}
+
 void NoiseReductionVideoWidget::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
@@ -143,7 +161,10 @@ std::optional<QPointF> NoiseReductionVideoWidget::targetPoint(
     direction.azimuthDegrees = target.azimuthDegrees;
     direction.elevationDegrees = target.elevationDegrees;
     const ProjectionResult projected =
-        projectDirectionAngular(direction, m_camera);
+        m_projectionMode
+                == NoiseDirectionProjectionMode::CalibratedPinhole
+            ? projectDirection(direction, m_camera)
+            : projectDirectionAngular(direction, m_camera);
     if (!projected.valid || !projected.inFront) {
         return std::nullopt;
     }

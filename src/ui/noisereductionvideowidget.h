@@ -10,6 +10,11 @@ class QPainter;
 
 namespace MicArray {
 
+enum class NoiseDirectionProjectionMode {
+    AngularWideAngle,
+    CalibratedPinhole,
+};
+
 class NoiseReductionVideoWidget : public VideoPreviewWidget
 {
     Q_OBJECT
@@ -25,6 +30,13 @@ public:
     void setCurrentSelection(NoiseDirectionSelection selection);
     void setMarkersVisible(bool visible);
     bool markersVisible() const { return m_markersVisible; }
+    void setProjectionMode(NoiseDirectionProjectionMode mode);
+    NoiseDirectionProjectionMode projectionMode() const
+    {
+        return m_projectionMode;
+    }
+    ScanDirection unprojectVideoPointForCurrentMode(
+        const QPointF &normalizedPoint) const;
 
 signals:
     void videoPointClicked(const QPointF &normalizedPoint);
@@ -61,6 +73,8 @@ private:
     NoiseDirectionSelection m_selection =
         NoiseDirectionSelection::EnhancedA;
     std::optional<NoiseDirectionSelection> m_dragSelection;
+    NoiseDirectionProjectionMode m_projectionMode =
+        NoiseDirectionProjectionMode::AngularWideAngle;
     bool m_markersVisible = true;
 };
 

@@ -48,6 +48,7 @@ private slots:
     void invalidLiveLocalizationFieldsFallBackIndependently();
     void invalidHeatmapFocusFallsBackIndependently();
     void usesNoiseReductionProcessingDefaults();
+    void persistsNoiseReductionInputSettings();
     void persistsNoiseReductionSettings();
     void migratesLegacyNoiseDirectionCodesToContinuousAngles();
     void invalidNoiseReductionFieldsFallBackIndependently();
@@ -881,6 +882,48 @@ void AppTest::usesNoiseReductionProcessingDefaults()
     QCOMPARE(actual.mapping.elevationMaximumDegrees, 90.0);
     QCOMPARE(actual.camera.horizontalFovDegrees, 180.0);
     QCOMPARE(actual.camera.verticalFovDegrees, 180.0);
+}
+
+void AppTest::persistsNoiseReductionInputSettings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+
+    const NoiseReductionSettings defaults =
+        AppSettings(path).noiseReduction();
+    QCOMPARE(defaults.inputMode,
+             NoiseReductionInputMode::FpgaBeamformedChannels);
+    QVERIFY(!defaults.reuseLocalizationVideoCalibration);
+
+    NoiseReductionSettings expected;
+    expected.inputMode = NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    expected.reuseLocalizationVideoCalibration = true;
+    {
+        AppSettings settings(path);
+        settings.saveNoiseReduction(expected);
+    }
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        QCOMPARE(raw.value(QStringLiteral("noiseReduction/inputMode")).toString(),
+                 QStringLiteral("raw-48-software"));
+        QVERIFY(raw.value(
+                       QStringLiteral(
+                           "noiseReduction/reuseLocalizationVideoCalibration"))
+                    .toBool());
+    }
+    QCOMPARE(AppSettings(path).noiseReduction().inputMode,
+             NoiseReductionInputMode::Raw48SoftwareBeamforming);
+    QVERIFY(AppSettings(path).noiseReduction().reuseLocalizationVideoCalibration);
+
+    {
+        QSettings raw(path, QSettings::IniFormat);
+        raw.setValue(QStringLiteral("noiseReduction/inputMode"),
+                     QStringLiteral("invalid-input-mode"));
+        raw.sync();
+    }
+    QCOMPARE(AppSettings(path).noiseReduction().inputMode,
+             NoiseReductionInputMode::FpgaBeamformedChannels);
 }
 
 void AppTest::migratesLegacyNoiseDirectionCodesToContinuousAngles()

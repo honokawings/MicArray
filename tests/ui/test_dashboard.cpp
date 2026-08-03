@@ -168,12 +168,17 @@ private slots:
     void powerSpectrumWidgetStoresRealtimeSeries();
     void noiseReductionVideoAcceptsOnlyVisibleVideoClicks();
     void noiseReductionVideoDragsMarkerAndFinishesOnce();
+    void noiseReductionVideoDefaultsToAngularWideAngleProjection();
+    void noiseReductionVideoUsesPinholeProjectionAndUnprojection();
     void waveformWidgetAcceptsNamedFloatSeries();
     void noiseReductionPageProvidesRealtimeControlsAndDefaults();
     void noiseReductionListeningTabProvidesBufferAndQuickRecording();
     void noiseReductionRecordingRequirementKeepsWorkerActiveOffPage();
     void noiseReductionPageUsesTabbedReorderableDataFlow();
     void noiseReductionCriticalAnglesIgnoreMouseWheel();
+    void noiseReductionInputModePersistsAndFeedsContinuousWorkerSettings();
+    void noiseReductionRaw48SuppressesAllFpgaDirectionSends();
+    void noiseReductionReusesLiveLocalizationCameraInBothViews();
     void noiseReductionVideoClickUpdatesSelectedTargetAndRequestsAllControls();
     void noiseReductionPageSendsDraggedMarkerOnlyOnRelease();
     void noiseReductionManualAnglesRemainContinuousAndShowQuantizedCodes();
@@ -647,14 +652,22 @@ void DashboardTest::liveHeatmapFocusSuppressesRefinedPeakShoulders()
     widget.setSpatialResponse(response);
     QCoreApplication::processEvents();
     const QImage neutral = widget.grab().toImage();
+    const auto logicalPixelColor = [](const QImage &image,
+                                      double x,
+                                      double y) {
+        const double ratio = image.devicePixelRatio();
+        return image.pixelColor(qRound(x * ratio),
+                                qRound(y * ratio));
+    };
     int shoulderX = -1;
     int closestShoulderHue = 241;
     for (int x = 240; x < 560; ++x) {
         const int baseHue =
-            withoutRefinedPeakImage.pixelColor(x, 180)
-                .hsvHue();
+            logicalPixelColor(withoutRefinedPeakImage,
+                              x,
+                              180).hsvHue();
         const int refinedHue =
-            neutral.pixelColor(x, 180).hsvHue();
+            logicalPixelColor(neutral, x, 180).hsvHue();
         if (baseHue >= 230
             && refinedHue >= 40
             && refinedHue <= 180
@@ -668,13 +681,13 @@ void DashboardTest::liveHeatmapFocusSuppressesRefinedPeakShoulders()
         shoulderX >= 0,
         "refined peak did not create an isolated shoulder");
     const QColor neutralShoulder =
-        neutral.pixelColor(shoulderX, 180);
+        logicalPixelColor(neutral, shoulderX, 180);
 
     widget.setHeatmapFocusExponent(3.0);
     QCoreApplication::processEvents();
     const QImage focused = widget.grab().toImage();
     const QColor focusedShoulder =
-        focused.pixelColor(shoulderX, 180);
+        logicalPixelColor(focused, shoulderX, 180);
 
     QVERIFY2(
         focusedShoulder.hsvHue()
@@ -1032,6 +1045,87 @@ void DashboardTest::noiseReductionVideoDragsMarkerAndFinishesOnce()
     QCOMPARE(finished.count(), 1);
 }
 
+void DashboardTest::noiseReductionVideoDefaultsToAngularWideAngleProjection()
+{
+    NoiseReductionVideoWidget widget;
+    widget.setCameraView({0.0, 0.0, 180.0, 90.0, 0.0});
+
+    QCOMPARE(widget.projectionMode(),
+             NoiseDirectionProjectionMode::AngularWideAngle);
+    const ScanDirection left =
+        widget.unprojectVideoPointForCurrentMode({0.0, 0.5});
+    const ScanDirection center =
+        widget.unprojectVideoPointForCurrentMode({0.5, 0.5});
+    const ScanDirection right =
+        widget.unprojectVideoPointForCurrentMode({1.0, 0.5});
+    const ScanDirection threeQuarters =
+        widget.unprojectVideoPointForCurrentMode({0.75, 0.5});
+    QVERIFY(qAbs(left.azimuthDegrees + 90.0) < 0.01);
+    QVERIFY(qAbs(center.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(right.azimuthDegrees - 90.0) < 0.01);
+    QVERIFY(qAbs(threeQuarters.azimuthDegrees - 45.0) < 0.01);
+}
+
+void DashboardTest::
+    noiseReductionVideoUsesPinholeProjectionAndUnprojection()
+{
+    NoiseReductionVideoWidget widget;
+    widget.resize(640, 480);
+    widget.setFrame(QImage(1600, 900, QImage::Format_RGB32));
+    const CameraViewSettings camera {18.0, -10.0, 100.0, 70.0, 22.0};
+    const SoundSourceDirection direction {37.0, -2.0};
+    const ProjectionResult projected = projectDirection(direction, camera);
+    QVERIFY(projected.valid);
+    QVERIFY(projected.inView);
+    const DirectionControlMapping mapping;
+    QVERIFY(mapping.isValid());
+    widget.setControlMapping(mapping);
+    widget.setCameraView(camera);
+    widget.setDirectionTargets({direction.azimuthDegrees,
+                                direction.elevationDegrees},
+                               {-30.0, 0.0},
+                               {30.0, 0.0});
+    widget.setProjectionMode(
+        NoiseDirectionProjectionMode::CalibratedPinhole);
+    widget.show();
+    QCoreApplication::processEvents();
+
+    QCOMPARE(widget.projectionMode(),
+             NoiseDirectionProjectionMode::CalibratedPinhole);
+    const ScanDirection restored =
+        widget.unprojectVideoPointForCurrentMode(projected.normalizedPoint);
+    QVERIFY(qAbs(restored.azimuthDegrees - direction.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(restored.elevationDegrees - direction.elevationDegrees) < 0.01);
+
+    const QRectF video = widget.videoRect();
+    QSignalSpy clicked(&widget,
+                       &NoiseReductionVideoWidget::videoPointClicked);
+    const QPoint click(
+        qRound(video.left() + projected.normalizedPoint.x() * video.width()),
+        qRound(video.top() + projected.normalizedPoint.y() * video.height()));
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, click);
+    QCOMPARE(clicked.count(), 0);
+
+    widget.setDirectionTargets({-70.0, 20.0},
+                               {-30.0, 0.0},
+                               {30.0, 0.0});
+    QCoreApplication::processEvents();
+    const QPoint freeClick = widget.videoRect().center().toPoint();
+    QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, freeClick);
+    QCOMPARE(clicked.count(), 1);
+    const ScanDirection clickedDirection =
+        widget.unprojectVideoPointForCurrentMode(
+            clicked.first().at(0).toPointF());
+    const ScanDirection expectedClickDirection =
+        unprojectVideoPoint({0.5, 0.5}, camera);
+    QVERIFY(qAbs(clickedDirection.azimuthDegrees
+                 - expectedClickDirection.azimuthDegrees)
+            < 0.01);
+    QVERIFY(qAbs(clickedDirection.elevationDegrees
+                 - expectedClickDirection.elevationDegrees)
+            < 0.01);
+}
+
 void DashboardTest::waveformWidgetAcceptsNamedFloatSeries()
 {
     AudioWaveformWidget widget;
@@ -1371,6 +1465,37 @@ void DashboardTest::noiseReductionCriticalAnglesIgnoreMouseWheel()
     page.show();
     QCoreApplication::processEvents();
 
+    const QStringList directionNames {
+        QStringLiteral("noiseDirectionAAzimuthDegreesSpin"),
+        QStringLiteral("noiseDirectionAElevationDegreesSpin"),
+        QStringLiteral("noiseDirectionB1AzimuthDegreesSpin"),
+        QStringLiteral("noiseDirectionB1ElevationDegreesSpin"),
+        QStringLiteral("noiseDirectionB2AzimuthDegreesSpin"),
+        QStringLiteral("noiseDirectionB2ElevationDegreesSpin"),
+    };
+    for (const QString &name : directionNames) {
+        auto *spin = page.findChild<QDoubleSpinBox *>(name);
+        QVERIFY(spin);
+        QCOMPARE(spin->singleStep(), 0.1);
+    }
+    const QStringList sharedAngleNames {
+        QStringLiteral("noiseAzimuthMinimumSpin"),
+        QStringLiteral("noiseAzimuthMaximumSpin"),
+        QStringLiteral("noiseElevationMinimumSpin"),
+        QStringLiteral("noiseElevationMaximumSpin"),
+        QStringLiteral("noiseCameraCenterAzimuthSpin"),
+        QStringLiteral("noiseCameraCenterElevationSpin"),
+        QStringLiteral("noiseCameraHorizontalFovSpin"),
+        QStringLiteral("noiseCameraVerticalFovSpin"),
+        QStringLiteral("noiseCameraRollSpin"),
+    };
+    for (const QString &name : sharedAngleNames) {
+        auto *spin = page.findChild<QDoubleSpinBox *>(name);
+        QVERIFY(spin);
+        QCOMPARE(spin->decimals(), 1);
+        QCOMPARE(spin->singleStep(), 0.1);
+    }
+
     auto sendWheel = [](QDoubleSpinBox *spin) {
         spin->setFocus();
         const QPointF local = spin->rect().center();
@@ -1406,6 +1531,347 @@ void DashboardTest::noiseReductionCriticalAnglesIgnoreMouseWheel()
     const double before = coefficient->value();
     sendWheel(coefficient);
     QVERIFY(coefficient->value() > before);
+}
+
+void DashboardTest::
+    noiseReductionInputModePersistsAndFeedsContinuousWorkerSettings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionPage page(&settings);
+
+    auto *inputMode = page.findChild<QComboBox *>(
+        QStringLiteral("noiseInputModeCombo"));
+    auto *reuseCalibration = page.findChild<QCheckBox *>(
+        QStringLiteral("noiseReuseLocalizationCalibrationCheck"));
+    auto *explanation = page.findChild<QLabel *>(
+        QStringLiteral("noiseInputModeExplanationLabel"));
+    auto *sendDirection = page.findChild<QPushButton *>(
+        QStringLiteral("noiseReductionSendDirectionButton"));
+    QVERIFY(inputMode);
+    QVERIFY(reuseCalibration);
+    QVERIFY(explanation);
+    QVERIFY(sendDirection);
+
+    const int fpgaIndex = inputMode->findData(
+        static_cast<int>(
+            NoiseReductionInputMode::FpgaBeamformedChannels));
+    const int raw48Index = inputMode->findData(
+        static_cast<int>(
+            NoiseReductionInputMode::Raw48SoftwareBeamforming));
+    QVERIFY(fpgaIndex >= 0);
+    QVERIFY(raw48Index >= 0);
+    QCOMPARE(inputMode->itemText(fpgaIndex),
+             QStringLiteral("FPGA 波束形成通道（CH1/CH2/CH3）"));
+    QCOMPARE(inputMode->itemText(raw48Index),
+             QStringLiteral("48 通道软件波束形成（CH0–CH47）"));
+    QCOMPARE(reuseCalibration->text(),
+             QStringLiteral("复用声源定位视频校准"));
+    QVERIFY(explanation->text().contains(
+        QStringLiteral("48 通道原始阵元数据")));
+    QVERIFY(explanation->text().contains(
+        QStringLiteral("不会向 FPGA 发送模式切换命令")));
+    QCOMPARE(inputMode->currentIndex(), fpgaIndex);
+    QVERIFY(!reuseCalibration->isEnabled());
+    QVERIFY(!reuseCalibration->isChecked());
+
+    QSignalSpy configureSpy(
+        &page, &NoiseReductionPage::configureWorkerRequested);
+    QSignalSpy controlSpy(
+        &page, &NoiseReductionPage::controlSendRequested);
+    page.setSampleRate(48001);
+    QCOMPARE(configureSpy.count(), 1);
+    NoiseReductionSettings configured =
+        qvariant_cast<NoiseReductionSettings>(
+            configureSpy.last().at(0));
+    QCOMPARE(configured.inputMode,
+             NoiseReductionInputMode::FpgaBeamformedChannels);
+    QCOMPARE(controlSpy.count(), 0);
+
+    page.setConnected(true);
+    page.setControlLocked(false);
+    inputMode->setCurrentIndex(raw48Index);
+    QVERIFY(reuseCalibration->isEnabled());
+    QVERIFY(!sendDirection->isEnabled());
+    QVERIFY(sendDirection->toolTip().contains(
+        QStringLiteral("软件波束形成")));
+    QCOMPARE(controlSpy.count(), 0);
+    QCOMPARE(settings.noiseReduction().inputMode,
+             NoiseReductionInputMode::Raw48SoftwareBeamforming);
+
+    reuseCalibration->setChecked(true);
+    QCOMPARE(controlSpy.count(), 0);
+    QVERIFY(settings.noiseReduction()
+                .reuseLocalizationVideoCalibration);
+
+    auto *azimuth = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseDirectionB2AzimuthDegreesSpin"));
+    auto *elevation = page.findChild<QDoubleSpinBox *>(
+        QStringLiteral("noiseDirectionB2ElevationDegreesSpin"));
+    QVERIFY(azimuth);
+    QVERIFY(elevation);
+    azimuth->setValue(17.3);
+    elevation->setValue(20.7);
+    configured = qvariant_cast<NoiseReductionSettings>(
+        configureSpy.last().at(0));
+    QCOMPARE(configured.inputMode,
+             NoiseReductionInputMode::Raw48SoftwareBeamforming);
+    QCOMPARE(configured.suppressionB2.azimuthDegrees, 17.3);
+    QCOMPARE(configured.suppressionB2.elevationDegrees, 20.7);
+    QCOMPARE(controlSpy.count(), 0);
+
+    inputMode->setCurrentIndex(fpgaIndex);
+    QVERIFY(!reuseCalibration->isEnabled());
+    QVERIFY(reuseCalibration->isChecked());
+    QVERIFY(sendDirection->isEnabled());
+    QCOMPARE(controlSpy.count(), 0);
+    const NoiseReductionSettings persisted = settings.noiseReduction();
+    QCOMPARE(persisted.inputMode,
+             NoiseReductionInputMode::FpgaBeamformedChannels);
+    QVERIFY(persisted.reuseLocalizationVideoCalibration);
+}
+
+void DashboardTest::noiseReductionRaw48SuppressesAllFpgaDirectionSends()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    NoiseReductionSettings stored;
+    stored.inputMode =
+        NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    settings.saveNoiseReduction(stored);
+    NoiseReductionPage page(&settings);
+    page.setConnected(true);
+    page.setControlLocked(false);
+    page.resize(1200, 760);
+    page.show();
+    page.setVideoFrame(
+        QImage(1600, 900, QImage::Format_RGB32), 1, 2);
+    QCoreApplication::processEvents();
+
+    auto *inputMode = page.findChild<QComboBox *>(
+        QStringLiteral("noiseInputModeCombo"));
+    auto *sendDirection = page.findChild<QPushButton *>(
+        QStringLiteral("noiseReductionSendDirectionButton"));
+    auto *status = page.findChild<QLabel *>(
+        QStringLiteral("noiseReductionStatusLabel"));
+    auto *view = page.findChild<NoiseReductionVideoWidget *>(
+        QStringLiteral("noiseReductionVideoView"));
+    QVERIFY(inputMode);
+    QVERIFY(sendDirection);
+    QVERIFY(status);
+    QVERIFY(view);
+    QVERIFY(!sendDirection->isEnabled());
+
+    QSignalSpy requested(
+        &page, &NoiseReductionPage::controlSendRequested);
+    QSignalSpy configureRequested(
+        &page, &NoiseReductionPage::configureWorkerRequested);
+    QSignalSpy settingsChangedSpy(
+        &page, &NoiseReductionPage::settingsChanged);
+    const QRectF video = view->videoRect();
+    const QPoint rawClick(
+        qRound(video.left() + video.width() * 0.75),
+        qRound(video.center().y()));
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, rawClick);
+    QCOMPARE(requested.count(), 0);
+    QVERIFY(status->text().contains(
+        QStringLiteral("无需向 FPGA 发送方向控制")));
+
+    const NoiseReductionSettings persistedBeforeDrag =
+        settings.noiseReduction();
+    configureRequested.clear();
+    settingsChangedSpy.clear();
+    const QPoint rawDragEnd = rawClick + QPoint(35, 0);
+    const QPointF rawDragNormalized(
+        (rawDragEnd.x() - video.left()) / video.width(),
+        (rawDragEnd.y() - video.top()) / video.height());
+    const ScanDirection expectedDuringDrag =
+        view->unprojectVideoPointForCurrentMode(rawDragNormalized);
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, rawClick);
+    QTest::mouseMove(view, rawDragEnd);
+    QCOMPARE(requested.count(), 0);
+    QVERIFY(!configureRequested.isEmpty());
+    const NoiseReductionSettings configuredDuringDrag =
+        qvariant_cast<NoiseReductionSettings>(
+            configureRequested.last().at(0));
+    QVERIFY(qAbs(configuredDuringDrag.enhancedA.azimuthDegrees
+                 - expectedDuringDrag.azimuthDegrees) < 0.05);
+    QVERIFY(qAbs(configuredDuringDrag.enhancedA.elevationDegrees
+                 - expectedDuringDrag.elevationDegrees) < 0.05);
+    QCOMPARE(settingsChangedSpy.count(), 0);
+    QVERIFY(settings.noiseReduction() == persistedBeforeDrag);
+    QTest::mouseRelease(
+        view, Qt::LeftButton, Qt::NoModifier, rawDragEnd);
+    QCOMPARE(requested.count(), 0);
+    QTest::mouseClick(sendDirection, Qt::LeftButton);
+    QCOMPARE(requested.count(), 0);
+
+    inputMode->setCurrentIndex(inputMode->findData(
+        static_cast<int>(
+            NoiseReductionInputMode::FpgaBeamformedChannels)));
+    QVERIFY(sendDirection->isEnabled());
+    QCOMPARE(requested.count(), 0);
+
+    const QPoint fpgaClick(
+        qRound(video.left() + video.width() * 0.25),
+        qRound(video.center().y()));
+    QTest::mouseClick(view, Qt::LeftButton, Qt::NoModifier, fpgaClick);
+    QCOMPARE(requested.count(), 1);
+    const QPoint fpgaDragEnd = fpgaClick + QPoint(35, 0);
+    QTest::mousePress(view, Qt::LeftButton, Qt::NoModifier, fpgaClick);
+    QTest::mouseMove(view, fpgaDragEnd);
+    QCOMPARE(requested.count(), 1);
+    QTest::mouseRelease(
+        view, Qt::LeftButton, Qt::NoModifier, fpgaDragEnd);
+    QCOMPARE(requested.count(), 2);
+    QTest::mouseClick(sendDirection, Qt::LeftButton);
+    QCOMPARE(requested.count(), 3);
+}
+
+void DashboardTest::noiseReductionReusesLiveLocalizationCameraInBothViews()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppSettings settings(directory.filePath(QStringLiteral("settings.ini")));
+    LiveLocalizationSettings localization;
+    localization.camera = {18.0, -10.0, 100.0, 70.0, 22.0};
+    settings.saveLiveLocalization(localization);
+    NoiseReductionSettings stored;
+    stored.inputMode =
+        NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    stored.reuseLocalizationVideoCalibration = true;
+    stored.camera = {0.0, 0.0, 180.0, 180.0, 0.0};
+    settings.saveNoiseReduction(stored);
+    NoiseReductionPage page(&settings);
+    page.resize(1200, 760);
+    page.show();
+    page.setVideoFrame(
+        QImage(1600, 900, QImage::Format_RGB32), 1, 2);
+    QCoreApplication::processEvents();
+
+    auto *normal = page.findChild<NoiseReductionVideoWidget *>(
+        QStringLiteral("noiseReductionVideoView"));
+    auto *presentation = page.findChild<NoiseReductionVideoWidget *>(
+        QStringLiteral("noiseReductionPresentationVideo"));
+    auto *reuseCalibration = page.findChild<QCheckBox *>(
+        QStringLiteral("noiseReuseLocalizationCalibrationCheck"));
+    QVERIFY(normal);
+    QVERIFY(presentation);
+    QVERIFY(reuseCalibration);
+    QCOMPARE(normal->projectionMode(),
+             NoiseDirectionProjectionMode::CalibratedPinhole);
+    QCOMPARE(presentation->projectionMode(),
+             NoiseDirectionProjectionMode::CalibratedPinhole);
+
+    const QPointF probe(0.72, 0.38);
+    const ScanDirection expected =
+        unprojectVideoPoint(probe, localization.camera);
+    const ScanDirection normalDirection =
+        normal->unprojectVideoPointForCurrentMode(probe);
+    const ScanDirection presentationDirection =
+        presentation->unprojectVideoPointForCurrentMode(probe);
+    QVERIFY(qAbs(normalDirection.azimuthDegrees
+                 - expected.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(normalDirection.elevationDegrees
+                 - expected.elevationDegrees) < 0.01);
+    QVERIFY(qAbs(presentationDirection.azimuthDegrees
+                 - expected.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(presentationDirection.elevationDegrees
+                 - expected.elevationDegrees) < 0.01);
+
+    const QRectF normalVideo = normal->videoRect();
+    const QPoint click(
+        qRound(normalVideo.left() + normalVideo.width() * 0.82),
+        qRound(normalVideo.top() + normalVideo.height() * 0.78));
+    const QPointF clickNormalized(
+        (click.x() - normalVideo.left()) / normalVideo.width(),
+        (click.y() - normalVideo.top()) / normalVideo.height());
+    const ScanDirection expectedClick =
+        normal->unprojectVideoPointForCurrentMode(clickNormalized);
+    QTest::mouseClick(normal, Qt::LeftButton, Qt::NoModifier, click);
+    QVERIFY(qAbs(page.currentSettings().enhancedA.azimuthDegrees
+                 - expectedClick.azimuthDegrees) < 0.05);
+    QVERIFY(qAbs(page.currentSettings().enhancedA.elevationDegrees
+                 - expectedClick.elevationDegrees) < 0.05);
+
+    page.showPresentation();
+    QTRY_VERIFY(presentation->isVisible());
+    const ProjectionResult targetProjection = projectDirection(
+        {page.currentSettings().enhancedA.azimuthDegrees,
+         page.currentSettings().enhancedA.elevationDegrees},
+        localization.camera);
+    QVERIFY(targetProjection.valid);
+    QVERIFY(targetProjection.inView);
+    const QRectF presentationVideo = presentation->videoRect();
+    const QPoint dragStart(
+        qRound(presentationVideo.left()
+               + targetProjection.normalizedPoint.x()
+                     * presentationVideo.width()),
+        qRound(presentationVideo.top()
+               + targetProjection.normalizedPoint.y()
+                     * presentationVideo.height()));
+    const QPoint dragEnd = dragStart + QPoint(-35, -20);
+    const QPointF dragNormalized(
+        (dragEnd.x() - presentationVideo.left())
+            / presentationVideo.width(),
+        (dragEnd.y() - presentationVideo.top())
+            / presentationVideo.height());
+    const ScanDirection expectedDrag =
+        presentation->unprojectVideoPointForCurrentMode(dragNormalized);
+    QTest::mousePress(
+        presentation, Qt::LeftButton, Qt::NoModifier, dragStart);
+    QTest::mouseMove(presentation, dragEnd);
+    QTest::mouseRelease(
+        presentation, Qt::LeftButton, Qt::NoModifier, dragEnd);
+    QVERIFY(qAbs(page.currentSettings().enhancedA.azimuthDegrees
+                 - expectedDrag.azimuthDegrees) < 0.05);
+    QVERIFY(qAbs(page.currentSettings().enhancedA.elevationDegrees
+                 - expectedDrag.elevationDegrees) < 0.05);
+
+    const ScanDirection beforeRefresh =
+        normal->unprojectVideoPointForCurrentMode(probe);
+    localization.camera = {-25.0, 8.0, 80.0, 58.0, -12.0};
+    settings.saveLiveLocalization(localization);
+    page.setActive(true);
+    const ScanDirection refreshedExpected =
+        unprojectVideoPoint(probe, localization.camera);
+    const ScanDirection refreshedNormal =
+        normal->unprojectVideoPointForCurrentMode(probe);
+    const ScanDirection refreshedPresentation =
+        presentation->unprojectVideoPointForCurrentMode(probe);
+    QVERIFY(qAbs(refreshedNormal.azimuthDegrees
+                 - refreshedExpected.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(refreshedNormal.elevationDegrees
+                 - refreshedExpected.elevationDegrees) < 0.01);
+    QVERIFY(qAbs(refreshedPresentation.azimuthDegrees
+                 - refreshedExpected.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(refreshedPresentation.elevationDegrees
+                 - refreshedExpected.elevationDegrees) < 0.01);
+    QVERIFY(qAbs(refreshedNormal.azimuthDegrees
+                 - beforeRefresh.azimuthDegrees) > 1.0);
+    QVERIFY(page.currentSettings().camera == stored.camera);
+
+    reuseCalibration->setChecked(false);
+    QCOMPARE(normal->projectionMode(),
+             NoiseDirectionProjectionMode::AngularWideAngle);
+    QCOMPARE(presentation->projectionMode(),
+             NoiseDirectionProjectionMode::AngularWideAngle);
+    const ScanDirection angularExpected =
+        unprojectVideoPointAngular(probe, stored.camera);
+    const ScanDirection angularNormal =
+        normal->unprojectVideoPointForCurrentMode(probe);
+    const ScanDirection angularPresentation =
+        presentation->unprojectVideoPointForCurrentMode(probe);
+    QVERIFY(qAbs(angularNormal.azimuthDegrees
+                 - angularExpected.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(angularNormal.elevationDegrees
+                 - angularExpected.elevationDegrees) < 0.01);
+    QVERIFY(qAbs(angularPresentation.azimuthDegrees
+                 - angularExpected.azimuthDegrees) < 0.01);
+    QVERIFY(qAbs(angularPresentation.elevationDegrees
+                 - angularExpected.elevationDegrees) < 0.01);
 }
 
 void DashboardTest::noiseReductionVideoClickUpdatesSelectedTargetAndRequestsAllControls()

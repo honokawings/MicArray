@@ -123,6 +123,8 @@ void NoiseReductionWorker::configure(
         std::clamp(settings.monitorBufferMilliseconds, 50, 1000);
     const bool sampleRateChanged =
         m_sampleRate != sanitizedSampleRate;
+    const bool inputModeChanged =
+        m_settings.inputMode != settings.inputMode;
     const bool algorithmChanged =
         m_settings.algorithm != settings.algorithm;
     const bool modeChanged = m_settings.mode != settings.mode;
@@ -162,6 +164,14 @@ void NoiseReductionWorker::configure(
     m_settings.monitorBufferMilliseconds =
         sanitizedMonitorBufferMilliseconds;
     m_sampleRate = sanitizedSampleRate;
+    m_beamformer.configure(m_sampleRate,
+                           m_settings.enhancedA,
+                           m_settings.suppressionB1,
+                           m_settings.suppressionB2);
+    if (sampleRateChanged || inputModeChanged || enabledChanged) {
+        m_beamformer.reset();
+        m_raw48InvalidWarningActive = false;
+    }
     if (algorithmChanged) {
         m_reducer.setAlgorithm(m_settings.algorithm);
     }
@@ -217,7 +227,8 @@ void NoiseReductionWorker::configure(
         m_automaticGainControl.reset();
     }
     const bool processingChanged =
-        sampleRateChanged || enabledChanged || algorithmChanged
+        sampleRateChanged || inputModeChanged || enabledChanged
+        || algorithmChanged
         || modeChanged || coefficientChanged || bandPassChanged
         || logMmseChanged || automaticGainControlChanged
         || postProcessingOrderChanged;
@@ -264,6 +275,8 @@ void NoiseReductionWorker::setActive(bool active)
     m_active = active;
     if (!m_active) {
         closeAudioOutput();
+        m_beamformer.reset();
+        m_raw48InvalidWarningActive = false;
         resetProcessing();
     }
 }
@@ -278,11 +291,32 @@ void NoiseReductionWorker::processRawFrame(
         return;
     }
 
-    const NoiseReductionInputFrame input = m_decoder.decode(payload);
+    const bool raw48Input = m_settings.inputMode
+        == NoiseReductionInputMode::Raw48SoftwareBeamforming;
+    NoiseReductionInputFrame input;
+    if (raw48Input) {
+        BeamformedDirectionFrame beamformed = m_beamformer.process(payload);
+        input.valid = beamformed.valid;
+        input.error = std::move(beamformed.error);
+        input.channels[0] = std::move(beamformed.firstElement);
+        input.channels[1] = std::move(beamformed.enhancedA);
+        input.channels[2] = std::move(beamformed.suppressionB1);
+        input.channels[3] = std::move(beamformed.suppressionB2);
+    } else {
+        input = m_decoder.decode(payload);
+    }
     if (!input.valid) {
-        emit warningRaised(input.error);
+        if (!raw48Input || !m_raw48InvalidWarningActive) {
+            emit warningRaised(input.error);
+        }
+        if (raw48Input) {
+            m_raw48InvalidWarningActive = true;
+        }
         emit frameConsumed();
         return;
+    }
+    if (raw48Input) {
+        m_raw48InvalidWarningActive = false;
     }
     appendInputTimeline(
         timestampSeconds,
@@ -333,6 +367,8 @@ void NoiseReductionWorker::shutdown()
     m_shutdown = true;
     m_active = false;
     closeAudioOutput();
+    m_beamformer.reset();
+    m_raw48InvalidWarningActive = false;
     resetProcessing();
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/audiomonitorbuffer.h"
+#include "media/fractionaldelaybeamformer.h"
 #include "media/noisereductionframedecoder.h"
 #include "media/noisereductiontypes.h"
 #include "media/automaticgaincontrol.h"
@@ -99,6 +100,7 @@ private:
     bool m_shutdown = false;
     qint64 m_lastPlotTimestamp = -1;
     NoiseReductionFrameDecoder m_decoder;
+    FractionalDelayBeamformer m_beamformer;
     WienerNoiseReducer m_reducer;
     BandPassFilter m_bandPassFilter;
     LogMmseProcessor m_logMmseProcessor;
@@ -115,6 +117,7 @@ private:
     QIODevice *m_audioOutput = nullptr;
     bool m_audioOutputAttempted = false;
     bool m_monitorOverflowWarningActive = false;
+    bool m_raw48InvalidWarningActive = false;
 };
 
 } // namespace MicArray

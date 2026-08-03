@@ -88,10 +88,15 @@ private:
     void refreshProcessingAvailability();
     void refreshNodeSummaries();
     void showNodeParameters(int nodeId);
+    bool usesLocalizationCalibration() const;
+    CameraViewSettings effectiveDirectionCamera() const;
+    void refreshDirectionProjection();
     void refreshDirectionViews();
     void refreshControlAvailability();
-    void handleVideoPoint(const QPointF &normalizedPoint);
+    void handleVideoPoint(NoiseReductionVideoWidget *view,
+                          const QPointF &normalizedPoint);
     void handleDirectionDragPoint(
+        NoiseReductionVideoWidget *view,
         NoiseDirectionSelection selection,
         const QPointF &normalizedPoint,
         bool finished);
@@ -128,6 +133,8 @@ private:
     PowerSpectrumWidget *m_presentationSecondSpectrum = nullptr;
     QWidget *m_presentationWindow = nullptr;
     QCheckBox *m_enabledCheck = nullptr;
+    QComboBox *m_inputModeCombo = nullptr;
+    QCheckBox *m_reuseLocalizationCalibrationCheck = nullptr;
     QComboBox *m_algorithmCombo = nullptr;
     QComboBox *m_modeCombo = nullptr;
     QDoubleSpinBox *m_singleCoefficientSpin = nullptr;

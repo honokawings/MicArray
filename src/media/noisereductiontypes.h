@@ -18,6 +18,11 @@ enum class NoiseReductionMode {
     TwoPoint,
 };
 
+enum class NoiseReductionInputMode {
+    FpgaBeamformedChannels,
+    Raw48SoftwareBeamforming,
+};
+
 enum class NoiseSignalSource {
     FirstElement,
     EnhancedA,
@@ -114,6 +119,9 @@ struct DirectionControlMapping {
 
 struct NoiseReductionSettings {
     bool enabled = false;
+    NoiseReductionInputMode inputMode =
+        NoiseReductionInputMode::FpgaBeamformedChannels;
+    bool reuseLocalizationVideoCalibration = false;
     NoiseReductionAlgorithm algorithm =
         NoiseReductionAlgorithm::FixedParameterWiener;
     NoiseReductionMode mode = NoiseReductionMode::SinglePoint;
@@ -168,6 +176,7 @@ QVector<NoisePostProcessingNode> normalizedPostProcessingOrder(
 } // namespace MicArray
 
 Q_DECLARE_METATYPE(MicArray::NoiseReductionMode)
+Q_DECLARE_METATYPE(MicArray::NoiseReductionInputMode)
 Q_DECLARE_METATYPE(MicArray::NoiseReductionAlgorithm)
 Q_DECLARE_METATYPE(MicArray::NoiseSignalSource)
 Q_DECLARE_METATYPE(MicArray::NoiseDirectionSelection)
