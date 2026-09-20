@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.19)
 project(MicArray LANGUAGES CXX)
 
+# SpiralArray branch defaults to its independent 128-channel application.
+# The original source tree remains available without mixing protocol variants.
+option(MICARRAY_BUILD_LEGACY_48 "Build the original 48-channel host instead of M128" OFF)
+if(NOT MICARRAY_BUILD_LEGACY_48)
+    enable_testing()
+    add_subdirectory(array128)
+    return()
+endif()
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Multimedia Test Charts Concurrent)
 
 qt_standard_project_setup()
