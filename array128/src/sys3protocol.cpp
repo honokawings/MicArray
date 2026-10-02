@@ -115,7 +115,8 @@ QString Sys3Session::commandBlock(char command, qint64 now) const
     if (!current(now)) return QStringLiteral("需要当前连接中的新鲜 SYS3 状态");
     if (pending) return QStringLiteral("上一命令尚未完成，不能排队或自动重试");
     if (command == 't' && now - lastToggleMs < 200) return QStringLiteral("自测切换间隔至少 200 ms");
-    if (command == 't' && (!latest.audioFresh() || !latest.clocksHealthy())) return QStringLiteral("切换需要新鲜音频域及已恢复的时钟");
+    if (command == 't' && (!latest.audioFresh() || !latest.ethFresh() || !latest.clocksHealthy()))
+        return QStringLiteral("切换需要新鲜音频/以太网域及已恢复的时钟");
     return {};
 }
 bool Sys3Session::request(char command, qint64 now)
@@ -137,8 +138,14 @@ char Sys3Session::takeCommand(qint64 now)
     if (!queued) return 0;
     queued = false;
     if (!current(now) || now - commandMs > 200
-        || (pending == 't' && (!latest.audioFresh() || !latest.clocksHealthy()))) {
+        || (pending == 't' && (!latest.audioFresh() || !latest.ethFresh() || !latest.clocksHealthy()))) {
         failCommand(QStringLiteral("发送前状态已过期或切换条件不满足")); return 0;
+    }
+    // A physical key or another controller may change the device after the UI
+    // request. Never transmit a toggle against a different mode/epoch baseline.
+    if (latest.commands() != baseCommands
+        || (pending == 't' && (latest.selftest() != baseMode || latest.words[27] != baseEpoch))) {
+        failCommand(QStringLiteral("发送前命令计数、模式或 epoch 已改变，请核对设备状态")); return 0;
     }
     return pending;
 }
@@ -154,6 +161,9 @@ void Sys3Session::tick(qint64 now)
 }
 void Sys3Session::feed(const QByteArray &data, qint64 now)
 {
+    // Expire first: a delayed reply must not turn an already timed-out command
+    // into a success merely because it arrived in the same read as this tick.
+    tick(now);
     bytes += quint64(data.size());
     for (char c : data) {
         if (!m_discarding) m_buffer.append(c);
@@ -177,11 +187,15 @@ void Sys3Session::accept(const Sys3Frame &frame, qint64 now)
     if (valid) {
         const quint32 delta = frame.words[0] - latest.words[0];
         const quint32 timeDelta = frame.words[1] - latest.words[1];
-        if (!delta) { ++duplicates; return; } // duplicates never refresh liveness
-        if (delta >= 0x80000000u) {
-            if (timeDelta < 0x80000000u) { ++invalid; return; }
+        // Uptime can restart even if the new sequence equals/exceeds the last
+        // observed sequence. Modular subtraction still permits natural wraps.
+        if (timeDelta >= 0x80000000u) {
             ++restarts; failCommand(QStringLiteral("观察域重启，命令结果未知"));
-        } else if (delta > 1) missing += delta - 1;
+        } else {
+            if (!delta) { ++duplicates; return; } // duplicates never refresh liveness
+            if (delta >= 0x80000000u) { ++invalid; return; }
+            if (delta > 1) missing += delta - 1;
+        }
     }
     latest = frame; identified = true; ++valid; lastFrameMs = now;
     if (!pending || queued) return;
@@ -200,9 +214,11 @@ void Sys3Session::accept(const Sys3Frame &frame, qint64 now)
     if (frame.commands() != quint16(baseCommands + 1) || frame.lastCommand() != pending) { failCommand(QStringLiteral("后续命令计数变化，无法确认本次动作")); return; }
     bool confirmed = false;
     if (pending == 'c') confirmed = ((frame.words[2] >> 15) & 15) == 0;
-    if (pending == 't') confirmed = frame.audioFresh() && frame.ethFresh() && frame.selftest() != baseMode
-        && frame.words[27] != baseEpoch && (frame.words[8] & 1024);
-    if (pending == 'r') confirmed = frame.audioFresh() && frame.clocksHealthy() && !frame.selftest() && (frame.words[8] & 1024);
+    const bool calibrationReady = (frame.words[8] & 0x600) == 0x600
+        && bool(frame.words[8] & 0x800) == frame.selftest();
+    if (pending == 't') confirmed = frame.audioFresh() && frame.ethFresh() && frame.clocksHealthy()
+        && frame.selftest() != baseMode && frame.words[27] != baseEpoch && calibrationReady;
+    if (pending == 'r') confirmed = frame.audioFresh() && frame.clocksHealthy() && !frame.selftest() && calibrationReady;
     if (confirmed) {
         commandStatus = pending == 'r' ? QStringLiteral("复位命令已识别；后续时钟/校准已恢复实采，非复位脉宽测量")
             : pending == 't' ? QStringLiteral("已确认模式切换、新 epoch 与校准完成") : QStringLiteral("已确认时钟历史掩码清零；其他故障与计数未清除");

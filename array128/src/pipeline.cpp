@@ -32,7 +32,7 @@ QJsonObject PipelineSnapshot::json() const
     return {{"format", "micarray128-diagnostics-v1"}, {"received_packets", QString::number(received)},
         {"valid_packets", QString::number(valid)}, {"invalid_packets", QString::number(invalid)},
         {"rejected_source", QString::number(rejectedSource)}, {"host_queue_drops", QString::number(queueDrops)},
-        {"listening", listening}, {"queued_packets", queued}, {"socket_buffer_bytes", socketBuffer},
+        {"listening", listening}, {"receiver_failed", receiverFailed}, {"queued_packets", queued}, {"socket_buffer_bytes", socketBuffer},
         {"last_processed_packet_age_ms", lastPacketAgeMs}, {"last_source_datagram_age_ms", lastSourceDatagramAgeMs},
         {"last_processing_delay_ms", processingDelayMs}, {"stale_epoch_packets", QString::number(staleEpochPackets)},
         {"analysis_windows_replaced", QString::number(analysisReplaced)}, {"monitor_samples_dropped", QString::number(monitorDrops)},
@@ -105,6 +105,7 @@ struct Pipeline::State
             || !socket.bind(bind, config.port, QUdpSocket::DontShareAddress)) {
             QMutexLocker lock(&mutex);
             status.error = QStringLiteral("UDP 绑定失败：%1").arg(socket.errorString());
+            status.receiverFailed = true;
             status.listening = false;
             return;
         }

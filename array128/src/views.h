@@ -18,23 +18,26 @@ signals:
 protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
 private:
     std::array<ChannelQuality, Channels> m_quality;
     int m_selected = 0;
     bool m_hasData = false;
+    bool m_fresh = false;
 };
 
 class WaveView final : public QWidget
 {
 public:
     explicit WaveView(QWidget *parent = nullptr);
-    void setSamples(const QVector<float> &samples);
+    void setSamples(const QVector<float> &samples, bool current = true);
     void setSpectrum(bool spectrum) { m_spectrum = spectrum; }
 protected:
     void paintEvent(QPaintEvent *) override;
 private:
     QVector<float> m_samples;
     bool m_spectrum = false;
+    bool m_current = true;
 };
 
 class FieldView final : public QWidget
@@ -56,6 +59,7 @@ protected:
     void mousePressEvent(QMouseEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;
     void mouseReleaseEvent(QMouseEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
 private:
     QRectF imageRect() const;
     void moveTarget(const QPointF &position, bool final);

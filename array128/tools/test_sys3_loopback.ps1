@@ -50,7 +50,7 @@ try {
             $receivedCommands.Add([string]$command); $commandCount++
             $words[5] = $commandCount -bor ([int]$command -shl 16)
             if ($command -eq 'r') { $words[8] = 0x600; $words[27] = 1 }
-            if ($command -eq 't') { $words[8] = $words[8] -bxor 8; $words[27]++ }
+            if ($command -eq 't') { $words[8] = $words[8] -bxor 0x808; $words[27]++ }
             if ($command -eq 'c') { $words[2] = $words[2] -band 0xFFF87FFF }
         }
         $ready = if ($ApplicationSmoke) { $watch.ElapsedMilliseconds -ge 1500 } else { Test-Path -LiteralPath $env:M128_SYS3_TEST_READY }

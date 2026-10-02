@@ -12,6 +12,7 @@
 class QAudioSink;
 class QCamera;
 class QCheckBox;
+class QCloseEvent;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
@@ -34,12 +35,15 @@ class MainWindow final : public QMainWindow
 {
     Q_OBJECT
 public:
+    enum class Page { Monitor, Imaging, Denoise, Recording, Configuration, Diagnostics };
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
     Pipeline &pipeline() { return m_pipeline; }
     void startReceiving();
     void saveDiagnosticReport(const QString &path);
     void openSerial(const QString &port);
+protected:
+    void closeEvent(QCloseEvent *event) override;
 private:
     QWidget *buildMonitorPage();
     QWidget *buildLocalizationPage();
@@ -47,7 +51,7 @@ private:
     QWidget *buildRecordingPage();
     QWidget *buildGeometryPage();
     QWidget *buildDebugPage();
-    QWidget *buildOfflinePage();
+    void navigate(Page page);
     void refresh();
     void applySettings();
     void loadSettings();
@@ -62,6 +66,8 @@ private:
     void showError(const QString &text);
     void updateCalibrationTable();
     void updateGeometryTable();
+    QString recordingBlock(const PipelineSnapshot &state) const;
+    void populateRecordingTracks();
 
     QSettings m_store;
     Pipeline m_pipeline;
@@ -76,6 +82,8 @@ private:
     QPushButton *m_connect = nullptr;
     QLabel *m_health = nullptr, *m_rates = nullptr, *m_geometryLabel = nullptr;
     QLabel *m_endpoint = nullptr;
+    QWidget *m_notice = nullptr;
+    QLabel *m_noticeText = nullptr;
     QComboBox *m_cameras = nullptr;
     QPushButton *m_cameraButton = nullptr;
     std::unique_ptr<QCamera> m_camera;
@@ -92,9 +100,11 @@ private:
     QDoubleSpinBox *m_threshold = nullptr, *m_focus = nullptr, *m_soundSpeed = nullptr;
     QSpinBox *m_gridColumns = nullptr, *m_gridRows = nullptr;
     QLabel *m_location = nullptr;
+    QLabel *m_monitorStatus = nullptr, *m_denoiseStatus = nullptr, *m_recordSummary = nullptr;
     std::array<QDoubleSpinBox *, 5> m_cameraValues {};
     QTableWidget *m_calibrationTable = nullptr;
     QCheckBox *m_collectCalibration = nullptr, *m_showCalibration = nullptr;
+    QPushButton *m_calibrationUndo = nullptr, *m_calibrationFit = nullptr;
     QVector<VideoCalibrationSample> m_calibration;
     QVector<LocalizationResult> m_recentDirections;
     QCheckBox *m_denoiseEnabled = nullptr, *m_dual = nullptr, *m_adaptive = nullptr;
@@ -107,6 +117,9 @@ private:
     QComboBox *m_recordSource = nullptr, *m_recordLayout = nullptr;
     QListWidget *m_recordTracks = nullptr;
     QPushButton *m_recordButton = nullptr, *m_quickRecord = nullptr;
+    QPushButton *m_recordBrowse = nullptr, *m_recordAll = nullptr, *m_recordNone = nullptr;
+    std::array<QVector<int>, 2> m_trackSelections {{{0}, {0}}};
+    int m_trackSource = 0;
     QLabel *m_recordStatus = nullptr;
     QLabel *m_commDetails = nullptr, *m_qualityDetails = nullptr, *m_selftestDetails = nullptr, *m_hardwareDetails = nullptr;
     QProgressBar *m_selftestProgress = nullptr;
@@ -114,6 +127,7 @@ private:
     QPlainTextEdit *m_packetDetails = nullptr;
     QPlainTextEdit *m_log = nullptr;
     QString m_lastError;
+    QString m_lastRecordError;
     std::unique_ptr<QAudioSink> m_audio;
     QIODevice *m_audioDevice = nullptr;
     AudioMonitorBuffer m_audioBuffer;
@@ -121,10 +135,9 @@ private:
     quint64 m_seenRun = 0;
     bool m_receiving = false, m_loading = true;
     bool m_skipSettingsSave = false;
+    bool m_closePending = false;
     QTimer *m_refresh = nullptr;
     QTimer *m_audioTimer = nullptr;
-    std::unique_ptr<QThread> m_offlineThread;
-    quint64 m_offlineGeneration = 0;
 };
 
 } // namespace MicArray::Array128

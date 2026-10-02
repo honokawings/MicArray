@@ -3,6 +3,7 @@
 #include "analysis/radix2fft.h"
 
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QPainter>
 #include <QPainterPath>
 
@@ -13,13 +14,18 @@ namespace MicArray::Array128 {
 
 ChannelGrid::ChannelGrid(QWidget *parent) : QWidget(parent)
 {
-    setMinimumSize(480, 290);
+    setMinimumSize(480, 256);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    setToolTip(QStringLiteral("这是 DATA/LR 通道索引矩阵，不代表螺旋阵元物理坐标。点击通道切换监听。"));
+    setFocusPolicy(Qt::StrongFocus);
+    setAccessibleName(QStringLiteral("128 通道电平矩阵"));
+    setToolTip(QStringLiteral("DATA/LR 索引排列，不代表物理坐标。点击或方向键选择通道，Home/End 跳至首末通道。停止或超时后，灰色数值仅为历史电平。"));
 }
 void ChannelGrid::setData(const PipelineSnapshot &snapshot, int selected)
 {
-    m_quality = snapshot.quality; m_selected = selected; m_hasData = !snapshot.latestHeader.isEmpty(); update();
+    m_quality = snapshot.quality; m_selected = std::clamp(selected, 0, Channels - 1); m_hasData = !snapshot.latestHeader.isEmpty();
+    m_fresh = snapshot.listening && snapshot.lastPacketAgeMs >= 0 && snapshot.lastPacketAgeMs < 1500;
+    setAccessibleDescription(QStringLiteral("当前通道 %1，%2").arg(m_selected).arg(!m_hasData ? QStringLiteral("等待数据") : m_fresh ? QStringLiteral("实时电平") : QStringLiteral("历史电平")));
+    update();
 }
 void ChannelGrid::paintEvent(QPaintEvent *)
 {
@@ -31,24 +37,40 @@ void ChannelGrid::paintEvent(QPaintEvent *)
         const double value = std::clamp((q.rmsDb + 90) / 90, 0.0, 1.0);
         QRectF box((ch % 16) * cw + 2, (ch / 16) * rh + 2, cw - 4, rh - 4);
         QColor color = QColor::fromHsvF((1 - value) * 0.60, 0.60, 0.23 + value * 0.55);
-        if (!m_hasData) color = QColor("#283744");
-        if (q.clipped) color = QColor("#a44238");
+        if (!m_hasData || !m_fresh) color = QColor("#283744");
+        if (m_fresh && q.clipped) color = QColor("#a44238");
         p.setBrush(color);
         p.setPen(QPen(ch == m_selected ? QColor("#ffe18d") : QColor("#304456"), ch == m_selected ? 2.5 : 0.7));
         p.drawRoundedRect(box, 4, 4);
         p.setPen(Qt::white);
         p.drawText(box, Qt::AlignCenter, QStringLiteral("%1\n%2").arg(ch).arg(m_hasData ? QString::number(q.rmsDb, 'f', 0) : QStringLiteral("—")));
     }
+    if (hasFocus()) { p.setBrush(Qt::NoBrush); p.setPen(QPen(QColor("#46bea5"), 2)); p.drawRect(rect().adjusted(1, 1, -1, -1)); }
 }
 void ChannelGrid::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::LeftButton) return;
     const int col = int(event->position().x() * 16 / width()), row = int(event->position().y() * 8 / height());
-    if (col >= 0 && col < 16 && row >= 0 && row < 8) emit channelSelected(row * 16 + col);
+    if (col >= 0 && col < 16 && row >= 0 && row < 8) { setFocus(); m_selected = row * 16 + col; emit channelSelected(m_selected); update(); }
 }
 
-WaveView::WaveView(QWidget *parent) : QWidget(parent) { setMinimumHeight(100); }
-void WaveView::setSamples(const QVector<float> &samples) { m_samples = samples; update(); }
+void ChannelGrid::keyPressEvent(QKeyEvent *event)
+{
+    int channel = m_selected;
+    switch (event->key()) {
+    case Qt::Key_Left: --channel; break;
+    case Qt::Key_Right: ++channel; break;
+    case Qt::Key_Up: channel -= 16; break;
+    case Qt::Key_Down: channel += 16; break;
+    case Qt::Key_Home: channel = 0; break;
+    case Qt::Key_End: channel = Channels - 1; break;
+    default: QWidget::keyPressEvent(event); return;
+    }
+    m_selected = std::clamp(channel, 0, Channels - 1); emit channelSelected(m_selected); update();
+}
+
+WaveView::WaveView(QWidget *parent) : QWidget(parent) { setMinimumHeight(80); }
+void WaveView::setSamples(const QVector<float> &samples, bool current) { m_samples = samples; m_current = current; update(); }
 void WaveView::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
@@ -79,12 +101,14 @@ void WaveView::paintEvent(QPaintEvent *)
     }
     p.setPen(QPen(QColor("#5de0c1"), 1.2)); p.drawPath(path);
     p.setPen(QColor("#8da9be"));
-    p.drawText(8, 16, m_spectrum ? QStringLiteral("幅度谱 0–24 kHz / dBFS · 硬件通带 20 Hz–16 kHz") : QStringLiteral("通道波形 · 自动显示缩放（不改变信号）"));
+    const QString title = m_spectrum ? QStringLiteral("幅度谱 0–24 kHz / dBFS") : QStringLiteral("通道波形 · 自动缩放（不改变信号）");
+    p.drawText(8, 16, title + (m_current ? QString() : QStringLiteral(" · 历史快照")));
 }
 
 FieldView::FieldView(QWidget *parent) : QWidget(parent)
 {
     setMinimumSize(400, 260); setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setFocusPolicy(Qt::StrongFocus);
 }
 void FieldView::setImage(const QImage &image) { m_image = image; update(); }
 void FieldView::setCameraView(const CameraViewSettings &camera) { m_camera = camera; update(); }
@@ -123,7 +147,7 @@ void FieldView::paintEvent(QPaintEvent *)
             p.drawLine(QPointF(box.left() + box.width() * i / 8, box.top()), QPointF(box.left() + box.width() * i / 8, box.bottom()));
             p.drawLine(QPointF(box.left(), box.top() + box.height() * i / 8), QPointF(box.right(), box.top() + box.height() * i / 8));
         }
-        p.setPen(QColor("#9eb8cc")); p.drawText(box, Qt::AlignCenter, QStringLiteral("USB 摄像头未开启\n可使用方向网格或载入静态照片"));
+        p.setPen(QColor("#9eb8cc")); p.drawText(box.adjusted(8, 8, -8, -8), Qt::AlignTop | Qt::AlignLeft, QStringLiteral("无视频 · 方向网格\n可打开 USB 视频或导入图像"));
     }
     if (!m_heat.isNull()) p.drawImage(box, m_heat);
     auto point = [&](const ScanDirection &d) {
@@ -153,6 +177,7 @@ void FieldView::paintEvent(QPaintEvent *)
         QPointF center(box.left() + box.width() * n.x(), box.top() + box.height() * n.y());
         p.drawEllipse(center, 6, 6); p.drawText(center + QPointF(8, -8), QString::number(i + 1));
     }
+    if (hasFocus()) { p.setBrush(Qt::NoBrush); p.setPen(QPen(QColor("#46bea5"), 2)); p.drawRect(rect().adjusted(1, 1, -1, -1)); }
 }
 void FieldView::moveTarget(const QPointF &position, bool final)
 {
@@ -166,7 +191,22 @@ void FieldView::moveTarget(const QPointF &position, bool final)
 void FieldView::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::LeftButton || !imageRect().contains(event->position())) return;
-    if (m_showTargets) { m_dragging = true; moveTarget(event->position(), false); }
+    setFocus();
+    if (m_showTargets) {
+        // A click on an existing marker selects that marker, not the previously
+        // selected target. Empty-space clicks still reposition the active one.
+        const auto box = imageRect(); double nearest = 23; const int previouslyActive = m_active;
+        for (int offset = 0; offset < 3; ++offset) {
+            const int target = (previouslyActive + offset) % 3;
+            SoundSourceDirection direction; direction.azimuthDegrees = m_targets[target].azimuthDegrees; direction.elevationDegrees = m_targets[target].elevationDegrees;
+            const auto projection = projectDirection(direction, m_camera);
+            if (!projection.inView) continue;
+            const QPointF center(box.x() + box.width() * projection.normalizedPoint.x(), box.y() + box.height() * projection.normalizedPoint.y());
+            const double distance = QLineF(center, event->position()).length();
+            if (distance < nearest) { nearest = distance; m_active = target; }
+        }
+        m_dragging = true; moveTarget(event->position(), false);
+    }
     else {
         const auto box = imageRect();
         emit pointClicked(QPointF((event->position().x() - box.x()) / box.width(), (event->position().y() - box.y()) / box.height()));
@@ -176,6 +216,24 @@ void FieldView::mouseMoveEvent(QMouseEvent *event) { if (m_dragging) moveTarget(
 void FieldView::mouseReleaseEvent(QMouseEvent *event)
 {
     if (m_dragging && event->button() == Qt::LeftButton) { m_dragging = false; moveTarget(event->position(), true); }
+}
+
+void FieldView::keyPressEvent(QKeyEvent *event)
+{
+    if (!m_showTargets) { QWidget::keyPressEvent(event); return; }
+    auto direction = m_targets[m_active];
+    const double step = event->modifiers().testFlag(Qt::ShiftModifier) ? 1.0 : .1;
+    switch (event->key()) {
+    case Qt::Key_Left: direction.azimuthDegrees -= step; break;
+    case Qt::Key_Right: direction.azimuthDegrees += step; break;
+    case Qt::Key_Up: direction.elevationDegrees += step; break;
+    case Qt::Key_Down: direction.elevationDegrees -= step; break;
+    default: QWidget::keyPressEvent(event); return;
+    }
+    direction.azimuthDegrees = std::clamp(direction.azimuthDegrees, -89.0, 89.0);
+    direction.elevationDegrees = std::clamp(direction.elevationDegrees, -89.0, 89.0);
+    m_targets[m_active] = direction;
+    emit targetMoved(m_active, direction.azimuthDegrees, direction.elevationDegrees, true); update();
 }
 
 } // namespace MicArray::Array128

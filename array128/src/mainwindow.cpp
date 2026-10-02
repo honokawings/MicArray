@@ -1,13 +1,14 @@
 #include "mainwindow.h"
 #include "hardwareprofile.h"
 #include "sys3panel.h"
+#include "cameraprofile.h"
 #include "analysis/cameraviewcalibrator.h"
-#include "analysis/wavefilereader.h"
 
 #include <QAudioSink>
 #include <QCamera>
 #include <QCameraDevice>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDir>
@@ -18,6 +19,7 @@
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QHeaderView>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -31,6 +33,7 @@
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -46,7 +49,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <atomic>
 
 namespace MicArray::Array128 {
 namespace {
@@ -100,7 +102,7 @@ QString mib(quint64 bytes) { return QString::number(bytes / 1048576.0, 'f', 2) +
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
-    m_store("MicArray", QCoreApplication::applicationName().endsWith("Tests") ? "MicArray128Tests" : "MicArray128")
+    m_store(QSettings::defaultFormat(), QSettings::UserScope, "MicArray", QCoreApplication::applicationName().endsWith("Tests") ? "MicArray128Tests" : "MicArray128")
 {
     setWindowTitle(QStringLiteral("M128 阵列采集系统"));
     resize(1440, 900);
@@ -142,17 +144,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     statusRow->addWidget(m_rates); statusRow->addStretch(); statusRow->addWidget(m_geometryLabel);
     auto *geometrySettings = new QPushButton(QStringLiteral("阵列配置")); geometrySettings->setObjectName("geometrySettingsButton"); statusRow->addWidget(geometrySettings);
     layout->addLayout(statusRow);
+    m_notice = new QWidget; m_notice->setObjectName("operationNotice");
+    auto *noticeLayout = new QHBoxLayout(m_notice); noticeLayout->setContentsMargins(8, 4, 8, 4);
+    m_noticeText = label(); m_noticeText->setObjectName("operationNoticeText"); noticeLayout->addWidget(m_noticeText, 1);
+    auto *dismiss = new QPushButton(QStringLiteral("关闭提示")); noticeLayout->addWidget(dismiss);
+    connect(dismiss, &QPushButton::clicked, m_notice, &QWidget::hide);
+    layout->addWidget(m_notice); m_notice->hide();
     m_pages = new QTabWidget; m_pages->setObjectName("mainPages");
     m_pages->addTab(buildMonitorPage(), QStringLiteral("实时监测"));
     m_pages->addTab(buildLocalizationPage(), QStringLiteral("声源定位"));
     m_pages->addTab(buildDenoisePage(), QStringLiteral("定向降噪"));
     m_pages->addTab(buildRecordingPage(), QStringLiteral("音频录制"));
-    m_pages->addTab(buildOfflinePage(), QStringLiteral("离线分析"));
     m_pages->addTab(buildGeometryPage(), QStringLiteral("系统配置"));
     m_pages->addTab(buildDebugPage(), QStringLiteral("设备诊断"));
     layout->addWidget(m_pages, 1); setCentralWidget(central);
-    connect(interfaceSettings, &QPushButton::clicked, this, [this] { m_pages->setCurrentIndex(5); m_configTabs->setCurrentIndex(0); });
-    connect(geometrySettings, &QPushButton::clicked, this, [this] { m_pages->setCurrentIndex(5); m_configTabs->setCurrentIndex(1); });
+    connect(interfaceSettings, &QPushButton::clicked, this, [this] { navigate(Page::Configuration); m_configTabs->setCurrentIndex(0); });
+    connect(geometrySettings, &QPushButton::clicked, this, [this] { navigate(Page::Configuration); m_configTabs->setCurrentIndex(1); });
     m_videoSink = new QVideoSink(this); m_captureSession.setVideoSink(m_videoSink);
     connect(m_videoSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
         const auto image = frame.toImage(); if (image.isNull()) return;
@@ -160,6 +167,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     });
     connect(m_cameraButton, &QPushButton::clicked, this, &MainWindow::toggleCamera);
     auto *mediaDevices = new QMediaDevices(this);
+    connect(mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
+        if (!m_monitorEnabled->isChecked()) return;
+        m_monitorEnabled->setChecked(false);
+        showError(QStringLiteral("音频输出设备已改变，监听已停止。请检查系统默认输出后重新开启监听；录制不受影响。"));
+    });
     connect(mediaDevices, &QMediaDevices::videoInputsChanged, this, [this] {
         const auto selected = m_cameras->currentData().toByteArray();
         const auto devices = QMediaDevices::videoInputs();
@@ -191,26 +203,41 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     updateGeometryTable();
     updateCalibrationTable();
     m_loading = false; applySettings();
-    connect(m_pages, &QTabWidget::currentChanged, this, [this](int page) {
-        if (page != 4 && m_offlineThread && m_offlineThread->isRunning()) {
-            ++m_offlineGeneration; m_offlineThread->requestInterruption(); resetAudio();
-        }
-    });
     applyTheme(m_store.value("dark", true).toBool());
-    m_pages->setCurrentIndex(6);
+    navigate(Page::Diagnostics);
     m_refresh = new QTimer(this); m_refresh->setInterval(100);
     connect(m_refresh, &QTimer::timeout, this, &MainWindow::refresh); m_refresh->start();
     m_audioTimer = new QTimer(this); m_audioTimer->setInterval(15);
     connect(m_audioTimer, &QTimer::timeout, this, &MainWindow::pumpAudio); m_audioTimer->start();
     statusBar()->showMessage(QStringLiteral("M128 UDP 数据接收  |  本机 USB 视频  |  SYS3 串口按需连接"));
+    refresh();
 }
 
 MainWindow::~MainWindow()
 {
-    if (m_offlineThread) { m_offlineThread->requestInterruption(); m_offlineThread->wait(); }
     if (m_camera) m_camera->stop();
     m_captureSession.setCamera(nullptr);
     m_pipeline.stop(); resetAudio(); saveSettings();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    const auto recording = m_pipeline.recorder().snapshot();
+    if (!recording.active && !recording.finishing) { event->accept(); return; }
+    event->ignore();
+    if (m_closePending) return;
+    if (recording.active && QMessageBox::question(this, QStringLiteral("录制尚未结束"),
+        QStringLiteral("停止录制，等待已接收的数据写入完成后退出？不会丢弃当前写盘队列。"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
+    m_closePending = true;
+    m_pipeline.stop(); m_receiving = false; resetAudio();
+    centralWidget()->setEnabled(false);
+    statusBar()->showMessage(QStringLiteral("正在完成录制文件和清单，完成后自动退出。请勿移除保存磁盘。"));
+}
+
+void MainWindow::navigate(Page page)
+{
+    m_pages->setCurrentIndex(static_cast<int>(page));
 }
 
 QWidget *MainWindow::buildMonitorPage()
@@ -218,17 +245,23 @@ QWidget *MainWindow::buildMonitorPage()
     auto *page = new QWidget; auto *layout = new QVBoxLayout(page);
     auto *controls = new QHBoxLayout;
     m_monitorEnabled = new QCheckBox(QStringLiteral("开启监听"));
+    m_monitorEnabled->setObjectName("monitorEnabled");
     m_monitorChannel = integer(0, 127, 0); m_monitorGain = number(-60, 48, 0, 1); m_monitorGain->setSuffix(" dB");
     m_bufferMs = integer(50, 1000, 250); m_bufferMs->setSuffix(" ms");
     m_monitorSource = new NoWheelCombo;
+    m_monitorSource->setObjectName("monitorSource"); m_monitorChannel->setObjectName("monitorChannel");
     m_monitorSource->addItems({QStringLiteral("原始通道"), QStringLiteral("增强 A"), QStringLiteral("抑制 B1"), QStringLiteral("抑制 B2"), QStringLiteral("维纳输出"), QStringLiteral("带通输出"), "LogMMSE", "AGC"});
     controls->addWidget(m_monitorEnabled); controls->addWidget(new QLabel("CH")); controls->addWidget(m_monitorChannel);
     controls->addWidget(m_monitorSource); controls->addWidget(new QLabel(QStringLiteral("监听增益"))); controls->addWidget(m_monitorGain);
     controls->addWidget(new QLabel(QStringLiteral("预缓冲"))); controls->addWidget(m_bufferMs); controls->addStretch();
     layout->addLayout(controls);
-    auto *split = new QSplitter;
+    m_monitorStatus = label(); m_monitorStatus->setObjectName("monitorStatus"); layout->addWidget(m_monitorStatus);
+    auto *split = new QSplitter; split->setMinimumHeight(280);
     m_monitorView = new FieldView; split->addWidget(m_monitorView);
-    m_channelGrid = new ChannelGrid; split->addWidget(group(QStringLiteral("通道电平 · RMS (dBFS) · 索引排列"), m_channelGrid));
+    auto *levels = new QWidget; auto *levelLayout = new QVBoxLayout(levels);
+    levelLayout->setContentsMargins(0, 0, 0, 0); levelLayout->setSpacing(4);
+    levelLayout->addWidget(label(QStringLiteral("通道电平 · RMS (dBFS) · 索引排列")));
+    m_channelGrid = new ChannelGrid; levelLayout->addWidget(m_channelGrid, 1); split->addWidget(levels);
     split->setSizes({600, 640}); layout->addWidget(split, 3);
     auto *plots = new QHBoxLayout; m_wave = new WaveView; m_spectrum = new WaveView; m_spectrum->setSpectrum(true);
     plots->addWidget(m_wave); plots->addWidget(m_spectrum); layout->addLayout(plots, 1);
@@ -246,7 +279,7 @@ QWidget *MainWindow::buildLocalizationPage()
     m_localView = new FieldView; layout->addWidget(m_localView, 3);
     auto *tabs = new QTabWidget; tabs->setObjectName("localizationTabs"); tabs->setMinimumWidth(375); tabs->setMaximumWidth(480); layout->addWidget(tabs, 1);
     QFormLayout *form; auto *live = formPage(&form);
-    m_localEnabled = new QCheckBox(QStringLiteral("启用声源定位")); form->addRow(m_localEnabled);
+    m_localEnabled = new QCheckBox(QStringLiteral("启用声源定位")); m_localEnabled->setObjectName("localizationEnabled"); form->addRow(m_localEnabled);
     m_threshold = number(0, 1, 0.35); m_threshold->setSingleStep(0.02);
     m_focus = number(0.5, 4, 1.5); m_focus->setSingleStep(0.1);
     m_soundSpeed = number(300, 380, 343, 1);
@@ -255,7 +288,7 @@ QWidget *MainWindow::buildLocalizationPage()
     m_focus->setToolTip(QStringLiteral("仅调整热力图显示，数值越大峰值越聚焦；不改变定位结果或可信度。"));
     form->addRow(QStringLiteral("可信度阈值"), m_threshold); form->addRow(QStringLiteral("热力聚焦"), m_focus);
     form->addRow(QStringLiteral("声速 (m/s)"), m_soundSpeed); form->addRow(QStringLiteral("方位网格点数"), m_gridColumns); form->addRow(QStringLiteral("俯仰网格点数"), m_gridRows);
-    m_location = label(QStringLiteral("等待有效实采数据和阵元坐标")); form->addRow(m_location);
+    m_location = label(QStringLiteral("等待有效实采数据和阵元坐标")); m_location->setObjectName("locationStatus"); form->addRow(m_location);
     form->addRow(label(QStringLiteral("SRP-PHAT：2048 样本 / 256 基线 / 最高 10 次/s。\n软件分析频带约 250–8000 Hz；不等同于硬件有效通带 20 Hz–16 kHz。\n需真实坐标、有效实采流；窄带、静音及质量故障不执行可信定位。")));
     tabs->addTab(live, QStringLiteral("实时定位"));
     QFormLayout *cal; auto *calibration = formPage(&cal);
@@ -286,6 +319,9 @@ QWidget *MainWindow::buildLocalizationPage()
     m_calibrationTable->setEditTriggers(QAbstractItemView::NoEditTriggers); cal->addRow(m_calibrationTable);
     auto *actions = new QWidget; actions->setObjectName("calibrationActions"); auto *buttons = new QHBoxLayout(actions); buttons->setContentsMargins(0, 0, 0, 0);
     auto *undo = new QPushButton(QStringLiteral("撤销")), *fit = new QPushButton(QStringLiteral("拟合视角"));
+    m_calibrationUndo = undo; m_calibrationFit = fit;
+    undo->setObjectName("calibrationUndo"); fit->setObjectName("calibrationFit");
+    fit->setToolTip(QStringLiteral("采集四个分散、稳定的声源点后可拟合视角"));
     buttons->addWidget(undo); buttons->addWidget(fit); cal->addRow(actions);
     auto *save = new QPushButton(QStringLiteral("导出校准")), *load = new QPushButton(QStringLiteral("载入校准"));
     auto *files = new QWidget; auto *fileButtons = new QHBoxLayout(files); fileButtons->setContentsMargins(0, 0, 0, 0);
@@ -306,20 +342,25 @@ QWidget *MainWindow::buildLocalizationPage()
     connect(save, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出校准"), "m128-camera.json", "JSON (*.json)");
         if (path.isEmpty()) return;
-        QJsonArray values; for (auto *spin : m_cameraValues) values.append(spin->value());
+        const CameraProfile profile {m_processing.camera, m_calibration, m_localView->imageSize()};
         QSaveFile file(path); if (!file.open(QIODevice::WriteOnly)) { showError(file.errorString()); return; }
-        file.write(QJsonDocument(QJsonObject {{"format", "m128-camera-v1"}, {"values", values}}).toJson());
-        if (!file.commit()) showError(file.errorString());
+        const auto bytes = profile.json();
+        if (file.write(bytes) != bytes.size() || !file.commit()) showError(file.errorString());
+        else statusBar()->showMessage(QStringLiteral("已导出视角与 %1 个校准点：%2").arg(m_calibration.size()).arg(path));
     });
     connect(load, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("载入校准"), {}, "JSON (*.json)"); if (path.isEmpty()) return;
         QFile file(path); if (!file.open(QIODevice::ReadOnly)) { showError(file.errorString()); return; }
-        const auto object = QJsonDocument::fromJson(file.readAll()).object(); const auto values = object["values"].toArray();
-        bool valid = object["format"] == "m128-camera-v1" && values.size() == 5;
-        if (valid) for (int i = 0; i < 5; ++i) valid &= values[i].isDouble() && std::isfinite(values[i].toDouble())
-            && values[i].toDouble() >= m_cameraValues[i]->minimum() && values[i].toDouble() <= m_cameraValues[i]->maximum();
-        if (!valid) { showError(QStringLiteral("校准格式或范围无效；旧设置保持不变")); return; }
-        m_loading = true; for (int i = 0; i < 5; ++i) m_cameraValues[i]->setValue(values[i].toDouble()); m_loading = false; applySettings();
+        CameraProfile profile; QString error;
+        if (!CameraProfile::load(file.readAll(), &profile, &error)) { showError(error + QStringLiteral("；原设置保持不变")); return; }
+        const double values[] {profile.camera.centerAzimuthDegrees, profile.camera.centerElevationDegrees,
+            profile.camera.horizontalFovDegrees, profile.camera.verticalFovDegrees, profile.camera.rollDegrees};
+        m_loading = true; for (int i = 0; i < 5; ++i) m_cameraValues[i]->setValue(values[i]); m_loading = false;
+        m_calibration = profile.samples; m_collectCalibration->setChecked(false); updateCalibrationTable(); applySettings();
+        statusBar()->showMessage(QStringLiteral("已载入视角与 %1 个校准点").arg(m_calibration.size()));
+        const auto currentSize = m_localView->imageSize();
+        if (profile.referenceSize.isValid() && std::abs(double(profile.referenceSize.width()) / profile.referenceSize.height() - double(currentSize.width()) / currentSize.height()) > .01)
+            showError(QStringLiteral("校准已载入，但参考图像宽高比与当前画面不同。请核对摄像头裁切或视频分辨率，避免叠加错位。"));
     });
     for (auto *spin : {m_threshold, m_soundSpeed}) connect(spin, &QDoubleSpinBox::valueChanged, this, &MainWindow::applySettings);
     connect(m_focus, &QDoubleSpinBox::valueChanged, this, [this] { m_seenResult = 0; saveSettings(); });
@@ -331,45 +372,74 @@ QWidget *MainWindow::buildLocalizationPage()
 QWidget *MainWindow::buildDenoisePage()
 {
     auto *page = new QWidget; auto *layout = new QHBoxLayout(page);
-    m_noiseView = new FieldView; layout->addWidget(m_noiseView, 3);
+    m_noiseView = new FieldView; m_noiseView->setObjectName("directionView"); layout->addWidget(m_noiseView, 3);
+    m_noiseView->setAccessibleName(QStringLiteral("降噪方向控制"));
+    m_noiseView->setToolTip(QStringLiteral("拖动标记选择并调整 A/B1/B2；点击空白移动当前目标。方向键微调 0.1°，Shift + 方向键调整 1°。"));
     auto *tabs = new QTabWidget; tabs->setMinimumWidth(360); tabs->setMaximumWidth(480); layout->addWidget(tabs, 1);
     QFormLayout *form; auto *flow = formPage(&form);
-    m_denoiseEnabled = new QCheckBox(QStringLiteral("启用定向降噪")); form->addRow(m_denoiseEnabled);
-    form->addRow(label(QStringLiteral("128 阵元 → 连续角度 A/B1/B2 → 维纳抑制 → 可重排后处理")));
+    m_denoiseEnabled = new QCheckBox(QStringLiteral("启用定向降噪")); m_denoiseEnabled->setObjectName("denoiseEnabled"); form->addRow(m_denoiseEnabled);
+    m_denoiseStatus = label(); m_denoiseStatus->setObjectName("denoiseStatus"); form->addRow(m_denoiseStatus);
     m_dual = new QCheckBox(QStringLiteral("双抑制参考 B1 + B2")); m_dual->setChecked(true); form->addRow(m_dual);
     m_adaptive = new QCheckBox(QStringLiteral("自适应维纳（默认固定参数）")); form->addRow(m_adaptive);
     m_b1 = number(0, 100, 5); m_b2 = number(0, 100, 5);
     form->addRow(QStringLiteral("B1 抑制权重"), m_b1); form->addRow(QStringLiteral("B2 抑制权重"), m_b2);
     m_bandpass = new QCheckBox(QStringLiteral("带通")); m_logmmse = new QCheckBox("LogMMSE"); m_agc = new QCheckBox("AGC");
     form->addRow(m_bandpass); m_lowHz = number(20, 15000, 100, 0); m_highHz = number(40, 16000, 8000, 0);
+    m_lowHz->setObjectName("bandpassLow"); m_highHz->setObjectName("bandpassHigh"); m_bandpass->setObjectName("bandpassEnabled");
+    m_lowHz->setToolTip(QStringLiteral("下限必须小于上限；修改边界时会同步约束另一端，避免显示启用却实际旁路。"));
+    m_highHz->setToolTip(m_lowHz->toolTip());
     form->addRow(QStringLiteral("下限频率 (Hz)"), m_lowHz); form->addRow(QStringLiteral("上限频率 (Hz)"), m_highHz);
     form->addRow(m_logmmse); form->addRow(m_agc);
-    m_order = new QListWidget; m_order->setMaximumHeight(105); m_order->setDragDropMode(QAbstractItemView::InternalMove);
+    m_order = new QListWidget; m_order->setObjectName("postprocessingOrder"); m_order->setMaximumHeight(105); m_order->setDragDropMode(QAbstractItemView::InternalMove);
+    m_order->setToolTip(QStringLiteral("维纳抑制固定在首位。拖动后处理节点，或选中后按 Alt + ↑/↓ 调整顺序。旁路节点仍保留位置。"));
     const QStringList names {QStringLiteral("带通"), "LogMMSE", "AGC"};
     for (int i = 0; i < 3; ++i) { auto *item = new QListWidgetItem(names[i], m_order); item->setData(Qt::UserRole, i); }
-    form->addRow(QStringLiteral("拖动后处理顺序"), m_order);
-    form->addRow(label(QStringLiteral("LogMMSE：FFT512 / 重叠 50% / 最小增益 −20 dB\nAGC：目标 −18 dBFS / 增益 −20～+30 dB\n启动 20 ms / 释放 300 ms / 限幅 −1 dBFS")));
+    form->addRow(QStringLiteral("后处理顺序"), m_order);
+    for (int offset : {-1, 1}) {
+        auto *shortcut = new QShortcut(QKeySequence(offset < 0 ? "Alt+Up" : "Alt+Down"), m_order);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(shortcut, &QShortcut::activated, this, [this, offset] {
+            const int row = m_order->currentRow(), next = row + offset;
+            if (row < 0 || next < 0 || next >= m_order->count()) return;
+            auto *item = m_order->takeItem(row); m_order->insertItem(next, item); m_order->setCurrentRow(next); applySettings();
+        });
+    }
+    m_logmmse->setToolTip(QStringLiteral("FFT512 / 重叠 50% / 最小增益 −20 dB"));
+    m_agc->setToolTip(QStringLiteral("目标 −18 dBFS / 增益 −20～+30 dB / 启动 20 ms / 释放 300 ms / 限幅 −1 dBFS"));
     tabs->addTab(flow, QStringLiteral("处理参数"));
     QFormLayout *direction; auto *directions = formPage(&direction);
-    m_activeTarget = new NoWheelCombo; m_activeTarget->addItems({QStringLiteral("增强 A"), QStringLiteral("抑制 B1"), QStringLiteral("抑制 B2")}); direction->addRow(QStringLiteral("当前目标"), m_activeTarget);
+    m_activeTarget = new NoWheelCombo; m_activeTarget->setObjectName("activeDirection"); m_activeTarget->addItems({QStringLiteral("增强 A"), QStringLiteral("抑制 B1"), QStringLiteral("抑制 B2")}); direction->addRow(QStringLiteral("当前目标"), m_activeTarget);
     for (int i = 0; i < 6; ++i) {
         m_directionValues[i] = number(-89, 89, i == 2 ? -30 : i == 4 ? 30 : 0);
         direction->addRow(QStringLiteral("%1 %2 °").arg(QStringList{"A", "B1", "B2"}[i / 2], i % 2 ? QStringLiteral("俯仰") : QStringLiteral("方位")), m_directionValues[i]);
         connect(m_directionValues[i], &QDoubleSpinBox::valueChanged, this, &MainWindow::applySettings);
     }
     direction->addRow(label(QStringLiteral("与定位页共用 USB 摄像头和视角校准；使用真实阵元坐标、未量化 double 角度。完全在 PC 运算，不发送 FPGA 切换或方向命令。")));
-    m_quickRecord = new QPushButton(QStringLiteral("开始录制")); m_quickRecord->setToolTip(QStringLiteral("使用“音频录制”页设定的来源、音轨和保存目录。")); direction->addRow(m_quickRecord);
+    m_quickRecord = new QPushButton(QStringLiteral("开始录制")); m_quickRecord->setObjectName("quickRecordButton"); m_quickRecord->setToolTip(QStringLiteral("使用“音频录制”页设定的来源、音轨和保存目录。")); direction->addRow(m_quickRecord);
+    auto *recordSettings = new QPushButton(QStringLiteral("录制设置")); direction->addRow(recordSettings);
+    connect(recordSettings, &QPushButton::clicked, this, [this] { navigate(Page::Recording); });
     auto *monitor = new QPushButton(QStringLiteral("打开监听设置")); direction->addRow(monitor);
-    connect(monitor, &QPushButton::clicked, this, [this] { m_pages->setCurrentIndex(0); });
+    connect(monitor, &QPushButton::clicked, this, [this] { navigate(Page::Monitor); });
     connect(m_quickRecord, &QPushButton::clicked, this, &MainWindow::toggleRecording);
     tabs->addTab(directions, QStringLiteral("方向控制"));
     connect(m_activeTarget, &QComboBox::currentIndexChanged, this, [this] { m_noiseView->setTargets(m_processing.directions, true, m_activeTarget->currentIndex()); });
     connect(m_noiseView, &FieldView::targetMoved, this, [this](int target, double az, double el, bool final) {
+        const QSignalBlocker selectionBlocker(m_activeTarget); m_activeTarget->setCurrentIndex(target);
         m_loading = true; m_directionValues[target * 2]->setValue(az); m_directionValues[target * 2 + 1]->setValue(el); m_loading = false;
         m_skipSettingsSave = !final; applySettings(); m_skipSettingsSave = false;
     });
     for (auto *check : {m_denoiseEnabled, m_dual, m_adaptive, m_bandpass, m_logmmse, m_agc}) connect(check, &QCheckBox::toggled, this, &MainWindow::applySettings);
-    for (auto *spin : {m_b1, m_b2, m_lowHz, m_highHz}) connect(spin, &QDoubleSpinBox::valueChanged, this, &MainWindow::applySettings);
+    for (auto *spin : {m_b1, m_b2}) connect(spin, &QDoubleSpinBox::valueChanged, this, &MainWindow::applySettings);
+    connect(m_lowHz, &QDoubleSpinBox::valueChanged, this, [this] {
+        if (m_loading) return;
+        m_loading = true; if (m_highHz->value() <= m_lowHz->value()) m_highHz->setValue(m_lowHz->value() + 1); m_loading = false;
+        applySettings();
+    });
+    connect(m_highHz, &QDoubleSpinBox::valueChanged, this, [this] {
+        if (m_loading) return;
+        m_loading = true; if (m_lowHz->value() >= m_highHz->value()) m_lowHz->setValue(m_highHz->value() - 1); m_loading = false;
+        applySettings();
+    });
     connect(m_order->model(), &QAbstractItemModel::rowsMoved, this, &MainWindow::applySettings);
     return page;
 }
@@ -378,31 +448,55 @@ QWidget *MainWindow::buildRecordingPage()
 {
     auto *page = new QWidget; auto *layout = new QVBoxLayout(page);
     auto *pathRow = new QHBoxLayout; m_recordDirectory = new QLineEdit(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
-    auto *browse = new QPushButton(QStringLiteral("保存目录…")); pathRow->addWidget(browse); pathRow->addWidget(m_recordDirectory); layout->addLayout(pathRow);
+    auto *browse = new QPushButton(QStringLiteral("保存目录…")); m_recordBrowse = browse;
+    m_recordDirectory->setObjectName("recordDirectory"); pathRow->addWidget(browse); pathRow->addWidget(m_recordDirectory); layout->addLayout(pathRow);
     auto *row = new QHBoxLayout; m_recordSource = new NoWheelCombo; m_recordSource->addItems({QStringLiteral("原始通道"), QStringLiteral("处理节点")});
     m_recordLayout = new NoWheelCombo; m_recordLayout->addItems({QStringLiteral("独立音轨 WAV"), QStringLiteral("多通道 WAV")});
     m_recordLayout->setToolTip(QStringLiteral("独立音轨：每路单声道文件，可直接播放。多通道：所选音轨交织为一个文件。"));
     auto *all = new QPushButton(QStringLiteral("全选")), *none = new QPushButton(QStringLiteral("清空"));
+    m_recordAll = all; m_recordNone = none; m_recordSource->setObjectName("recordSource");
     row->addWidget(new QLabel(QStringLiteral("录制来源"))); row->addWidget(m_recordSource); row->addWidget(new QLabel(QStringLiteral("文件布局"))); row->addWidget(m_recordLayout); row->addWidget(all); row->addWidget(none); row->addStretch(); layout->addLayout(row);
     m_recordTracks = new QListWidget; m_recordTracks->setViewMode(QListView::IconMode); m_recordTracks->setResizeMode(QListView::Adjust);
+    m_recordTracks->setObjectName("recordTracks"); m_recordTracks->setSelectionMode(QAbstractItemView::SingleSelection);
     m_recordTracks->setGridSize(QSize(105, 34)); m_recordTracks->setMovement(QListView::Static); layout->addWidget(m_recordTracks, 1);
-    auto populate = [this] {
-        m_recordTracks->clear(); const bool raw = m_recordSource->currentIndex() == 0;
-        const QStringList names {QStringLiteral("维纳抑制"), QStringLiteral("带通输出"), "LogMMSE", "AGC"};
-        for (int i = 0; i < (raw ? 128 : 4); ++i) {
-            auto *item = new QListWidgetItem(raw ? QStringLiteral("CH%1").arg(i, 3, 10, QChar('0')) : names[i], m_recordTracks);
-            item->setFlags(item->flags() | Qt::ItemIsUserCheckable); item->setCheckState(i == 0 ? Qt::Checked : Qt::Unchecked);
-        }
+    populateRecordingTracks();
+    connect(m_recordSource, &QComboBox::currentIndexChanged, this, &MainWindow::populateRecordingTracks);
+    m_recordSummary = label(); m_recordSummary->setObjectName("recordSummary"); layout->addWidget(m_recordSummary);
+    auto selectTracks = [this](Qt::CheckState state) {
+        if (!m_recordTracks->isEnabled()) return;
+        const QSignalBlocker blocker(m_recordTracks);
+        for (int i = 0; i < m_recordTracks->count(); ++i) m_recordTracks->item(i)->setCheckState(state);
+        saveSettings();
     };
-    populate(); connect(m_recordSource, &QComboBox::currentIndexChanged, this, populate);
-    connect(all, &QPushButton::clicked, this, [this] { if (m_recordTracks->isEnabled()) for (int i = 0; i < m_recordTracks->count(); ++i) m_recordTracks->item(i)->setCheckState(Qt::Checked); });
-    connect(none, &QPushButton::clicked, this, [this] { if (m_recordTracks->isEnabled()) for (int i = 0; i < m_recordTracks->count(); ++i) m_recordTracks->item(i)->setCheckState(Qt::Unchecked); });
-    connect(browse, &QPushButton::clicked, this, [this] { if (!m_recordDirectory->isEnabled()) return; const QString path = QFileDialog::getExistingDirectory(this); if (!path.isEmpty()) m_recordDirectory->setText(path); });
+    connect(all, &QPushButton::clicked, this, [selectTracks] { selectTracks(Qt::Checked); });
+    connect(none, &QPushButton::clicked, this, [selectTracks] { selectTracks(Qt::Unchecked); });
+    connect(browse, &QPushButton::clicked, this, [this] { if (!m_recordDirectory->isEnabled()) return; const QString path = QFileDialog::getExistingDirectory(this); if (!path.isEmpty()) { m_recordDirectory->setText(path); saveSettings(); } });
+    connect(m_recordTracks, &QListWidget::itemChanged, this, &MainWindow::saveSettings);
+    connect(m_recordDirectory, &QLineEdit::editingFinished, this, &MainWindow::saveSettings);
+    connect(m_recordLayout, &QComboBox::currentIndexChanged, this, &MainWindow::saveSettings);
     layout->addWidget(label(QStringLiteral("原始录制保留 24 位 PCM，不应用监听增益。每次录制独立目录，包含 WAV、原始 UDP 证据 packets.m128 和 manifest.json。\n丢帧、乱序、会话/模式变化会分段，绝不静默补零。默认每文件 256 MiB 分段。自测数据可录制，但必须按清单标记为数字自测，不能作为真实声学数据。")));
-    m_recordButton = new QPushButton(QStringLiteral("开始录制")); layout->addWidget(m_recordButton);
+    m_recordButton = new QPushButton(QStringLiteral("开始录制")); m_recordButton->setObjectName("recordButton"); layout->addWidget(m_recordButton);
     m_recordStatus = label(QStringLiteral("未录制")); layout->addWidget(m_recordStatus);
     connect(m_recordButton, &QPushButton::clicked, this, &MainWindow::toggleRecording);
     return page;
+}
+
+void MainWindow::populateRecordingTracks()
+{
+    if (!m_loading && m_recordTracks->count()) {
+        auto &selection = m_trackSelections[m_trackSource]; selection.clear();
+        for (int i = 0; i < m_recordTracks->count(); ++i) if (m_recordTracks->item(i)->checkState() == Qt::Checked) selection.append(i);
+    }
+    m_trackSource = std::clamp(m_recordSource->currentIndex(), 0, 1);
+    const QSignalBlocker blocker(m_recordTracks);
+    m_recordTracks->clear(); const bool raw = m_trackSource == 0;
+    const QStringList names {QStringLiteral("维纳抑制"), QStringLiteral("带通输出"), "LogMMSE", "AGC"};
+    for (int i = 0; i < (raw ? 128 : 4); ++i) {
+        auto *item = new QListWidgetItem(raw ? QStringLiteral("CH%1").arg(i, 3, 10, QChar('0')) : names[i], m_recordTracks);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(m_trackSelections[m_trackSource].contains(i) ? Qt::Checked : Qt::Unchecked);
+    }
+    if (!m_loading) saveSettings();
 }
 
 QWidget *MainWindow::buildGeometryPage()
@@ -427,7 +521,7 @@ QWidget *MainWindow::buildGeometryPage()
     auxiliary->addRow(QStringLiteral("UART 电平"), label(QStringLiteral("3.3 V，与 1.8 V MEMS 接口不同")));
     auxiliary->addRow(label(QStringLiteral("连接后自动识别 SYS3，只接收、不自动发送命令。\ns/h 请求状态，r 复位，t 切换自测，c 仅清时钟历史；动作前有确认，录制中禁止复位/切换。")));
     auto *serialSettings = new QPushButton(QStringLiteral("打开串口面板")); serialSettings->setObjectName("serialSettingsButton"); auxiliary->addRow(serialSettings);
-    connect(serialSettings, &QPushButton::clicked, this, [this] { m_pages->setCurrentIndex(6); m_debugTabs->setCurrentWidget(m_serial); });
+    connect(serialSettings, &QPushButton::clicked, this, [this] { navigate(Page::Diagnostics); m_debugTabs->setCurrentWidget(m_serial); });
     interfaceLayout->addWidget(group(QStringLiteral("辅助接口"), auxiliaryForm), 1);
     m_configTabs->addTab(interfaces, QStringLiteral("接口设置"));
 
@@ -531,83 +625,6 @@ QWidget *MainWindow::buildDebugPage()
     return page;
 }
 
-QWidget *MainWindow::buildOfflinePage()
-{
-    auto *page = new QWidget; auto *layout = new QVBoxLayout(page);
-    auto *row = new QHBoxLayout; auto *path = new QLineEdit; auto *browse = new QPushButton(QStringLiteral("打开 WAV"));
-    row->addWidget(browse); row->addWidget(path); layout->addLayout(row);
-    auto *channel = integer(0, 127, 0); auto *position = number(0, 86400, 0, 3);
-    auto *analyze = new QPushButton(QStringLiteral("分析当前位置")); auto *play = new QPushButton(QStringLiteral("播放选中通道")); auto *stop = new QPushButton(QStringLiteral("停止播放"));
-    auto *controls = new QHBoxLayout; controls->addWidget(new QLabel("CH")); controls->addWidget(channel);
-    controls->addWidget(new QLabel(QStringLiteral("时间（秒）"))); controls->addWidget(position); controls->addWidget(analyze); controls->addWidget(play); controls->addWidget(stop); controls->addStretch(); layout->addLayout(controls);
-    auto *info = label(QStringLiteral("支持整数 PCM 16/24/32 位 WAV；128 通道才能定位。文件中的缺帧语义请结合录制清单，不跨分段自动拼接。")); layout->addWidget(info);
-    auto *view = new FieldView; layout->addWidget(view, 1);
-    connect(browse, &QPushButton::clicked, this, [this, path] { const auto file = QFileDialog::getOpenFileName(this, QStringLiteral("打开录音"), {}, "WAV (*.wav)"); if (!file.isEmpty()) path->setText(file); });
-    connect(stop, &QPushButton::clicked, this, [this] { ++m_offlineGeneration; if (m_offlineThread) m_offlineThread->requestInterruption(); resetAudio(); });
-    auto launch = [this, path, channel, position, info, view](bool playback) {
-        if (m_offlineThread && m_offlineThread->isRunning()) { showError(QStringLiteral("请先停止当前离线操作")); return; }
-        m_monitorEnabled->setChecked(false); resetAudio();
-        const QString file = path->text(); const int ch = channel->value(); const double seconds = position->value(); const auto config = m_processing;
-        const quint64 generation = ++m_offlineGeneration;
-        m_offlineThread.reset(QThread::create([this, file, ch, seconds, config, info, view, playback, generation] {
-            WaveFileReader reader; QString error;
-            if (!reader.open(file, &error)) { QMetaObject::invokeMethod(this, [info, error] { info->setText(error); }); return; }
-            const auto metadata = reader.info();
-            if (ch >= metadata.channelCount || metadata.sampleRate != SampleRate) {
-                QMetaObject::invokeMethod(this, [info] { info->setText(QStringLiteral("通道越界或采样率不是 48 kHz")); }); return;
-            }
-            qint64 sample = qint64(seconds * metadata.sampleRate);
-            if (!playback) {
-                QFile manifest(QFileInfo(file).dir().filePath("manifest.json"));
-                if (manifest.open(QIODevice::ReadOnly)) {
-                    const auto segments = QJsonDocument::fromJson(manifest.readAll()).object()["segments"].toArray();
-                    for (const auto &segment : segments) {
-                        const auto object = segment.toObject();
-                        if (!object["files"].toArray().contains(QFileInfo(file).fileName())) continue;
-                        if (object["selftest"].toBool() || object["flags_or"].toInt() != 0 || !object["valid_file"].toBool()) {
-                            QMetaObject::invokeMethod(this, [info] { info->setText(QStringLiteral("该录音为自测/故障/无效分段，禁止声学定位；仍可单通道试听。")); }); return;
-                        }
-                    }
-                }
-                auto channels = reader.readChannels(sample, 2048, &error);
-                auto result = localize(channels, config);
-                QMetaObject::invokeMethod(this, [this, info, view, result, metadata, config, generation] {
-                    if (generation != m_offlineGeneration) return;
-                    view->setCameraView(config.camera); view->setResponse(result, 1.5);
-                    info->setText(QStringLiteral("%1 通道 / %2 秒：%3；方位 %4°，俯仰 %5°，可信度 %6")
-                        .arg(metadata.channelCount).arg(metadata.durationSeconds, 0, 'f', 2).arg(result.reason)
-                        .arg(result.direction.azimuthDegrees, 0, 'f', 2).arg(result.direction.elevationDegrees, 0, 'f', 2).arg(result.confidence, 0, 'f', 3));
-                });
-                return;
-            }
-            const auto pending = std::make_shared<std::atomic_int>(0);
-            // Bounded queued delivery; never block the worker on the UI during shutdown.
-            while (sample < metadata.totalSamples && !QThread::currentThread()->isInterruptionRequested()) {
-                if (pending->load() >= 2) { QThread::msleep(5); continue; }
-                const auto pcm = reader.readMonoPcm16(ch, sample, 2048, &error);
-                if (pcm.isEmpty() || !error.isEmpty()) break;
-                ++*pending;
-                QMetaObject::invokeMethod(this, [this, pcm, pending, generation] {
-                    --*pending;
-                    if (generation != m_offlineGeneration) return;
-                    m_audioBuffer.append(pcm);
-                    if (!m_audio) {
-                        QAudioFormat format; format.setSampleRate(SampleRate); format.setChannelCount(1); format.setSampleFormat(QAudioFormat::Int16);
-                        m_audio = std::make_unique<QAudioSink>(QMediaDevices::defaultAudioOutput(), format);
-                        m_audio->setBufferSize(48000); m_audioDevice = m_audio->start();
-                    }
-                }, Qt::QueuedConnection);
-                sample += 2048;
-                QThread::msleep(42);
-            }
-        }));
-        m_offlineThread->start();
-    };
-    connect(analyze, &QPushButton::clicked, this, [launch] { launch(false); });
-    connect(play, &QPushButton::clicked, this, [launch] { launch(true); });
-    return page;
-}
-
 void MainWindow::applySettings()
 {
     if (m_loading) return;
@@ -618,9 +635,18 @@ void MainWindow::applySettings()
     m_processing.denoise = m_denoiseEnabled->isChecked(); m_processing.dual = m_dual->isChecked(); m_processing.adaptive = m_adaptive->isChecked();
     m_processing.coefficientB1 = m_b1->value(); m_processing.coefficientB2 = m_b2->value();
     m_processing.bandpass = m_bandpass->isChecked(); m_processing.lowHz = m_lowHz->value(); m_processing.highHz = m_highHz->value();
-    if (m_processing.lowHz >= m_processing.highHz) m_processing.bandpass = false;
+    if (m_processing.lowHz >= m_processing.highHz) {
+        m_loading = true; m_highHz->setValue(m_processing.lowHz + 1); m_loading = false;
+        m_processing.highHz = m_highHz->value();
+    }
     m_processing.logmmse = m_logmmse->isChecked(); m_processing.agc = m_agc->isChecked();
     m_processing.postOrder.clear(); for (int i = 0; i < m_order->count(); ++i) m_processing.postOrder.append(m_order->item(i)->data(Qt::UserRole).toInt());
+    const QStringList nodeNames {QStringLiteral("带通"), "LogMMSE", "AGC"};
+    const bool nodeEnabled[] {m_processing.bandpass, m_processing.logmmse, m_processing.agc};
+    for (int i = 0; i < m_order->count(); ++i) {
+        auto *item = m_order->item(i); const int key = item->data(Qt::UserRole).toInt();
+        item->setText(nodeNames[key] + (nodeEnabled[key] ? QStringLiteral(" · 启用") : QStringLiteral(" · 旁路")));
+    }
     for (int i = 0; i < 3; ++i) m_processing.directions[i] = {m_directionValues[i * 2]->value(), m_directionValues[i * 2 + 1]->value()};
     m_processing.monitor = m_monitorEnabled->isChecked(); m_processing.monitorChannel = m_monitorChannel->value();
     m_processing.monitorSource = m_monitorSource->currentIndex(); m_processing.monitorGainDb = m_monitorGain->value(); m_processing.bufferMs = m_bufferMs->value();
@@ -662,6 +688,19 @@ void MainWindow::loadSettings()
     for (int i = 0; i < 6; ++i) m_directionValues[i]->setValue(m_store.value(QString("direction/%1").arg(i), m_directionValues[i]->value()).toDouble());
     m_recordDirectory->setText(m_store.value("record/directory", m_recordDirectory->text()).toString());
     m_recordLayout->setCurrentIndex(m_store.value("record/layout", 0).toInt());
+    for (int source = 0; source < 2; ++source) {
+        const QString key = QString("record/tracks%1").arg(source);
+        if (!m_store.contains(key)) continue;
+        QVector<int> tracks; bool valid = true;
+        for (const auto &value : m_store.value(key).toList()) {
+            bool ok = false; const int track = value.toInt(&ok);
+            valid &= ok && track >= 0 && track < (source == 0 ? 128 : 4) && !tracks.contains(track);
+            tracks.append(track);
+        }
+        if (valid) m_trackSelections[source] = tracks;
+    }
+    m_recordSource->setCurrentIndex(std::clamp(m_store.value("record/source", 0).toInt(), 0, 1));
+    populateRecordingTracks();
 }
 
 void MainWindow::saveSettings()
@@ -681,11 +720,26 @@ void MainWindow::saveSettings()
     for (int i = 0; i < 5; ++i) m_store.setValue(QString("camera/%1").arg(i), m_cameraValues[i]->value());
     for (int i = 0; i < 6; ++i) m_store.setValue(QString("direction/%1").arg(i), m_directionValues[i]->value());
     m_store.setValue("record/directory", m_recordDirectory->text()); m_store.setValue("record/layout", m_recordLayout->currentIndex());
+    m_store.setValue("record/source", m_recordSource->currentIndex());
+    m_trackSelections[m_trackSource].clear();
+    for (int i = 0; i < m_recordTracks->count(); ++i) if (m_recordTracks->item(i)->checkState() == Qt::Checked) m_trackSelections[m_trackSource].append(i);
+    for (int source = 0; source < 2; ++source) {
+        QVariantList tracks; for (int track : m_trackSelections[source]) tracks.append(track);
+        m_store.setValue(QString("record/tracks%1").arg(source), tracks);
+    }
     if (m_processing.geometry.valid()) m_store.setValue("geometry", QJsonDocument(m_processing.geometry.json()).toJson(QJsonDocument::Compact));
 }
 
 void MainWindow::startReceiving()
 {
+    const QHostAddress bind(m_bind->text().trimmed()), source(m_source->text().trimmed());
+    if (bind.protocol() != QAbstractSocket::IPv4Protocol || source.protocol() != QAbstractSocket::IPv4Protocol
+        || source == QHostAddress(QHostAddress::AnyIPv4) || source == QHostAddress(QHostAddress::Broadcast)
+        || bind.isMulticast() || source.isMulticast()) {
+        showError(QStringLiteral("请输入有效 IPv4 地址：监听地址可为 0.0.0.0，设备地址必须为单播地址。"));
+        navigate(Page::Configuration); m_configTabs->setCurrentIndex(0); return;
+    }
+    m_lastError.clear(); m_notice->hide();
     applySettings();
     m_pipeline.start({m_bind->text(), quint16(m_port->value()), m_source->text(), quint16(m_sourcePort->value())});
     m_receiving = true; m_connect->setText(QStringLiteral("停止接收"));
@@ -693,7 +747,7 @@ void MainWindow::startReceiving()
 
 void MainWindow::openSerial(const QString &port)
 {
-    m_serial->openPort(port); m_pages->setCurrentIndex(6); m_debugTabs->setCurrentWidget(m_serial);
+    m_serial->openPort(port); navigate(Page::Diagnostics); m_debugTabs->setCurrentWidget(m_serial);
 }
 
 void MainWindow::toggleCamera()
@@ -711,8 +765,10 @@ void MainWindow::toggleCamera()
 void MainWindow::toggleRecording()
 {
     if (m_pipeline.recorder().snapshot().active) { m_pipeline.recorder().setDiagnostics(m_pipeline.snapshot().json()); m_pipeline.recorder().finish(); return; }
+    if (m_pipeline.recorder().snapshot().finishing) return;
     const auto state = m_pipeline.snapshot();
-    if (!state.listening || state.lastPacketAgeMs < 0 || state.lastPacketAgeMs > 1500) { showError(QStringLiteral("请先接收有效 FPGA 数据")); return; }
+    const QString block = recordingBlock(state);
+    if (!block.isEmpty()) { showError(block); return; }
     RecordingSettings settings; settings.directory = m_recordDirectory->text(); settings.arraySource = m_recordSource->currentIndex() == 0;
     settings.separate = m_recordLayout->currentIndex() == 0;
     settings.tracks.clear();
@@ -728,8 +784,26 @@ void MainWindow::toggleRecording()
     QJsonArray directions; for (const auto &direction : m_processing.directions) directions.append(QJsonObject{{"azimuth", direction.azimuthDegrees}, {"elevation", direction.elevationDegrees}});
     settings.metadata["directions"] = directions;
     QJsonArray order; for (int node : m_processing.postOrder) order.append(node); settings.metadata["post_order"] = order;
+    m_lastRecordError.clear();
     if (!m_pipeline.recorder().begin(settings)) showError(QStringLiteral("无法启动录制：检查轨道选择或等待上次写盘完成"));
     saveSettings();
+}
+
+QString MainWindow::recordingBlock(const PipelineSnapshot &state) const
+{
+    int selected = 0;
+    for (int i = 0; i < m_recordTracks->count(); ++i) selected += m_recordTracks->item(i)->checkState() == Qt::Checked;
+    if (!selected) return QStringLiteral("至少勾选一条音轨；空格键可切换当前音轨。");
+    const QString directory = m_recordDirectory->text().trimmed();
+    if (directory.isEmpty() || !QDir::isAbsolutePath(directory)) return QStringLiteral("请选择录制保存目录（绝对路径）。");
+    if (QFileInfo(directory).isFile()) return QStringLiteral("保存路径指向文件，请选择目录。");
+    if (!state.listening || state.lastPacketAgeMs < 0 || state.lastPacketAgeMs >= 1500) return QStringLiteral("等待有效数据：先开始 UDP 接收，再启动录制。");
+    if (m_recordSource->currentIndex() == 1) {
+        if (!m_processing.geometry.valid()) return QStringLiteral("处理节点录制需要导入真实 128 阵元坐标。");
+        if (!m_processing.denoise) return QStringLiteral("处理节点录制需要在“定向降噪”中启用处理。");
+        if ((state.flags & 0x10) || state.latchedFlags) return QStringLiteral("当前为数字自测或故障流：处理节点已隔离，可改录原始通道保存诊断证据。");
+    }
+    return {};
 }
 
 void MainWindow::loadGeometry()
@@ -746,7 +820,11 @@ void MainWindow::calibratePoint(const QPointF &point)
     if (!m_collectCalibration->isChecked()) return;
     if (m_calibration.size() >= 4) { showError(QStringLiteral("已有四点，请拟合或撤销")); return; }
     const auto state = m_pipeline.snapshot();
-    if (m_recentDirections.size() < 4 || !state.localization.trusted || state.lastPacketAgeMs > 300) { showError(QStringLiteral("需要至少四次稳定、可信的实时定位结果")); return; }
+    if (m_recentDirections.size() < 4 || !state.listening || !state.localization.trusted || state.lastPacketAgeMs < 0 || state.lastPacketAgeMs > 300
+        || state.localization.generation != m_processing.generation || state.localization.run != state.runs
+        || state.frame < state.localization.lastFrame || state.frame - state.localization.lastFrame > SampleRate / 2) {
+        showError(QStringLiteral("需要至少四次稳定、可信且新鲜的实时定位结果；请等待声源稳定后点击")); return;
+    }
     double az = 0, el = 0, confidence = 0;
     for (const auto &d : m_recentDirections) { az += d.direction.azimuthDegrees; el += d.direction.elevationDegrees; confidence += d.confidence; }
     az /= m_recentDirections.size(); el /= m_recentDirections.size(); confidence /= m_recentDirections.size();
@@ -759,6 +837,8 @@ void MainWindow::calibratePoint(const QPointF &point)
 
 void MainWindow::updateCalibrationTable()
 {
+    m_calibrationUndo->setEnabled(!m_calibration.isEmpty()); m_calibrationFit->setEnabled(m_calibration.size() == 4);
+    m_collectCalibration->setText(QStringLiteral("采集四点 (%1/4)").arg(m_calibration.size()));
     for (int row = 0; row < 4; ++row) for (int col = 0; col < 4; ++col) {
         QString value = "—";
         if (row < m_calibration.size()) {
@@ -779,30 +859,48 @@ void MainWindow::resetAudio()
 
 void MainWindow::pumpAudio()
 {
+    if (m_audio && (m_audio->error() == QAudio::OpenError || m_audio->error() == QAudio::IOError || m_audio->error() == QAudio::FatalError)) {
+        m_monitorEnabled->setChecked(false);
+        showError(QStringLiteral("音频输出异常，监听已停止。请检查默认输出设备后重新开启；采集与录制仍继续。")); return;
+    }
     const auto pcm = m_pipeline.takeMonitorPcm();
     if (m_processing.monitor) m_audioBuffer.append(pcm);
     if (m_processing.monitor && !m_audio && m_audioBuffer.readyToStart()) {
         QAudioFormat format; format.setSampleRate(SampleRate); format.setChannelCount(1); format.setSampleFormat(QAudioFormat::Int16);
         const auto device = QMediaDevices::defaultAudioOutput();
+        if (device.isNull()) { m_monitorEnabled->setChecked(false); showError(QStringLiteral("未检测到音频输出设备，无法监听。请连接扬声器或耳机后重新开启。")); return; }
         if (!device.isFormatSupported(format)) { m_monitorEnabled->setChecked(false); showError(QStringLiteral("输出设备不支持 48 kHz 单声道 PCM16")); return; }
         m_audio = std::make_unique<QAudioSink>(device, format); m_audio->setBufferSize(48000); m_audioDevice = m_audio->start();
+        if (!m_audioDevice) { m_monitorEnabled->setChecked(false); showError(QStringLiteral("无法启动音频输出，请检查设备占用与系统声音设置。")); return; }
     }
     if (m_audioDevice && m_audio) {
         const auto bytes = m_audioBuffer.peek(std::min<qsizetype>(m_audio->bytesFree(), m_audioBuffer.availableBytes()));
-        if (!bytes.isEmpty()) { const qint64 written = m_audioDevice->write(bytes); if (written > 0) m_audioBuffer.discard(written); }
+        if (!bytes.isEmpty()) {
+            const qint64 written = m_audioDevice->write(bytes);
+            if (written > 0) m_audioBuffer.discard(written);
+            else if (written < 0) { m_monitorEnabled->setChecked(false); showError(QStringLiteral("音频输出写入失败，监听已停止；录制不受影响。")); }
+        }
     }
 }
 
 void MainWindow::refresh()
 {
     const auto s = m_pipeline.snapshot(); const auto recording = m_pipeline.recorder().snapshot();
+    if (m_receiving && s.receiverFailed) {
+        m_pipeline.stop(); m_receiving = false; resetAudio();
+    }
+    m_connect->setText(m_receiving ? QStringLiteral("停止接收") : QStringLiteral("开始接收"));
+    m_connect->setEnabled(!recording.finishing);
     if (recording.active) m_pipeline.recorder().setDiagnostics(s.json());
     const QVector<QWidget *> networkWidgets {m_bind, m_port, m_source, m_sourcePort};
     for (auto *widget : networkWidgets) widget->setEnabled(!m_receiving);
     const bool hasData = !s.latestHeader.isEmpty();
     const bool active = s.listening && s.lastPacketAgeMs >= 0 && s.lastPacketAgeMs < 1500;
-    m_health->setText(!s.error.isEmpty() ? QStringLiteral("接收异常") : !s.listening ? QStringLiteral("接收未启动") : !active ? QStringLiteral("等待数据 / 超时") : s.latchedFlags ? QStringLiteral("数据质量告警") : s.flags & 0x10 ? QStringLiteral("数字自测中") : QStringLiteral("实采接收中"));
-    const QString level = !s.error.isEmpty() || (active && s.latchedFlags) ? "fault" : !s.listening ? "neutral" : !active || (s.flags & 0x10) ? "warning" : "normal";
+    const bool failedReceiver = s.receiverFailed;
+    const QString stoppedStatus = !s.error.isEmpty() ? QStringLiteral("接收已停止 · 有历史告警") : s.received ? QStringLiteral("接收已停止") : QStringLiteral("接收未启动");
+    m_health->setText(failedReceiver ? QStringLiteral("接收异常 / 已停止") : !s.listening ? stoppedStatus : !active ? QStringLiteral("等待数据 / 超时") : s.latchedFlags ? QStringLiteral("数据质量告警") : s.flags & 0x10 ? QStringLiteral("数字自测中")
+        : s.error.isEmpty() ? QStringLiteral("实采接收中") : QStringLiteral("实采接收中 · 有历史告警"));
+    const QString level = failedReceiver || (active && s.latchedFlags) ? "fault" : !s.listening ? "neutral" : !active || (s.flags & 0x10) || !s.error.isEmpty() ? "warning" : "normal";
     if (m_health->property("level").toString() != level) {
         m_health->setProperty("level", level); m_health->style()->unpolish(m_health); m_health->style()->polish(m_health);
     }
@@ -812,10 +910,25 @@ void MainWindow::refresh()
     m_cameraButton->setEnabled(bool(m_camera) || !m_cameras->currentData().toByteArray().isEmpty());
     m_rates->setText(QStringLiteral("接收 %1 包/s  |  UDP 负载 %2 MB/s  |  数据时效 %3").arg(s.packetRate, 0, 'f', 0).arg(s.byteRate / 1e6, 0, 'f', 3).arg(age(s.lastPacketAgeMs)));
     m_channelGrid->setData(s, m_monitorChannel->value());
-    if (m_pages->currentIndex() == 0) { m_wave->setSamples(s.waveform); m_spectrum->setSamples(s.waveform); }
+    m_monitorChannel->setEnabled(m_monitorSource->currentIndex() == 0);
+    m_b2->setEnabled(m_dual->isChecked());
+    m_lowHz->setEnabled(m_bandpass->isChecked()); m_highHz->setEnabled(m_bandpass->isChecked());
+    QString acousticBlock = !m_processing.geometry.valid() ? QStringLiteral("先导入真实 128 阵元坐标")
+        : !active ? QStringLiteral("等待有效 UDP 实采数据") : s.flags & 0x10 ? QStringLiteral("数字自测流已隔离")
+        : s.latchedFlags ? QStringLiteral("本会话有质量故障，请先排查并重新接收") : QString();
+    m_denoiseStatus->setText(!m_processing.denoise ? QStringLiteral("处理未启用 · 输入为原始 128 通道")
+        : !acousticBlock.isEmpty() ? QStringLiteral("处理等待：") + acousticBlock : QStringLiteral("处理中 · A/B1/B2 波束 → 维纳 → 后处理"));
+    QString monitorState = !m_processing.monitor ? QStringLiteral("监听关闭") : !active ? QStringLiteral("监听等待有效输入")
+        : m_processing.monitorSource != 0 && (!m_processing.denoise || !acousticBlock.isEmpty()) ? QStringLiteral("处理监听等待：需启用降噪、真实坐标和无故障实采")
+        : m_audio ? QStringLiteral("监听输出中") : QStringLiteral("监听预缓冲中");
+    m_monitorStatus->setText(QStringLiteral("%1 · 来源 %2 · 波形/频谱为原始 CH%3；监听增益不改变录制数据。")
+        .arg(monitorState, m_monitorSource->currentText()).arg(m_monitorChannel->value()));
+    if (m_pages->currentIndex() == static_cast<int>(Page::Monitor)) { m_wave->setSamples(s.waveform, active); m_spectrum->setSamples(s.waveform, active); }
     m_location->setText(s.localization.heat.isEmpty() ? QStringLiteral("%1\n%2\n尚无候选方向").arg(s.acousticStatus, s.localization.reason) : QStringLiteral("%1\n%2\n方位 %3° / 俯仰 %4°\n可信度 %5 / 门限 %6\n有效通道 %7 · 基线 %8 · %9 ms")
         .arg(s.acousticStatus, s.localization.reason).arg(s.localization.direction.azimuthDegrees, 0, 'f', 2).arg(s.localization.direction.elevationDegrees, 0, 'f', 2)
         .arg(s.localization.confidence, 0, 'f', 3).arg(m_threshold->value(), 0, 'f', 2).arg(s.localization.validChannels).arg(s.localization.validPairs).arg(s.localization.elapsedMs, 0, 'f', 1));
+    if (!m_processing.localization) m_location->setText(QStringLiteral("定位未启用\n导入阵列坐标并接收实采数据后，勾选上方开关。"));
+    else if (!acousticBlock.isEmpty()) m_location->setText(QStringLiteral("定位等待：") + acousticBlock);
     if (s.runs != m_seenRun || s.localization.lastFrame != m_seenResult || !m_seenResult) {
         m_localView->setResponse(s.localization, m_focus->value());
         if (s.runs != m_seenRun || !s.localization.trusted) m_recentDirections.clear();
@@ -826,15 +939,22 @@ void MainWindow::refresh()
     }
     const bool locked = recording.active || recording.finishing;
     m_serial->setCaptureBusy(locked);
-    const QVector<QWidget *> recordingWidgets {m_recordSource, m_recordLayout, m_recordTracks, m_recordDirectory};
+    const QVector<QWidget *> recordingWidgets {m_recordSource, m_recordLayout, m_recordTracks, m_recordDirectory, m_recordBrowse, m_recordAll, m_recordNone};
     for (QWidget *widget : recordingWidgets) widget->setEnabled(!locked);
     m_recordButton->setText(recording.active ? QStringLiteral("停止录制") : recording.finishing ? QStringLiteral("正在完成写盘…") : QStringLiteral("开始录制"));
-    m_recordButton->setEnabled(!recording.finishing); m_quickRecord->setEnabled(!recording.finishing);
-    m_quickRecord->setText(recording.active ? QStringLiteral("停止录制") : QStringLiteral("开始录制"));
+    const QString recordBlock = recordingBlock(s);
+    const bool canRecord = !recording.finishing && (recording.active || recordBlock.isEmpty());
+    m_recordButton->setEnabled(canRecord); m_quickRecord->setEnabled(canRecord);
+    m_recordButton->setToolTip(recordBlock); m_quickRecord->setToolTip(recording.active ? QStringLiteral("停止并完成写盘") : recordBlock.isEmpty() ? QStringLiteral("按录制页当前设置启动") : recordBlock);
+    m_quickRecord->setText(recording.active ? QStringLiteral("停止录制") : recording.finishing ? QStringLiteral("正在完成写盘…") : QStringLiteral("开始录制"));
+    int trackCount = 0;
+    for (int i = 0; i < m_recordTracks->count(); ++i) trackCount += m_recordTracks->item(i)->checkState() == Qt::Checked;
+    m_recordSummary->setText(QStringLiteral("已选 %1 / %2 条音轨 · %3 · PCM24 / 48 kHz\n%4")
+        .arg(trackCount).arg(m_recordTracks->count()).arg(m_recordLayout->currentText(), locked ? QStringLiteral("录制配置已锁定，停止并完成写盘后可修改。") : recordBlock.isEmpty() ? QStringLiteral("准备就绪，可开始录制。") : recordBlock));
     m_recordStatus->setText(QStringLiteral("%1\n写入 %2 / %3 WAV 帧 / %4 UDP 包 · 队列 %5 · 丢弃 %6\n%7")
-        .arg(recording.error.isEmpty() ? (recording.active ? QStringLiteral("录制中") : QStringLiteral("未录制")) : recording.error)
+        .arg(recording.error.isEmpty() ? (recording.active ? QStringLiteral("录制中") : recording.finishing ? QStringLiteral("正在完成写盘，请勿退出或移除磁盘") : recording.directory.isEmpty() ? QStringLiteral("未录制") : QStringLiteral("本次录制已完成；文件已保留")) : recording.error)
         .arg(mib(recording.bytes)).arg(recording.frames).arg(recording.packets).arg(mib(recording.queueBytes)).arg(recording.dropped).arg(recording.directory));
-    if (m_pages->currentIndex() == 6) {
+    if (m_pages->currentIndex() == static_cast<int>(Page::Diagnostics)) {
         m_commDetails->setText(QStringLiteral("接收 %1 · 有效 %2 · 格式拒绝 %3\n来源过滤 %4 · 主机队列丢包 %5\n队列 %6 / 8192 · socket %7 MiB\n包缺失 %8 · 重复 %9 · 乱序 %10\n帧缺失 %11 · 累计跳号 %12\n到达相邻不连续 %13 · 旧 epoch %14\n来源时效 %15 · 处理延迟 %16")
             .arg(s.received).arg(s.valid).arg(s.invalid).arg(s.rejectedSource).arg(s.queueDrops).arg(s.queued).arg(s.socketBuffer / 1048576)
             .arg(counter(s.packetSequence, "missing_observed_range"), counter(s.packetSequence, "duplicates"), counter(s.packetSequence, "out_of_order"),
@@ -861,7 +981,17 @@ void MainWindow::refresh()
             m_qualityTable->item(ch, 2)->setToolTip(QStringLiteral("FPGA 焊盘 %1；CLK 负载分组由实际接线决定，不能按通道号推定。").arg(dataPin(ch)));
         }
     }
-    if (!s.error.isEmpty() && s.error != m_lastError) { m_log->appendPlainText(QDateTime::currentDateTime().toString("HH:mm:ss ") + s.error); m_lastError = s.error; }
+    if (!s.error.isEmpty() && s.error != m_lastError) { showError(s.error); m_lastError = s.error; }
+    if (!recording.error.isEmpty() && recording.error != m_lastRecordError) {
+        showError(QStringLiteral("录制异常：") + recording.error); m_lastRecordError = recording.error;
+    }
+    if (m_closePending && !recording.active && !recording.finishing) {
+        m_closePending = false;
+        if (!recording.error.isEmpty()) {
+            centralWidget()->setEnabled(true);
+            showError(QStringLiteral("录制未完整写入，已取消自动退出：") + recording.error + QStringLiteral("。请检查保存目录与清单。"));
+        } else QTimer::singleShot(0, this, &QWidget::close);
+    }
 }
 
 void MainWindow::saveDiagnosticReport(const QString &path)
@@ -880,6 +1010,7 @@ void MainWindow::saveDiagnosticReport(const QString &path)
 void MainWindow::showError(const QString &text)
 {
     statusBar()->showMessage(text, 15000); if (m_log) m_log->appendPlainText(text);
+    if (m_notice) { m_noticeText->setText(text); m_notice->show(); }
 }
 
 void MainWindow::applyTheme(bool dark)
@@ -888,6 +1019,7 @@ void MainWindow::applyTheme(bool dark)
     setStyleSheet(QStringLiteral("QMainWindow,QWidget {background:%1;color:%3;font-family:'Microsoft YaHei UI';font-size:12px;}"
         "QLabel#appTitle {font-size:20px;font-weight:600;padding:4px;}"
         "QLabel#secondaryText {color:%5;}"
+        "QWidget#operationNotice {border:1px solid #b87936;border-radius:4px;}"
         "QLabel#acquisitionStatus {border-radius:4px;padding:5px 12px;font-weight:600;}"
         "QLabel#acquisitionStatus[level='neutral'] {background:#344655;color:#e1eaf2;}"
         "QLabel#acquisitionStatus[level='normal'] {background:#156754;color:#e4fff3;}"
@@ -897,7 +1029,19 @@ void MainWindow::applyTheme(bool dark)
         "QGroupBox::title {subcontrol-origin:margin;left:14px;padding:0 5px;color:#43bea5;}"
         "QPushButton {background:%2;border:1px solid %4;border-radius:5px;padding:7px 12px;}"
         "QPushButton:hover {border-color:#46bea5;} QPushButton:disabled {color:#718290;}"
+        "QPushButton:focus,QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus,QListWidget:focus {border:2px solid #248f7d;}"
+        "QCheckBox {spacing:6px;} QCheckBox::indicator,QListView::indicator {width:16px;height:16px;border:1px solid #8196a6;border-radius:3px;background:%2;}"
+        "QCheckBox::indicator:checked,QListView::indicator:checked {background:#187965;border-color:#187965;image:url(:/m128/resources/check.svg);}"
+        "QCheckBox::indicator:disabled,QListView::indicator:disabled {border-color:#718290;background:%1;}"
+        "QCheckBox:focus {outline:1px solid #248f7d;}"
         "QLineEdit,QSpinBox,QDoubleSpinBox,QComboBox {background:%2;border:1px solid %4;border-radius:4px;padding:5px;}"
+        "QSpinBox,QDoubleSpinBox,QComboBox {padding-right:22px;}"
+        "QSpinBox::up-button,QDoubleSpinBox::up-button {subcontrol-origin:border;subcontrol-position:top right;width:20px;border-left:1px solid %4;}"
+        "QSpinBox::down-button,QDoubleSpinBox::down-button {subcontrol-origin:border;subcontrol-position:bottom right;width:20px;border-left:1px solid %4;}"
+        "QSpinBox::up-arrow,QDoubleSpinBox::up-arrow {image:url(:/m128/resources/up.svg);width:10px;height:7px;}"
+        "QSpinBox::down-arrow,QDoubleSpinBox::down-arrow,QComboBox::down-arrow {image:url(:/m128/resources/down.svg);width:10px;height:7px;}"
+        "QComboBox::drop-down {subcontrol-origin:border;subcontrol-position:top right;width:20px;border-left:1px solid %4;}"
+        "QLineEdit:disabled,QSpinBox:disabled,QDoubleSpinBox:disabled,QComboBox:disabled {color:#718290;background:%1;}"
         "QTabWidget::pane {border:1px solid %4;} QTabBar::tab {padding:10px 16px;background:%2;}"
         "QTabBar::tab:selected {border-bottom:3px solid #43bea5;}"
         "QTableWidget,QListWidget,QPlainTextEdit {background:%2;alternate-background-color:%1;border:1px solid %4;}"

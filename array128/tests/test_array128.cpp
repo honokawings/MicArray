@@ -5,7 +5,9 @@
 #include "recorder.h"
 #include "sys3protocol.h"
 #include "sys3client.h"
+#include "cameraprofile.h"
 #include "analysis/wavefilereader.h"
+#include "analysis/directionprojection.h"
 
 #include <QFile>
 #include <QDir>
@@ -19,6 +21,15 @@
 #include <QHeaderView>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QSignalSpy>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QUdpSocket>
 #include <QtEndian>
@@ -64,6 +75,12 @@ private:
         return *decodeDatagram(bytes);
     }
 private slots:
+    void init()
+    {
+        // The test main redirects these settings to its own temporary directory.
+        // Each case starts clean; production operator settings are never touched.
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "MicArray", "MicArray128Tests"); settings.clear();
+    }
     void sys3VirtualSerialRoundTrip()
     {
         if (!qEnvironmentVariableIsSet("M128_SYS3_TEST_PORT")) QSKIP("Optional: isolated com0com pair required");
@@ -164,9 +181,12 @@ private slots:
         s.feed(uartWords(w), 250); QVERIFY(s.pending); QVERIFY(s.acknowledged);
         w[0]++; w[7] = 0; s.feed(uartWords(w), 500); QVERIFY(s.pending);
         w[0]++; w[7] = 7; w[27] = 2; s.feed(uartWords(w), 750); QVERIFY(s.pending);
-        w[0]++; w[27] = 3; s.feed(uartWords(w), 1000); QVERIFY(!s.pending);
+        w[0]++; w[27] = 3; s.feed(uartWords(w), 1000); QVERIFY(s.pending); // Old loaded mode is not completion.
+        w[0]++; w[8] |= 0x800; w[8] &= ~0x200u; s.feed(uartWords(w), 1100); QVERIFY(s.pending);
+        w[0]++; w[8] |= 0x200; w[2] |= 1 << 19; s.feed(uartWords(w), 1200); QVERIFY(s.pending);
+        w[0]++; w[2] &= ~(1 << 19); s.feed(uartWords(w), 1300); QVERIFY(!s.pending);
         QVERIFY(s.commandStatus.contains(QStringLiteral("已确认模式切换")));
-        s.lastToggleMs = 950; QVERIFY(!s.request('t', 1001));
+        s.lastToggleMs = 1250; QVERIFY(!s.request('t', 1301));
     }
     void sys3ResetAndClearDoNotOverclaim()
     {
@@ -187,6 +207,54 @@ private slots:
         Sys3Client client; QVERIFY(!client.running()); QVERIFY(!client.send('r'));
         client.open("../../arbitrary-file"); QVERIFY(!client.running()); QVERIFY(!client.snapshot().error.isEmpty());
         QVERIFY(!client.send('s')); client.close(); QVERIFY(!client.snapshot().connected);
+    }
+    void sys3LateReplyCannotCompleteCommand()
+    {
+        for (char command : QByteArray("shrtc")) {
+            Sys3Session s; s.connected = true; s.feed(uartLine(), 0);
+            QVERIFY(s.request(command, 1)); QCOMPARE(s.takeCommand(2), command);
+            auto w = decodeSys3Line(uartLine(2, 500))->words;
+            w[5] = 1 | (quint32(command) << 16);
+            s.feed(uartWords(w), 5002); // Deadline must be checked before accepting this reply.
+            QVERIFY(!s.pending); QVERIFY(!s.acknowledged);
+            QVERIFY2(s.commandStatus.contains(QStringLiteral("超时")), qPrintable(s.commandStatus));
+        }
+        Sys3Session s; s.connected = true; s.feed(uartLine(), 0);
+        QVERIFY(s.request('c', 1)); QCOMPARE(s.takeCommand(2), 'c');
+        auto w = decodeSys3Line(uartLine(2, 500))->words; w[5] = 1 | (quint32('c') << 16);
+        s.feed(uartWords(w), 250); QVERIFY(s.acknowledged); QVERIFY(s.pending);
+        w[0]++; w[1] += 250; s.feed(uartWords(w), 5002);
+        QVERIFY(!s.pending); QVERIFY(s.commandStatus.contains(QStringLiteral("未确认后续状态")));
+    }
+    void sys3PreSendContextMustNotChange()
+    {
+        for (int change = 0; change < 4; ++change) {
+            Sys3Session s; s.connected = true; s.feed(uartLine(), 0);
+            QVERIFY(s.request('t', 1));
+            auto w = decodeSys3Line(uartLine(2, 500))->words;
+            if (change == 0) w[5] = 1 | (quint32('h') << 16);
+            if (change == 1) w[8] |= 8;
+            if (change == 2) w[27]++;
+            if (change == 3) w[7] &= ~2u;
+            s.feed(uartWords(w), 10);
+            QCOMPARE(s.takeCommand(11), char(0)); QVERIFY(!s.pending);
+        }
+        Sys3Session s; s.connected = true;
+        auto w = decodeSys3Line(uartLine())->words; w[7] = 1;
+        s.feed(uartWords(w), 0); QVERIFY(!s.request('t', 1));
+        QVERIFY(s.request('s', 1)); QCOMPARE(s.takeCommand(2), 's');
+    }
+    void sys3ObserverRestartWithReusedSequence()
+    {
+        for (quint32 newSequence : {10u, 11u}) {
+            Sys3Session s; s.connected = true; s.feed(uartLine(10, 10000), 0);
+            QVERIFY(s.request('s', 1)); QCOMPARE(s.takeCommand(2), 's');
+            auto w = decodeSys3Line(uartLine(newSequence, 250))->words;
+            w[5] = 1 | (quint32('s') << 16);
+            s.feed(uartWords(w), 250);
+            QCOMPARE(s.restarts, 1u); QVERIFY(!s.pending); QVERIFY(!s.acknowledged);
+            QVERIFY(s.commandStatus.contains(QStringLiteral("观察域重启")));
+        }
     }
     void referencePacket()
     {
@@ -274,7 +342,7 @@ private slots:
             const auto &p = settings.geometry.microphones[ch];
             const double tau = (p.xMeters * std::sin(az) * std::cos(el) + p.yMeters * std::sin(el)) * 48000 / 343;
             for (int n = 0; n < 2048; ++n) for (int k = 0; k < 24; ++k)
-                channels[ch][n] += float(.008 * std::sin(2 * M_PI * (361 + k * 173) * (n - tau) / 48000 + k * 1.713));
+                channels[ch][n] += float(.008 * std::sin(2 * M_PI * (361 + k * 173) * (n + tau) / 48000 + k * 1.713));
         }
         const auto result = localize(channels, settings);
         QVERIFY2(result.trusted, qPrintable(result.reason + " " + QString::number(result.confidence)));
@@ -403,22 +471,204 @@ private slots:
         const auto status = recorder.snapshot(); QVERIFY2(status.error.isEmpty(), qPrintable(status.error));
         QCOMPARE(status.frames, 32u * 128 * 3); QCOMPARE(status.dropped, 0u);
     }
-    void uiSmoke()
+    void uiReadinessAndInvalidInput()
     {
         MainWindow window; window.show();
-        auto *tabs = window.findChild<QTabWidget *>("mainPages"); QVERIFY(tabs); QCOMPARE(tabs->count(), 7);
-        const QStringList names {QStringLiteral("实时监测"), QStringLiteral("声源定位"), QStringLiteral("定向降噪"), QStringLiteral("音频录制"), QStringLiteral("离线分析"), QStringLiteral("系统配置"), QStringLiteral("设备诊断")};
+        auto *record = window.findChild<QPushButton *>("recordButton");
+        auto *quick = window.findChild<QPushButton *>("quickRecordButton");
+        QVERIFY(record); QVERIFY(quick); QVERIFY(!record->isEnabled()); QVERIFY(!quick->isEnabled());
+        auto *tracks = window.findChild<QListWidget *>("recordTracks"); QVERIFY(tracks);
+        auto *source = window.findChild<QComboBox *>("recordSource"); QVERIFY(source);
+        tracks->item(0)->setCheckState(Qt::Unchecked); tracks->item(127)->setCheckState(Qt::Checked);
+        source->setCurrentIndex(1); QCOMPARE(tracks->count(), 4);
+        tracks->item(2)->setCheckState(Qt::Checked); source->setCurrentIndex(0);
+        QCOMPARE(tracks->item(0)->checkState(), Qt::Unchecked); QCOMPARE(tracks->item(127)->checkState(), Qt::Checked);
+        source->setCurrentIndex(1); QCOMPARE(tracks->item(2)->checkState(), Qt::Checked);
+        auto *bandpass = window.findChild<QCheckBox *>("bandpassEnabled"); QVERIFY(bandpass); bandpass->setChecked(true);
+        auto *low = window.findChild<QDoubleSpinBox *>("bandpassLow"); auto *high = window.findChild<QDoubleSpinBox *>("bandpassHigh");
+        QVERIFY(low); QVERIFY(high); high->setValue(8000); low->setValue(9000); QVERIFY(high->value() > low->value());
+        high->setValue(200); QVERIFY(low->value() < high->value()); QVERIFY(bandpass->isChecked());
+        low->setValue(100); high->setValue(8000); bandpass->setChecked(false);
+        auto *bind = window.findChild<QLineEdit *>("bindAddress"); QVERIFY(bind); bind->setText("not-an-ip");
+        window.startReceiving(); QVERIFY(!window.pipeline().snapshot().listening);
+        auto *notice = window.findChild<QLabel *>("operationNoticeText"); QVERIFY(notice); QVERIFY(notice->text().contains("IPv4"));
+        auto *device = window.findChild<QLineEdit *>("deviceAddress"); QVERIFY(device); device->setText("127.0.0.1");
+        bind->setText("127.0.0.1");
+        QUdpSocket occupied; QVERIFY(occupied.bind(QHostAddress::LocalHost, 0, QUdpSocket::DontShareAddress));
+        auto *port = window.findChild<QSpinBox *>("localPort"); QVERIFY(port); port->setValue(occupied.localPort());
+        window.startReceiving();
+        QTRY_VERIFY_WITH_TIMEOUT(!window.pipeline().snapshot().error.isEmpty(), 2000);
+        auto *receive = window.findChild<QPushButton *>("receiveButton"); QVERIFY(receive);
+        QTRY_COMPARE_WITH_TIMEOUT(receive->text(), QStringLiteral("开始接收"), 2000);
+        QVERIFY(bind->isEnabled()); QVERIFY(port->isEnabled()); QVERIFY(notice->isVisible());
+        QVERIFY(notice->text().contains(QStringLiteral("绑定失败")));
+    }
+    void recordingSelectionsPersistAcrossWindows()
+    {
+        {
+            MainWindow window;
+            auto *source = window.findChild<QComboBox *>("recordSource");
+            auto *tracks = window.findChild<QListWidget *>("recordTracks"); QVERIFY(source); QVERIFY(tracks);
+            tracks->item(0)->setCheckState(Qt::Unchecked); tracks->item(4)->setCheckState(Qt::Checked); tracks->item(127)->setCheckState(Qt::Checked);
+            source->setCurrentIndex(1); tracks->item(0)->setCheckState(Qt::Unchecked); tracks->item(3)->setCheckState(Qt::Checked);
+            QSettings saved(QSettings::IniFormat, QSettings::UserScope, "MicArray", "MicArray128Tests"); saved.sync();
+            QCOMPARE(saved.status(), QSettings::NoError);
+            QCOMPARE(saved.value("record/source").toInt(), 1);
+        }
+        MainWindow restored;
+        auto *source = restored.findChild<QComboBox *>("recordSource"); auto *tracks = restored.findChild<QListWidget *>("recordTracks");
+        QCOMPARE(source->currentIndex(), 1); QCOMPARE(tracks->item(0)->checkState(), Qt::Unchecked); QCOMPARE(tracks->item(3)->checkState(), Qt::Checked);
+        source->setCurrentIndex(0); QCOMPARE(tracks->item(0)->checkState(), Qt::Unchecked);
+        QCOMPARE(tracks->item(4)->checkState(), Qt::Checked); QCOMPARE(tracks->item(127)->checkState(), Qt::Checked);
+        QVERIFY(!restored.pipeline().snapshot().listening); QVERIFY(!restored.pipeline().recorder().snapshot().active);
+    }
+    void closeWaitsForRecordingAndCanCancel()
+    {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        MainWindow window; window.show();
+        RecordingSettings settings; settings.directory = directory.path(); settings.tracks = {0, 127};
+        auto &recorder = window.pipeline().recorder(); QVERIFY(recorder.begin(settings));
+        QVector<CaptureRecord> capture;
+        for (int i = 0; i < 1200; ++i) capture.append({packet(i), quint64(i) * 62500, 1, i != 0});
+        recorder.enqueue(capture);
+        QTimer::singleShot(0, &window, [&] { auto *box = window.findChild<QMessageBox *>(); QVERIFY(box); box->button(QMessageBox::No)->click(); });
+        QVERIFY(!window.close()); QVERIFY(window.isVisible()); QVERIFY(recorder.snapshot().active);
+        QTimer::singleShot(0, &window, [&] { auto *box = window.findChild<QMessageBox *>(); QVERIFY(box); box->button(QMessageBox::Yes)->click(); });
+        QVERIFY(!window.close());
+        QTRY_VERIFY_WITH_TIMEOUT(!window.isVisible(), 5000);
+        const auto state = recorder.snapshot(); QVERIFY(!state.active); QVERIFY(!state.finishing); QVERIFY(state.error.isEmpty());
+        QCOMPARE(state.frames, 3600u); QCOMPARE(state.dropped, 0u);
+        QFile manifest(state.directory + "/manifest.json"); QVERIFY(manifest.open(QIODevice::ReadOnly));
+        QVERIFY(QJsonDocument::fromJson(manifest.readAll()).object()["complete"].toBool());
+    }
+    void recordingFailureIsVisibleOutsideRecordingPage()
+    {
+        QTemporaryDir directory; QVERIFY(directory.isValid());
+        QFile blocker(directory.filePath("not-a-directory")); QVERIFY(blocker.open(QIODevice::WriteOnly)); blocker.close();
+        MainWindow window; window.show();
+        RecordingSettings settings; settings.directory = blocker.fileName();
+        QVERIFY(window.pipeline().recorder().begin(settings));
+        auto *notice = window.findChild<QLabel *>("operationNoticeText"); QVERIFY(notice);
+        QTRY_VERIFY_WITH_TIMEOUT(notice->text().contains(QStringLiteral("录制异常")), 3000);
+        QVERIFY(notice->isVisible()); QVERIFY(!window.pipeline().recorder().snapshot().active);
+    }
+    void compactMonitorDoesNotClipChannelGrid()
+    {
+        MainWindow window; window.resize(1120, 700); window.show();
+        auto *pages = window.findChild<QTabWidget *>("mainPages"); pages->setCurrentIndex(int(MainWindow::Page::Monitor));
+        QTest::qWait(50);
+        auto *grid = window.findChild<ChannelGrid *>(); QVERIFY(grid);
+        qInfo() << "Channel grid geometry" << grid->geometry() << "parent bounds" << grid->parentWidget()->rect();
+        QVERIFY(grid->parentWidget()->rect().contains(grid->geometry()));
+        auto *notice = window.findChild<QLabel *>("operationNoticeText"); QVERIFY(notice);
+        notice->setText(QStringLiteral("测试：音频输出设备已改变，监听已停止。请检查系统默认输出后重新开启监听；录制不受影响。")); notice->parentWidget()->show(); QTest::qWait(30);
+        qInfo() << "Grid with notice" << grid->geometry() << "parent" << grid->parentWidget()->rect();
+        QCOMPARE(window.size(), QSize(1120, 700)); QVERIFY(grid->parentWidget()->rect().contains(grid->geometry()));
+    }
+    void channelGridKeyboardAndHistory()
+    {
+        ChannelGrid grid; grid.show(); grid.setFocus();
+        QSignalSpy selected(&grid, &ChannelGrid::channelSelected);
+        QTest::keyClick(&grid, Qt::Key_End); QCOMPARE(selected.last()[0].toInt(), 127);
+        QTest::keyClick(&grid, Qt::Key_Down); QCOMPARE(selected.last()[0].toInt(), 127);
+        QTest::keyClick(&grid, Qt::Key_Up); QCOMPARE(selected.last()[0].toInt(), 111);
+        QTest::keyClick(&grid, Qt::Key_Home); QCOMPARE(selected.last()[0].toInt(), 0);
+        PipelineSnapshot snapshot; snapshot.latestHeader = "test"; snapshot.listening = true; snapshot.lastPacketAgeMs = 0;
+        grid.setData(snapshot, 5); QVERIFY(grid.accessibleDescription().contains(QStringLiteral("实时")));
+        snapshot.listening = false; grid.setData(snapshot, 5); QVERIFY(grid.accessibleDescription().contains(QStringLiteral("历史")));
+    }
+    void calibrationProfileRoundTripAndAtomicRejection()
+    {
+        CameraProfile original; original.camera = {12.3, -4.5, 93.2, 62.4, 1.5}; original.referenceSize = {1920, 1080};
+        for (int i = 0; i < 4; ++i) original.samples.append({{-20.0 + i * 12, 15.0 - i * 9}, {.1 + i * .2, .8 - i * .2}, .8, 1.2});
+        CameraProfile restored; QString error;
+        QVERIFY(CameraProfile::load(original.json(), &restored, &error)); QVERIFY(error.isEmpty());
+        QCOMPARE(restored.camera, original.camera); QCOMPARE(restored.samples, original.samples); QCOMPARE(restored.referenceSize, original.referenceSize);
+        auto invalid = QJsonDocument::fromJson(original.json()).object(); invalid["projection"] = "linear-wide";
+        QVERIFY(!CameraProfile::load(QJsonDocument(invalid).toJson(), &restored, &error)); QVERIFY(!error.isEmpty()); QCOMPARE(restored.samples, original.samples);
+        invalid = QJsonDocument::fromJson(original.json()).object(); invalid["samples"] = QJsonArray {QJsonArray {0, 0, 2, .5, .8, 1}};
+        QVERIFY(!CameraProfile::load(QJsonDocument(invalid).toJson(), &restored, &error)); QCOMPARE(restored.camera, original.camera);
+        QVERIFY(!CameraProfile::load("{invalid}", &restored, &error)); QCOMPARE(restored.camera, original.camera);
+        const QJsonObject legacy {{"format", "m128-camera-v1"}, {"values", QJsonArray {0, 0, 90, 60, 0}}};
+        QVERIFY(CameraProfile::load(QJsonDocument(legacy).toJson(), &restored, &error)); QVERIFY(restored.samples.isEmpty());
+        MainWindow window;
+        auto *fit = window.findChild<QPushButton *>("calibrationFit"); auto *undo = window.findChild<QPushButton *>("calibrationUndo"); QVERIFY(fit); QVERIFY(undo);
+        QVERIFY(!fit->isEnabled()); QVERIFY(!undo->isEnabled());
+    }
+    void postprocessingOrderKeyboardAndBypass()
+    {
+        MainWindow window; window.show();
+        auto *pages = window.findChild<QTabWidget *>("mainPages"); pages->setCurrentIndex(int(MainWindow::Page::Denoise));
+        auto *order = window.findChild<QListWidget *>("postprocessingOrder"); QVERIFY(order); order->setCurrentRow(1); order->setFocus();
+        QTest::qWait(30); QTest::keyClick(order, Qt::Key_Up, Qt::AltModifier);
+        QCOMPARE(order->item(0)->data(Qt::UserRole).toInt(), 1); QVERIFY(order->item(0)->text().contains(QStringLiteral("旁路")));
+        auto *bandpass = window.findChild<QCheckBox *>("bandpassEnabled"); QVERIFY(bandpass); bandpass->setChecked(true);
+        QCOMPARE(order->item(1)->data(Qt::UserRole).toInt(), 0); QVERIFY(order->item(1)->text().contains(QStringLiteral("启用")));
+        QTest::keyClick(order, Qt::Key_Down, Qt::AltModifier); QCOMPARE(order->item(1)->data(Qt::UserRole).toInt(), 1);
+    }
+    void resumedReceiverDistinguishesHistoricalError()
+    {
+        MainWindow window; window.show(); QUdpSocket sender, reserved;
+        QVERIFY(sender.bind(QHostAddress::LocalHost, 0)); QVERIFY(reserved.bind(QHostAddress::LocalHost, 0));
+        const auto port = reserved.localPort(); reserved.close();
+        window.findChild<QLineEdit *>("bindAddress")->setText("127.0.0.1");
+        window.findChild<QLineEdit *>("deviceAddress")->setText("127.0.0.1");
+        window.findChild<QSpinBox *>("localPort")->setValue(port); window.findChild<QSpinBox *>("devicePort")->setValue(sender.localPort());
+        window.startReceiving(); QTRY_VERIFY_WITH_TIMEOUT(window.pipeline().snapshot().listening, 2000);
+        QCOMPARE(sender.writeDatagram("bad", QHostAddress::LocalHost, port), qint64(3));
+        QTRY_VERIFY_WITH_TIMEOUT(!window.pipeline().snapshot().error.isEmpty(), 2000);
+        auto bytes = packet(0).bytes; qToBigEndian<quint32>(0, bytes.data() + 28);
+        QCOMPARE(sender.writeDatagram(bytes, QHostAddress::LocalHost, port), qint64(1208));
+        auto *health = window.findChild<QLabel *>("acquisitionStatus"); QVERIFY(health);
+        QTRY_VERIFY_WITH_TIMEOUT(health->text().contains(QStringLiteral("实采接收中 · 有历史告警")), 2000);
+        QVERIFY(window.pipeline().snapshot().listening); QCOMPARE(window.pipeline().snapshot().invalid, 1u);
+        window.findChild<QPushButton *>("receiveButton")->click();
+        QTRY_COMPARE_WITH_TIMEOUT(health->text(), QStringLiteral("接收已停止 · 有历史告警"), 2000);
+        QVERIFY(!window.pipeline().snapshot().receiverFailed);
+    }
+    void draggingSelectsCorrectTarget()
+    {
+        FieldView view; view.resize(640, 360); view.show();
+        MicArray::CameraViewSettings camera; camera.horizontalFovDegrees = 90; camera.verticalFovDegrees = 60;
+        view.setCameraView(camera); view.setTargets({{{0, 0}, {-30, 0}, {30, 0}}}, true, 0);
+        QSignalSpy moved(&view, &FieldView::targetMoved);
+        MicArray::SoundSourceDirection direction; direction.azimuthDegrees = 30;
+        const auto point = MicArray::projectDirection(direction, camera).normalizedPoint;
+        QTest::mousePress(&view, Qt::LeftButton, Qt::NoModifier, QPoint(qRound(point.x() * 640), qRound(point.y() * 360)));
+        QVERIFY(!moved.isEmpty()); QCOMPARE(moved.last()[0].toInt(), 2); QVERIFY(!moved.last()[3].toBool());
+        QTest::mouseRelease(&view, Qt::LeftButton, Qt::NoModifier, QPoint(500, 170));
+        QCOMPARE(moved.last()[0].toInt(), 2); QVERIFY(moved.last()[3].toBool());
+        const double az = moved.last()[1].toDouble();
+        QTest::keyClick(&view, Qt::Key_Right); QVERIFY(std::abs(moved.last()[1].toDouble() - az - .1) < 1e-8);
+        QTest::keyClick(&view, Qt::Key_Left, Qt::ShiftModifier); QVERIFY(std::abs(moved.last()[1].toDouble() - az + .9) < 1e-8);
+        MainWindow window;
+        auto *field = window.findChild<FieldView *>("directionView"); auto *target = window.findChild<QComboBox *>("activeDirection"); QVERIFY(field); QVERIFY(target);
+        emit field->targetMoved(1, -21.2, 4.5, true); QCOMPARE(target->currentIndex(), 1);
+    }
+    void uiSmoke_data()
+    {
+        QTest::addColumn<bool>("dark");
+        QTest::newRow("dark") << true; QTest::newRow("light") << false;
+    }
+    void uiSmoke()
+    {
+        QFETCH(bool, dark);
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "MicArray", "MicArray128Tests"); settings.setValue("dark", dark);
+        MainWindow window; window.show();
+        auto *tabs = window.findChild<QTabWidget *>("mainPages"); QVERIFY(tabs); QCOMPARE(tabs->count(), 6);
+        auto *health = window.findChild<QLabel *>("acquisitionStatus"); QVERIFY(health);
+        const QStringList names {QStringLiteral("实时监测"), QStringLiteral("声源定位"), QStringLiteral("定向降噪"), QStringLiteral("音频录制"), QStringLiteral("系统配置"), QStringLiteral("设备诊断")};
         for (int i = 0; i < names.size(); ++i) QCOMPARE(tabs->tabText(i), names[i]);
         auto *configuration = window.findChild<QTabWidget *>("configurationTabs"); QVERIFY(configuration);
         auto *serialButton = window.findChild<QPushButton *>("serialSettingsButton"); QVERIFY(serialButton); serialButton->click();
         auto *debugTabs = window.findChild<QTabWidget *>("debugTabs"); QVERIFY(debugTabs);
-        QCOMPARE(tabs->currentIndex(), 6); QCOMPARE(debugTabs->currentWidget()->objectName(), QStringLiteral("sys3Panel"));
+        QCOMPARE(tabs->currentIndex(), static_cast<int>(MainWindow::Page::Diagnostics)); QCOMPARE(debugTabs->currentWidget()->objectName(), QStringLiteral("sys3Panel"));
         for (char command : QByteArray("shrtc")) {
             auto *button = window.findChild<QPushButton *>(QString("sys3Command_%1").arg(QChar(command)));
             QVERIFY(button); QVERIFY(!button->isEnabled());
         }
         auto *network = window.findChild<QPushButton *>("interfaceSettingsButton"); QVERIFY(network); network->click();
-        QCOMPARE(tabs->currentIndex(), 5); QCOMPARE(configuration->currentIndex(), 0);
+        QCOMPARE(tabs->currentIndex(), static_cast<int>(MainWindow::Page::Configuration)); QCOMPARE(configuration->currentIndex(), 0);
         auto *port = window.findChild<QSpinBox *>("localPort"); QVERIFY(port);
         const int before = port->value();
         QWheelEvent wheel(QPointF(10, 10), QPointF(port->mapToGlobal(QPoint(10, 10))), {}, QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
@@ -439,6 +689,12 @@ private slots:
             QVERIFY(calibration->viewport()->rect().contains(last));
             QVERIFY(window.rect().contains(QRect(calibration->mapTo(&window, QPoint(0, 0)), calibration->size())));
             QVERIFY(calibration->geometry().bottom() < calibrationActions->geometry().top());
+            auto *notice = window.findChild<QLabel *>("operationNoticeText");
+            notice->setText(QStringLiteral("测试：校准参考宽高比与当前画面不同，请核对视频配置。")); notice->parentWidget()->show(); QTest::qWait(30);
+            QCOMPARE(window.size(), size);
+            QVERIFY(calibration->viewport()->rect().contains(calibration->visualItemRect(calibration->item(3, 3))));
+            QVERIFY(window.rect().contains(QRect(calibrationActions->mapTo(&window, QPoint()), calibrationActions->size())));
+            notice->parentWidget()->hide(); QTest::qWait(20);
             if (qEnvironmentVariableIsSet("M128_SCREENSHOT_DIR")) {
                 const QDir directory(qEnvironmentVariable("M128_SCREENSHOT_DIR")); QVERIFY(directory.exists());
                 for (int p = 0; p < tabs->count(); ++p) {
@@ -446,12 +702,18 @@ private slots:
                     auto *subtabs = tabs->widget(p)->findChild<QTabWidget *>();
                     for (int sub = 0; sub < (subtabs ? subtabs->count() : 1); ++sub) {
                         if (subtabs) subtabs->setCurrentIndex(sub); QTest::qWait(30);
-                        QVERIFY(window.grab().save(directory.filePath(QString("%1x%2-page%3-tab%4.png").arg(size.width()).arg(size.height()).arg(p).arg(sub))));
+                        QCOMPARE(window.size(), size);
+                        QVERIFY(window.grab().save(directory.filePath(QString("%1-%2x%3-page%4-tab%5.png").arg(dark ? "dark" : "light").arg(size.width()).arg(size.height()).arg(p).arg(sub))));
                     }
                 }
             }
         }
         QTest::qWait(150);
+        const auto statusImage = health->grab().toImage().convertToFormat(QImage::Format_RGB32);
+        int brightPixels = 0;
+        for (int y = 0; y < statusImage.height(); ++y) for (int x = 0; x < statusImage.width(); ++x)
+            brightPixels += qGray(statusImage.pixel(x, y)) > 180;
+        QVERIFY2(brightPixels > 20, "The status badge must retain visible light text in both themes");
         const auto screenshot = window.grab(); QVERIFY(!screenshot.isNull());
         if (qEnvironmentVariableIsSet("M128_SCREENSHOT")) QVERIFY(screenshot.save(qEnvironmentVariable("M128_SCREENSHOT")));
     }
@@ -486,6 +748,11 @@ int main(int argc, char **argv)
 {
     Q_INIT_RESOURCE(reference);
     QApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
+    QTemporaryDir settingsDirectory;
+    if (!settingsDirectory.isValid()) return 2;
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory.path());
     if (qEnvironmentVariableIsSet("M128_FONT")) QFontDatabase::addApplicationFont(qEnvironmentVariable("M128_FONT"));
     QCoreApplication::setApplicationName("MicArray128Tests");
     Array128Test test;

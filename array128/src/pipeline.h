@@ -31,6 +31,7 @@ struct ChannelQuality
 struct PipelineSnapshot
 {
     bool listening = false;
+    bool receiverFailed = false;
     QString error;
     quint64 received = 0;
     quint64 receivedBytes = 0;

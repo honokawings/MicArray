@@ -61,7 +61,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual(plan["Variant"], "Array128")
         self.assertEqual(plan["Target"], "MicArray128")
         self.assertEqual(Path(plan["SourceDir"]), self.root / "array128")
-        self.assertEqual(plan["TestTargets"], ["test_array128"])
+        self.assertEqual(plan["TestTargets"], ["test_array128", "test_array128_imaging"])
         self.assertTrue(plan["Zip"])
         self.assertFalse((self.root / "dist").exists())
         self.assertFalse((self.root / "build-array128").exists())

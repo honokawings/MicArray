@@ -1,6 +1,6 @@
 #include "dsp.h"
 #include "protocol.h"
-#include "analysis/radix2fft.h"
+#include "localizationfft.h"
 #include "analysis/directionprojection.h"
 
 #include <QElapsedTimer>
@@ -38,24 +38,37 @@ LocalizationResult localize(const QVector<QVector<float>> &channels, const Proce
     timer.start();
     LocalizationResult result;
     result.generation = settings.generation;
+    if (!settings.camera.isValid() || !std::isfinite(settings.soundSpeed) || settings.soundSpeed < 300 || settings.soundSpeed > 380
+        || !std::isfinite(settings.confidenceThreshold) || settings.confidenceThreshold < 0 || settings.confidenceThreshold > 1) {
+        result.reason = QStringLiteral("视角、声速或可信阈值无效");
+        return result;
+    }
     if (!settings.geometry.valid() || channels.size() != Channels || channels[0].size() < 1024) {
         result.reason = QStringLiteral("缺少真实阵元坐标或连续音频窗口");
         return result;
     }
     constexpr int N = 2048;
+    for (const auto &p : settings.geometry.microphones) {
+        if (!std::isfinite(p.xMeters) || !std::isfinite(p.yMeters) || !std::isfinite(p.zMeters)
+            || std::abs(p.xMeters) > 2 || std::abs(p.yMeters) > 2 || std::abs(p.zMeters) > 2) {
+            result.reason = QStringLiteral("阵元坐标非有限值或超出 ±2 m");
+            return result;
+        }
+    }
     using Complex = std::complex<double>;
     QVector<QVector<Complex>> spectra(Channels);
     QVector<double> energies(Channels);
     for (int ch = 0; ch < Channels; ++ch) {
         if (channels[ch].size() < N) { result.reason = QStringLiteral("窗口不足 2048 样本"); return result; }
         spectra[ch].resize(N);
+        if (!std::all_of(channels[ch].cbegin(), channels[ch].cbegin() + N, [](float v) { return std::isfinite(v); })) continue;
         double mean = std::accumulate(channels[ch].cbegin(), channels[ch].cbegin() + N, 0.0) / N;
         for (int n = 0; n < N; ++n) {
             const double x = channels[ch][n] - mean;
             energies[ch] += x * x / N;
             spectra[ch][n] = x * (0.5 - 0.5 * std::cos(2 * Pi * n / (N - 1)));
         }
-        Radix2Fft::transform(&spectra[ch], false);
+        LocalizationFft::transform(&spectra[ch], false);
     }
     auto sorted = energies;
     std::sort(sorted.begin(), sorted.end());
@@ -88,6 +101,8 @@ LocalizationResult localize(const QVector<QVector<float>> &channels, const Proce
         if (!good[a] || !good[b]) continue;
         const auto &pa = settings.geometry.microphones[a], &pb = settings.geometry.microphones[b];
         Pair pair {{pa.xMeters - pb.xMeters, pa.yMeters - pb.yMeters, pa.zMeters - pb.zMeters}, {}};
+        const double maxLag = std::sqrt(dot(pair.displacement, {pair.displacement.xMeters, pair.displacement.yMeters, pair.displacement.zMeters})) * SampleRate / settings.soundSpeed;
+        if (maxLag >= N / 2 - 1) continue; // Circular GCC cannot resolve a baseline exceeding half the window.
         QVector<Complex> cross(N);
         double maxCross = 0;
         for (int k = 11; k <= 341; ++k) maxCross = std::max(maxCross, std::abs(spectra[a][k] * std::conj(spectra[b][k])));
@@ -99,36 +114,79 @@ LocalizationResult localize(const QVector<QVector<float>> &channels, const Proce
                 cross[N - k] = std::conj(cross[k]);
             }
         }
-        Radix2Fft::transform(&cross, true);
+        LocalizationFft::transform(&cross, true);
         pair.correlation.resize(N);
         for (int n = 0; n < N; ++n) pair.correlation[n] = cross[n].real();
         pairs.append(std::move(pair));
     }
     result.validPairs = int(pairs.size());
     if (pairs.size() < 64) { result.reason = QStringLiteral("有效基线不足"); return result; }
+    auto correlationAt = [](const Pair &pair, double lag) {
+        const int lower = int(std::floor(lag));
+        const double f = lag - lower;
+        const int index = (lower + N) & (N - 1);
+        return pair.correlation[index] * (1 - f) + pair.correlation[(index + 1) & (N - 1)] * f;
+    };
+    const double samplesPerMeter = SampleRate / settings.soundSpeed;
     auto score = [&](const ScanDirection &direction) {
         const auto d = unit(direction);
         double sum = 0;
         for (const auto &pair : pairs) {
-            // X_a * conj(X_b) peaks at tau_a - tau_b for s[n - tau].
-            const double lag = dot(pair.displacement, d) * SampleRate / settings.soundSpeed;
-            const int lower = int(std::floor(lag));
-            const double f = lag - lower;
-            auto at = [&](int i) { return pair.correlation[(i % N + N) % N]; };
-            sum += at(lower) * (1 - f) + at(lower + 1) * f;
+            // d points TOWARD the source, not along wave propagation. A nearer
+            // microphone has tau=-dot(position,d)/c; GCC peaks at tau_a-tau_b.
+            sum += correlationAt(pair, -dot(pair.displacement, d) * samplesPerMeter);
         }
         return sum / pairs.size();
     };
     result.columns = std::clamp(settings.gridColumns, 24, 160);
     result.rows = std::clamp(settings.gridRows, 15, 100);
     result.heat.resize(result.columns * result.rows);
+    QVector<ScanDirection> gridDirections(result.heat.size());
+    QVector<std::array<double, 3>> gridUnits(result.heat.size());
+    QVector<double> response(result.heat.size(), 0);
+    for (int y = 0; y < result.rows; ++y) for (int x = 0; x < result.columns; ++x) {
+        const int index = y * result.columns + x;
+        gridDirections[index] = unprojectVideoPoint(QPointF(double(x) / (result.columns - 1), double(y) / (result.rows - 1)), settings.camera);
+        gridUnits[index] = unit(gridDirections[index]);
+    }
+    const int displaySamples = int(gridDirections.size());
+    auto projection = [&](const ScanDirection &direction) {
+        SoundSourceDirection source;
+        source.azimuthDegrees = direction.azimuthDegrees; source.elevationDegrees = direction.elevationDegrees;
+        return projectDirection(source, settings.camera);
+    };
+    // A rectilinear image grid is not an angular search grid. At 170 degrees,
+    // even the two central pixels can be tens of degrees apart. Add an angular
+    // search lattice independent of display resolution. Search the full front
+    // hemisphere so an out-of-view source is not misreported as a trusted edge.
+    for (int el = -87; el <= 87; el += 3) for (int az = -87; az <= 87; az += 3) {
+        const ScanDirection direction {double(az), double(el)};
+        gridDirections.append(direction); gridUnits.append(unit(direction)); response.append(0);
+    }
+    // Pair-major traversal keeps one 16 KiB GCC array hot in cache instead of
+    // jumping across 256 arrays for every pixel. The same physical scores feed
+    // both the heatmap and direction search; this is not a synthetic heat blob.
+    auto *sums = response.data(); const auto *units = gridUnits.constData(); const int scanCount = int(response.size());
+    for (const auto &pair : pairs) {
+        const MicrophonePosition delay {-pair.displacement.xMeters * samplesPerMeter,
+            -pair.displacement.yMeters * samplesPerMeter, -pair.displacement.zMeters * samplesPerMeter};
+        for (int i = 0; i < scanCount; ++i) sums[i] += correlationAt(pair, dot(delay, units[i]));
+    }
     double peak = -1e30;
     ScanDirection best;
-    for (int y = 0; y < result.rows; ++y) for (int x = 0; x < result.columns; ++x) {
-        const auto direction = unprojectVideoPoint(QPointF(double(x) / (result.columns - 1), double(y) / (result.rows - 1)), settings.camera);
-        const double value = score(direction);
-        result.heat[y * result.columns + x] = float(value);
-        if (value > peak) { peak = value; best = direction; }
+    auto preserveCellMaximum = [&](const ScanDirection &direction, double value) {
+        const auto point = projection(direction);
+        if (!point.inView) return;
+        const int x = std::clamp(int(std::lround(point.normalizedPoint.x() * (result.columns - 1))), 0, result.columns - 1);
+        const int y = std::clamp(int(std::lround(point.normalizedPoint.y() * (result.rows - 1))), 0, result.rows - 1);
+        float &pixel = result.heat[y * result.columns + x];
+        pixel = std::max(pixel, float(value));
+    };
+    for (int i = 0; i < response.size(); ++i) {
+        const double value = response[i] / pairs.size();
+        if (i < displaySamples) result.heat[i] = float(value);
+        else preserveCellMaximum(gridDirections[i], value);
+        if (value > peak) { peak = value; best = gridDirections[i]; }
     }
     // Continuous local search keeps the numeric direction independent of pixel quantization.
     for (double step : {2.0, 1.0, 0.5, 0.25}) {
@@ -137,6 +195,9 @@ LocalizationResult localize(const QVector<QVector<float>> &channels, const Proce
             ScanDirection trial {std::clamp(center.azimuthDegrees + dx * step, -89.9, 89.9),
                 std::clamp(center.elevationDegrees + dy * step, -89.9, 89.9)};
             double value = score(trial);
+            // Max-pool measured subpixel responses into the display cell. This
+            // preserves a real peak on a coarse raster; no marker-shaped boost.
+            preserveCellMaximum(trial, value);
             if (value > peak) { peak = value; best = trial; }
         }
     }
@@ -146,18 +207,27 @@ LocalizationResult localize(const QVector<QVector<float>> &channels, const Proce
     const double contrast = std::clamp((peak - background) / std::max(std::abs(peak), 0.005), 0.0, 1.0);
     const double coherence = std::clamp(peak / 0.12, 0.0, 1.0);
     result.confidence = contrast * std::sqrt(coherence) * result.validChannels / Channels;
-    result.trusted = peak > 0.002 && result.confidence >= settings.confidenceThreshold;
+    const bool peakInView = projection(best).inView;
+    result.trusted = peakInView && peak > 0.002 && result.confidence >= settings.confidenceThreshold;
     result.direction = best;
     const double scale = std::max(peak - background, 1e-9);
     for (float &value : result.heat) value = float(std::clamp((value - background) / scale, 0.0, 1.0));
-    result.reason = result.trusted ? QStringLiteral("可信候选方向") : QStringLiteral("相对峰存在，但未达到可信阈值");
+    result.reason = !peakInView ? QStringLiteral("主峰位于视频视场外，请调整视角；不标记为画面内可信声源")
+        : result.trusted ? QStringLiteral("可信候选方向") : QStringLiteral("相对峰存在，但未达到可信阈值");
     result.elapsedMs = timer.nsecsElapsed() / 1e6;
     return result;
 }
 
 void Beamformer::configure(const Geometry &geometry, const std::array<ScanDirection, 3> &directions, double speed)
 {
-    if (!geometry.valid() || speed < 300 || speed > 380) { m_ring.clear(); return; }
+    const bool positionsFinite = std::all_of(geometry.microphones.cbegin(), geometry.microphones.cend(), [](const MicrophonePosition &p) {
+        return std::isfinite(p.xMeters) && std::isfinite(p.yMeters) && std::isfinite(p.zMeters)
+            && std::abs(p.xMeters) <= 2 && std::abs(p.yMeters) <= 2 && std::abs(p.zMeters) <= 2;
+    });
+    const bool directionsFinite = std::all_of(directions.cbegin(), directions.cend(), [](const ScanDirection &d) {
+        return std::isfinite(d.azimuthDegrees) && std::isfinite(d.elevationDegrees);
+    });
+    if (!geometry.valid() || !positionsFinite || !directionsFinite || !std::isfinite(speed) || speed < 300 || speed > 380) { m_ring.clear(); return; }
     double radius = 0;
     for (const auto &p : geometry.microphones) radius = std::max(radius,
         std::sqrt(p.xMeters * p.xMeters + p.yMeters * p.yMeters + p.zMeters * p.zMeters));
@@ -174,7 +244,8 @@ void Beamformer::configure(const Geometry &geometry, const std::array<ScanDirect
         const auto d = unit(directions[beam]);
         m_taps[beam].resize(Channels);
         for (int ch = 0; ch < Channels; ++ch) {
-            const double delay = reference - dot(geometry.microphones[ch], d) * SampleRate / speed;
+            // Delay early-arriving microphones more so a source in +d sums coherently.
+            const double delay = reference + dot(geometry.microphones[ch], d) * SampleRate / speed;
             auto &tap = m_taps[beam][ch];
             tap.integer = int(std::floor(delay)) - 1;
             const double x = delay - tap.integer;

@@ -92,7 +92,7 @@ if ($cacheSource) {
     $cachedGenerator = Read-CMakeCacheValue $cachePath 'CMAKE_GENERATOR'
     if (-not $PSBoundParameters.ContainsKey('Generator') -and $cachedGenerator) { $Generator = $cachedGenerator }
 }
-$testTargets = if ($is128) { @('test_array128') } else {
+$testTargets = if ($is128) { @('test_array128', 'test_array128_imaging') } else {
     @('test_protocol', 'test_device', 'test_media', 'test_app', 'test_ui', 'test_analysis')
 }
 $variantOptions = @()
