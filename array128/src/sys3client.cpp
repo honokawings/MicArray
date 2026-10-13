@@ -21,6 +21,8 @@ bool Sys3Client::running() const { return m_thread && m_thread->isRunning(); }
 Sys3Session Sys3Client::snapshot() const { QMutexLocker lock(&m_mutex); return m_session; }
 QJsonObject Sys3Client::json() const { QMutexLocker lock(&m_mutex); return m_session.json(now()); }
 bool Sys3Client::send(char command) { QMutexLocker lock(&m_mutex); return m_session.request(command, now()); }
+bool Sys3Client::sendAudio(const AudioUartCommand &command) { QMutexLocker lock(&m_mutex); return m_session.requestAudio(command, now()); }
+void Sys3Client::setCaptureBusy(bool busy) { QMutexLocker lock(&m_mutex); m_session.captureBusy = busy; }
 
 QStringList Sys3Client::availablePorts()
 {
@@ -42,7 +44,9 @@ void Sys3Client::open(const QString &port)
     close();
     const QString name = port.trimmed().toUpper();
     {
-        QMutexLocker lock(&m_mutex); m_session = Sys3Session{}; m_session.port = name;
+        QMutexLocker lock(&m_mutex);
+        const bool captureBusy = m_session.captureBusy;
+        m_session = Sys3Session{}; m_session.port = name; m_session.captureBusy = captureBusy;
         if (!QRegularExpression("^COM[1-9][0-9]{0,3}$").match(name).hasMatch()) {
             m_session.error = QStringLiteral("串口名称必须为 COM1–COM9999"); return;
         }
@@ -83,33 +87,68 @@ void Sys3Client::run(const QString &port)
         QMutexLocker lock(&m_mutex); m_session.connected = true;
         m_session.appendLog(port + QStringLiteral(" 已打开；115200 8N1，无流控，DTR/RTS 关闭；只接收，等待 SYS3"));
     }
+    constexpr DWORD readCapacity = 4096;
+    bool draining = false;
     while (!QThread::currentThread()->isInterruptionRequested()) {
-        char bytes[4096]; DWORD received = 0;
-        if (!ReadFile(handle, bytes, sizeof(bytes), &received, nullptr)) { fail(QStringLiteral("串口读取失败（Windows %1）").arg(GetLastError())); break; }
-        DWORD errors = 0; COMSTAT status {};
-        if (!ClearCommError(handle, &errors, &status)) { fail(QStringLiteral("串口状态读取失败（Windows %1）").arg(GetLastError())); break; }
-        char command = 0;
+        DWORD beforeErrors = 0; COMSTAT before {};
+        if (!ClearCommError(handle, &beforeErrors, &before)) { fail(QStringLiteral("串口状态读取失败（Windows %1）").arg(GetLastError())); break; }
         {
             QMutexLocker lock(&m_mutex);
-            if (errors) {
-                ++m_session.invalid; m_session.identified = false;
-                m_session.failCommand(QStringLiteral("UART 驱动报告接收错误"));
-                m_session.appendLog(QStringLiteral("UART 驱动错误掩码 0x%1").arg(errors, 0, 16));
+            if (beforeErrors) m_session.receiveDiscontinuity(QStringLiteral("UART 驱动错误掩码 0x%1").arg(beforeErrors, 0, 16));
+            if (before.cbInQue > readCapacity && !draining) {
+                draining = true; m_session.receiveBacklog = true;
+                m_session.receiveDiscontinuity(QStringLiteral("UART 接收积压 %1 字节，丢弃历史输入并等待新快照").arg(before.cbInQue));
             }
-            if (received && !errors) m_session.feed(QByteArray(bytes, int(received)), now());
-            m_session.tick(now());
-            command = m_session.takeCommand(now());
         }
-        if (command && !QThread::currentThread()->isInterruptionRequested()) {
+        if (QThread::currentThread()->isInterruptionRequested()) break;
+        char bytes[readCapacity]; DWORD received = 0;
+        if (!ReadFile(handle, bytes, sizeof(bytes), &received, nullptr)) { fail(QStringLiteral("串口读取失败（Windows %1）").arg(GetLastError())); break; }
+        DWORD afterErrors = 0; COMSTAT after {};
+        if (!ClearCommError(handle, &afterErrors, &after)) { fail(QStringLiteral("串口状态读取失败（Windows %1）").arg(GetLastError())); break; }
+        QByteArray transmission;
+        {
+            QMutexLocker lock(&m_mutex);
+            if (afterErrors) m_session.receiveDiscontinuity(QStringLiteral("UART 驱动错误掩码 0x%1").arg(afterErrors, 0, 16));
+            if (after.cbInQue > readCapacity && !draining) {
+                draining = true; m_session.receiveBacklog = true;
+                m_session.receiveDiscontinuity(QStringLiteral("UART 接收积压 %1 字节，丢弃历史输入并等待新快照").arg(after.cbInQue));
+            }
+            if (draining || beforeErrors || afterErrors) {
+                // Do not label buffered/error-adjacent data as a current
+                // snapshot. Preserve byte accounting, but never feed it to
+                // the parser or join it to a pre-error frame fragment.
+                m_session.bytes += received;
+                if (draining && after.cbInQue == 0) draining = false;
+            } else if (received) {
+                const quint64 previousValid = m_session.valid;
+                m_session.feed(QByteArray(bytes, int(received)), now());
+                // receiveDiscontinuity leaves the parser discarding through
+                // a newline. Only a subsequently parsed complete new frame
+                // may release the backlog interlock; duplicates do not count.
+                if (m_session.receiveBacklog && m_session.identified && m_session.valid > previousValid)
+                    m_session.receiveBacklog = false;
+            }
+            m_session.tick(now());
+            // Even a short pending input tail can carry a changed command,
+            // mode or epoch. Process the whole available input before TX.
+            if (!after.cbInQue) {
+                const char command = m_session.takeCommand(now());
+                if (command) transmission.append(command);
+                else transmission = m_session.takeAudioCommand(now());
+            }
+        }
+        if (!transmission.isEmpty() && !QThread::currentThread()->isInterruptionRequested()) {
             DWORD written = 0;
-            if (!WriteFile(handle, &command, 1, &written, nullptr) || written != 1) {
-                fail(QStringLiteral("串口单字节发送失败/超时（Windows %1），未重试").arg(GetLastError())); break;
+            if (!WriteFile(handle, transmission.constData(), DWORD(transmission.size()), &written, nullptr) || written != DWORD(transmission.size())) {
+                fail(QStringLiteral("串口命令发送失败/超时（Windows %1），未重试").arg(GetLastError())); break;
             }
             QMutexLocker lock(&m_mutex);
-            m_session.commandStatus = QStringLiteral("命令 %1 已发送 1 字节，等待识别回执").arg(QChar(command));
-            m_session.appendLog(m_session.commandStatus);
+            if (transmission.startsWith('@')) m_session.audioCommandWritten(now());
+            else m_session.commandWritten(now());
         }
-        QThread::msleep(10);
+        // Each pass drains at most readCapacity bytes and checks interruption.
+        // No unbounded drain loop, blocking wait or serial I/O runs on the UI.
+        QThread::msleep(after.cbInQue ? 1 : 10);
     }
     CloseHandle(handle);
     QMutexLocker lock(&m_mutex); m_session.connected = false; m_session.identified = false;

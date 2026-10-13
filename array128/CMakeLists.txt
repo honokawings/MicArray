@@ -12,8 +12,9 @@ set(CMAKE_INSTALL_BINDIR ".")
 set(SHARED_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 add_library(Array128Core STATIC
     src/protocol.cpp src/diagnostics.cpp src/hardwareprofile.cpp src/geometry.cpp src/dsp.cpp src/localizationfft.cpp
-    src/recorder.cpp src/pipeline.cpp src/mainwindow.cpp src/views.cpp src/cameraprofile.cpp
-    src/sys3protocol.cpp src/sys3client.cpp src/sys3panel.cpp
+    src/recorder.cpp src/pipeline.cpp src/mainwindow.cpp src/mainwindowfusion.cpp src/views.cpp src/cameraprofile.cpp src/channelmaskwidget.cpp src/fusionmodel.cpp
+    src/fusionworker.cpp src/fusioncontext.cpp
+    src/sys3protocol.cpp src/audiouartprotocol.cpp src/sys3client.cpp src/sys3panel.cpp
     ${SHARED_ROOT}/analysis/radix2fft.cpp
     ${SHARED_ROOT}/analysis/arraygeometry.cpp
     ${SHARED_ROOT}/analysis/directionprojection.cpp
@@ -30,6 +31,8 @@ target_link_libraries(Array128Core PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets
 qt_add_resources(Array128Core reference PREFIX /m128 FILES resources/selftest_pcm.bin resources/check.svg resources/up.svg resources/down.svg)
 qt_add_executable(MicArray128 WIN32 src/main.cpp)
 target_link_libraries(MicArray128 PRIVATE Array128Core)
+add_executable(m128_srp_export tools/srp_export.cpp)
+target_link_libraries(m128_srp_export PRIVATE Array128Core)
 enable_testing()
 qt_add_executable(test_array128 tests/test_array128.cpp ${SHARED_ROOT}/analysis/wavefilereader.cpp)
 target_link_libraries(test_array128 PRIVATE Array128Core Qt6::Test)
@@ -38,6 +41,21 @@ add_test(NAME array128_core COMMAND test_array128)
 qt_add_executable(test_array128_imaging tests/test_imaging.cpp)
 target_link_libraries(test_array128_imaging PRIVATE Array128Core Qt6::Test)
 add_test(NAME array128_imaging COMMAND test_array128_imaging)
+qt_add_executable(test_array128_fusion tests/test_fusion.cpp)
+target_link_libraries(test_array128_fusion PRIVATE Array128Core Qt6::Test)
+add_test(NAME array128_fusion COMMAND test_array128_fusion)
+set_tests_properties(array128_fusion PROPERTIES TIMEOUT 30)
+qt_add_executable(test_array128_fusionworker tests/test_fusionworker.cpp)
+target_link_libraries(test_array128_fusionworker PRIVATE Array128Core Qt6::Test)
+add_test(NAME array128_fusionworker COMMAND test_array128_fusionworker)
+set_tests_properties(array128_fusionworker PROPERTIES TIMEOUT 30)
+qt_add_executable(test_array128_fusioncontext tests/test_fusioncontext.cpp)
+target_link_libraries(test_array128_fusioncontext PRIVATE Array128Core Qt6::Test)
+add_test(NAME array128_fusioncontext COMMAND test_array128_fusioncontext)
+qt_add_executable(test_array128_fusionpipeline tests/test_fusionpipeline.cpp)
+target_link_libraries(test_array128_fusionpipeline PRIVATE Array128Core Qt6::Test)
+add_test(NAME array128_fusionpipeline COMMAND test_array128_fusionpipeline)
+set_tests_properties(array128_fusionpipeline PROPERTIES TIMEOUT 20)
 set_tests_properties(array128_imaging PROPERTIES TIMEOUT 60)
 get_target_property(M128_QT_CORE Qt6::Core IMPORTED_LOCATION_RELEASE)
 get_filename_component(M128_QT_BIN "${M128_QT_CORE}" DIRECTORY)
@@ -49,7 +67,7 @@ set_tests_properties(array128_core PROPERTIES
 # Windows can otherwise select an unrelated MSYS/Qt runtime for the next test.
 if(WIN32)
     string(REPLACE ";" "\\;" M128_TEST_PATH "${M128_QT_BIN};$ENV{PATH}")
-    set_property(TEST array128_core array128_imaging APPEND PROPERTY ENVIRONMENT "PATH=${M128_TEST_PATH}")
+    set_property(TEST array128_core array128_imaging array128_fusion array128_fusionworker array128_fusioncontext array128_fusionpipeline APPEND PROPERTY ENVIRONMENT "PATH=${M128_TEST_PATH}")
     if(EXISTS "$ENV{WINDIR}/Fonts/msyh.ttc")
         set_property(TEST array128_core APPEND PROPERTY ENVIRONMENT "M128_FONT=$ENV{WINDIR}/Fonts/msyh.ttc")
     endif()

@@ -15,6 +15,9 @@ struct ProcessingSettings
     Geometry geometry;
     bool localization = false;
     double confidenceThreshold = 0.35;
+    std::array<bool, 128> disabledChannels {};
+    int maxSources = 4;
+    double minimumSourceSeparationDegrees = 8.0;
     double soundSpeed = 343.0;
     int gridColumns = 72;
     int gridRows = 45;
@@ -42,17 +45,28 @@ struct ProcessingSettings
 
 bool onlyDirectionChange(const ProcessingSettings &before, const ProcessingSettings &after);
 
+struct AcousticSource
+{
+    ScanDirection direction;
+    double confidence = 0;
+    double relativePower = 0; // Background-subtracted SRP response / strongest response, not calibrated acoustic power.
+    bool trusted = false;
+};
+
 struct LocalizationResult
 {
     quint64 generation = 0;
     quint64 run = 0;
     quint64 lastFrame = 0;
+    qint64 observationTimeNs = -1; // Host monotonic arrival estimate for the audio-window center; not hardware sync.
     QVector<float> heat;
     int columns = 0;
     int rows = 0;
     ScanDirection direction;
     double confidence = 0;
     bool trusted = false;
+    QVector<AcousticSource> sources;
+    int disabledChannels = 0;
     int validChannels = 0;
     int validPairs = 0;
     double elapsedMs = 0;
@@ -66,7 +80,8 @@ LocalizationResult localize(const QVector<QVector<float>> &channels,
 class Beamformer
 {
 public:
-    void configure(const Geometry &geometry, const std::array<ScanDirection, 3> &directions, double speed);
+    void configure(const Geometry &geometry, const std::array<ScanDirection, 3> &directions, double speed,
+                   const std::array<bool, 128> &disabledChannels = {});
     void reset();
     std::array<QVector<float>, 3> process(const QVector<QVector<float>> &channels);
 private:
@@ -77,6 +92,8 @@ private:
     int m_position = 0;
     Geometry m_geometry;
     double m_speed = 0;
+    std::array<bool, 128> m_disabledChannels {};
+    QVector<int> m_enabledChannels;
 };
 
 class Denoiser

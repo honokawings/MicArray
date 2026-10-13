@@ -2,6 +2,7 @@
 #include "hardwareprofile.h"
 #include "sys3panel.h"
 #include "cameraprofile.h"
+#include "channelmaskwidget.h"
 #include "analysis/cameraviewcalibrator.h"
 
 #include <QAudioSink>
@@ -162,8 +163,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     connect(geometrySettings, &QPushButton::clicked, this, [this] { navigate(Page::Configuration); m_configTabs->setCurrentIndex(1); });
     m_videoSink = new QVideoSink(this); m_captureSession.setVideoSink(m_videoSink);
     connect(m_videoSink, &QVideoSink::videoFrameChanged, this, [this](const QVideoFrame &frame) {
+        const qint64 arrived = m_pipeline.monotonicNowNs();
         const auto image = frame.toImage(); if (image.isNull()) return;
-        m_monitorView->setImage(image); m_localView->setImage(image); m_noiseView->setImage(image);
+        m_monitorView->setImage(image); m_noiseView->setImage(image);
+        if (!m_fusionPaintedFrame) m_localView->setImage(image);
+        if (m_camera && m_camera->isActive() && m_fusionEnabled->isChecked()) m_fusionVideo.append(image, arrived);
     });
     connect(m_cameraButton, &QPushButton::clicked, this, &MainWindow::toggleCamera);
     auto *mediaDevices = new QMediaDevices(this);
@@ -192,7 +196,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
         m_monitorView->setImage(image); m_localView->setImage(image); m_noiseView->setImage(image);
     });
     connect(m_connect, &QPushButton::clicked, this, [this] {
-        if (m_receiving) { m_pipeline.stop(); m_receiving = false; resetAudio(); }
+        if (m_receiving) { m_pipeline.stop(); m_receiving = false; resetAudio(); resetFusion(); }
         else startReceiving();
         m_connect->setText(m_receiving ? QStringLiteral("停止接收") : QStringLiteral("开始接收"));
     });
@@ -209,7 +213,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent),
     connect(m_refresh, &QTimer::timeout, this, &MainWindow::refresh); m_refresh->start();
     m_audioTimer = new QTimer(this); m_audioTimer->setInterval(15);
     connect(m_audioTimer, &QTimer::timeout, this, &MainWindow::pumpAudio); m_audioTimer->start();
-    statusBar()->showMessage(QStringLiteral("M128 UDP 数据接收  |  本机 USB 视频  |  SYS3 串口按需连接"));
+    statusBar()->showMessage(QStringLiteral("M128 UDP 数据接收  |  本机 USB 视频  |  UART 串口按需连接"));
     refresh();
 }
 
@@ -218,6 +222,7 @@ MainWindow::~MainWindow()
     if (m_camera) m_camera->stop();
     m_captureSession.setCamera(nullptr);
     m_pipeline.stop(); resetAudio(); saveSettings();
+    m_fusion.shutdown();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -288,6 +293,17 @@ QWidget *MainWindow::buildLocalizationPage()
     m_focus->setToolTip(QStringLiteral("仅调整热力图显示，数值越大峰值越聚焦；不改变定位结果或可信度。"));
     form->addRow(QStringLiteral("可信度阈值"), m_threshold); form->addRow(QStringLiteral("热力聚焦"), m_focus);
     form->addRow(QStringLiteral("声速 (m/s)"), m_soundSpeed); form->addRow(QStringLiteral("方位网格点数"), m_gridColumns); form->addRow(QStringLiteral("俯仰网格点数"), m_gridRows);
+    m_maxSources = integer(1, 16, 4); m_maxSources->setObjectName("maximumSources");
+    m_sourceSeparation = number(2, 90, 8, 1); m_sourceSeparation->setObjectName("sourceSeparation");
+    m_sourceSeparation->setToolTip(QStringLiteral("SRP 多峰的球面角距离去重门限，不代表阵列可分辨的物理极限，也不是 YOLO 超分辨率参数。"));
+    auto *sourceRow = new QWidget; auto *sourceFields = new QHBoxLayout(sourceRow); sourceFields->setContentsMargins(0, 0, 0, 0);
+    m_maxSources->setPrefix(QStringLiteral("最多 ")); m_sourceSeparation->setSuffix(QStringLiteral(" °"));
+    sourceFields->addWidget(m_maxSources); sourceFields->addWidget(m_sourceSeparation);
+    form->addRow(QStringLiteral("目标数 / 间隔"), sourceRow);
+    auto *maskRow = new QWidget; auto *maskFields = new QHBoxLayout(maskRow); maskFields->setContentsMargins(0, 0, 0, 0);
+    m_maskStatus = label(); m_maskStatus->setObjectName("localizationMaskStatus"); maskFields->addWidget(m_maskStatus, 1);
+    auto *maskButton = new QPushButton(QStringLiteral("通道屏蔽")); maskButton->setObjectName("channelMaskShortcut"); maskFields->addWidget(maskButton); form->addRow(maskRow);
+    connect(maskButton, &QPushButton::clicked, this, [this] { navigate(Page::Configuration); m_configTabs->setCurrentWidget(m_channelMask); });
     m_location = label(QStringLiteral("等待有效实采数据和阵元坐标")); m_location->setObjectName("locationStatus"); form->addRow(m_location);
     form->addRow(label(QStringLiteral("SRP-PHAT：2048 样本 / 256 基线 / 最高 10 次/s。\n软件分析频带约 250–8000 Hz；不等同于硬件有效通带 20 Hz–16 kHz。\n需真实坐标、有效实采流；窄带、静音及质量故障不执行可信定位。")));
     tabs->addTab(live, QStringLiteral("实时定位"));
@@ -327,6 +343,13 @@ QWidget *MainWindow::buildLocalizationPage()
     auto *files = new QWidget; auto *fileButtons = new QHBoxLayout(files); fileButtons->setContentsMargins(0, 0, 0, 0);
     fileButtons->addWidget(save); fileButtons->addWidget(load); cal->addRow(files);
     tabs->addTab(calibration, QStringLiteral("视角校准"));
+    m_sourceTable = new QTableWidget(0, 5); m_sourceTable->setObjectName("srpSourceTable");
+    m_sourceTable->setHorizontalHeaderLabels({QStringLiteral("目标"), QStringLiteral("方位°"), QStringLiteral("俯仰°"), QStringLiteral("可信度"), QStringLiteral("判定")});
+    m_sourceTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); m_sourceTable->verticalHeader()->hide();
+    m_sourceTable->setEditTriggers(QAbstractItemView::NoEditTriggers); m_sourceTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_sourceTable->setToolTip(QStringLiteral("SRP 多峰候选按当前响应强弱排序，编号不是跨帧跟踪 ID；此处没有神经网络识别结果。"));
+    tabs->addTab(m_sourceTable, QStringLiteral("SRP 目标"));
+    tabs->addTab(buildFusionPanel(), QStringLiteral("融合识别"));
     connect(m_localView, &FieldView::pointClicked, this, &MainWindow::calibratePoint);
     connect(m_showCalibration, &QCheckBox::toggled, this, &MainWindow::updateCalibrationTable);
     connect(undo, &QPushButton::clicked, this, [this] { if (!m_calibration.isEmpty()) m_calibration.removeLast(); updateCalibrationTable(); });
@@ -362,10 +385,82 @@ QWidget *MainWindow::buildLocalizationPage()
         if (profile.referenceSize.isValid() && std::abs(double(profile.referenceSize.width()) / profile.referenceSize.height() - double(currentSize.width()) / currentSize.height()) > .01)
             showError(QStringLiteral("校准已载入，但参考图像宽高比与当前画面不同。请核对摄像头裁切或视频分辨率，避免叠加错位。"));
     });
-    for (auto *spin : {m_threshold, m_soundSpeed}) connect(spin, &QDoubleSpinBox::valueChanged, this, &MainWindow::applySettings);
+    for (auto *spin : {m_threshold, m_soundSpeed, m_sourceSeparation}) connect(spin, &QDoubleSpinBox::valueChanged, this, &MainWindow::applySettings);
     connect(m_focus, &QDoubleSpinBox::valueChanged, this, [this] { m_seenResult = 0; saveSettings(); });
-    for (auto *spin : {m_gridColumns, m_gridRows}) connect(spin, &QSpinBox::valueChanged, this, &MainWindow::applySettings);
+    for (auto *spin : {m_gridColumns, m_gridRows, m_maxSources}) connect(spin, &QSpinBox::valueChanged, this, &MainWindow::applySettings);
     connect(m_localEnabled, &QCheckBox::toggled, this, &MainWindow::applySettings);
+    return page;
+}
+
+QWidget *MainWindow::buildFusionPanel()
+{
+    auto *page = new QWidget; auto *layout = new QVBoxLayout(page);
+    m_fusionEnabled = new QCheckBox(QStringLiteral("启用 YOLO 融合（实验）")); m_fusionEnabled->setObjectName("fusionEnabled");
+    layout->addWidget(m_fusionEnabled);
+    auto *form = new QFormLayout; form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); layout->addLayout(form);
+    const auto fileRow = [this, form](const QString &title, const QString &filter, const char *name) {
+        auto *row = new QWidget; auto *fields = new QHBoxLayout(row); fields->setContentsMargins(0, 0, 0, 0);
+        auto *path = new QLineEdit; path->setClearButtonEnabled(true); path->setObjectName(name); path->setMinimumWidth(0);
+        connect(path, &QLineEdit::editingFinished, this, &MainWindow::configureFusion);
+        auto *browse = new QPushButton(QStringLiteral("选择")); fields->addWidget(path, 1); fields->addWidget(browse);
+        connect(browse, &QPushButton::clicked, this, [this, path, title, filter] {
+            const QString selected = QFileDialog::getOpenFileName(this, title, path->text(), filter);
+            if (selected.isEmpty()) return;
+            path->setText(selected); path->setToolTip(selected);
+            if (path == m_fusionModelPath && m_fusionMetadataPath->text().isEmpty()) {
+                const QString paired = QFileInfo(selected).absolutePath() + "/fusion.json";
+                if (QFileInfo::exists(paired)) { m_fusionMetadataPath->setText(paired); m_fusionMetadataPath->setToolTip(paired); }
+            }
+            configureFusion();
+        });
+        form->addRow(title, row); return path;
+    };
+    m_fusionModelPath = fileRow(QStringLiteral("模型"), "ONNX (*.onnx)", "fusionModelPath");
+    m_fusionMetadataPath = fileRow(QStringLiteral("模型描述"), "JSON (*.json)", "fusionMetadataPath");
+    m_fusionRuntimePath = fileRow(QStringLiteral("运行库"), "Runtime (*.dll *.so *.dylib)", "fusionRuntimePath");
+    m_fusionRuntimePath->setPlaceholderText(QStringLiteral("留空使用程序目录运行库"));
+    m_fusionConfidence = number(.01, .99, .15); m_fusionActive = number(.01, .99, .5);
+    m_fusionConfidence->setObjectName("fusionConfidence"); m_fusionActive->setObjectName("fusionActiveThreshold");
+    m_fusionConfidence->setToolTip(QStringLiteral("目标置信度 = objectness × class；非 SRP 可信度。"));
+    m_fusionActive->setToolTip(QStringLiteral("网络发声判别概率阈值，用于排除可见但静音的候选。"));
+    auto *thresholds = new QWidget; auto *thresholdFields = new QHBoxLayout(thresholds); thresholdFields->setContentsMargins(0, 0, 0, 0);
+    m_fusionConfidence->setPrefix(QStringLiteral("目标 ")); m_fusionActive->setPrefix(QStringLiteral("发声 "));
+    thresholdFields->addWidget(m_fusionConfidence); thresholdFields->addWidget(m_fusionActive); form->addRow(QStringLiteral("概率阈值"), thresholds);
+    auto *syncRow = new QWidget; auto *syncFields = new QHBoxLayout(syncRow); syncFields->setContentsMargins(0, 0, 0, 0);
+    m_fusionSkew = integer(10, 200, 100); m_fusionSkew->setObjectName("fusionMaximumSkew"); m_fusionSkew->setSuffix(" ms");
+    auto *defaults = new QPushButton(QStringLiteral("模型建议")); syncFields->addWidget(m_fusionSkew); syncFields->addWidget(defaults);
+    defaults->setToolTip(QStringLiteral("应用模型概率阈值及训练用 SRP 网格/声速/目标数/间隔；不改变阵列坐标或相机校准。"));
+    form->addRow(QStringLiteral("最大时差"), syncRow);
+    connect(defaults, &QPushButton::clicked, this, [this] {
+        QFile file(m_fusionMetadataPath->text());
+        if (!file.open(QIODevice::ReadOnly) || file.size() > 1024 * 1024) { showError(QStringLiteral("无法读取模型描述")); return; }
+        const auto metadata = QJsonDocument::fromJson(file.readAll()).object();
+        QString error; if (!FusionModel::validateMetadata(metadata, &error)) { showError(error); return; }
+        const double confidence = metadata["confidence_threshold"].toDouble(-1), active = metadata["active_threshold"].toDouble(-1);
+        if (confidence < .01 || confidence > .99 || active < .01 || active > .99) { showError(QStringLiteral("模型建议阈值无效")); return; }
+        const auto srp = metadata["training_srp_settings"].toObject();
+        if (metadata["training_srp_grid"].toArray() != QJsonArray {72, 45} || srp["max_sources"].toInt(-1) != 4
+            || srp["minimum_source_separation_deg"].toDouble(-1) != 4 || srp["sound_speed_m_s"].toDouble(-1) != 343
+            || srp["window_samples"].toInt(-1) != 2048) { showError(QStringLiteral("模型 SRP 建议规格不受支持")); return; }
+        const QSignalBlocker first(m_fusionConfidence), second(m_fusionActive);
+        m_fusionConfidence->setValue(confidence); m_fusionActive->setValue(active);
+        m_loading = true;
+        m_gridColumns->setValue(72); m_gridRows->setValue(45); m_soundSpeed->setValue(343);
+        m_maxSources->setValue(4); m_sourceSeparation->setValue(4);
+        m_loading = false; applySettings(); configureFusion();
+    });
+    auto *note = label(QStringLiteral("仅仿真域验证，不等同于真实人物/设备识别。青色 Y 标记为神经源点；S 标记为 SRP。推理显示配对帧，主机时间近似同步，最大保留 500 ms。"));
+    note->setObjectName("fusionDomainNotice"); layout->addWidget(note);
+    m_fusionStatus = label(QStringLiteral("未启用；缺少模型时 SRP 仍可独立使用。")); m_fusionStatus->setObjectName("fusionStatus"); layout->addWidget(m_fusionStatus);
+    m_fusionStatus->setMaximumHeight(72); // Preserve the table when a runtime error contains a long path.
+    m_fusionTable = new QTableWidget(0, 5); m_fusionTable->setObjectName("fusionSourceTable");
+    m_fusionTable->setHorizontalHeaderLabels({QStringLiteral("目标"), QStringLiteral("方位°"), QStringLiteral("俯仰°"), QStringLiteral("置信度"), QStringLiteral("发声概率")});
+    m_fusionTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); m_fusionTable->verticalHeader()->hide();
+    m_fusionTable->setEditTriggers(QAbstractItemView::NoEditTriggers); m_fusionTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_fusionTable->setMinimumHeight(100); layout->addWidget(m_fusionTable, 1);
+    connect(m_fusionEnabled, &QCheckBox::toggled, this, &MainWindow::configureFusion);
+    for (auto *spin : {m_fusionConfidence, m_fusionActive}) connect(spin, &QDoubleSpinBox::valueChanged, this, &MainWindow::configureFusion);
+    connect(m_fusionSkew, &QSpinBox::valueChanged, this, &MainWindow::configureFusion);
     return page;
 }
 
@@ -516,10 +611,10 @@ QWidget *MainWindow::buildGeometryPage()
     interfaceLayout->addWidget(group(QStringLiteral("UDP 接收"), networkForm), 1);
     QFormLayout *auxiliary; auto *auxiliaryForm = formPage(&auxiliary);
     auxiliary->addRow(QStringLiteral("视频接口"), label(QStringLiteral("本机 USB 摄像头，在顶部选择并打开")));
-    auxiliary->addRow(QStringLiteral("串口协议"), label(QStringLiteral("SYS3 · 独立收发与硬件状态")));
+    auxiliary->addRow(QStringLiteral("串口协议"), label(QStringLiteral("SYS3 / I2S1 / GAIN1 · 独立收发")));
     auxiliary->addRow(QStringLiteral("默认串口"), label(QStringLiteral("COM3 / 115200 8N1 / 无流控")));
     auxiliary->addRow(QStringLiteral("UART 电平"), label(QStringLiteral("3.3 V，与 1.8 V MEMS 接口不同")));
-    auxiliary->addRow(label(QStringLiteral("连接后自动识别 SYS3，只接收、不自动发送命令。\ns/h 请求状态，r 复位，t 切换自测，c 仅清时钟历史；动作前有确认，录制中禁止复位/切换。")));
+    auxiliary->addRow(label(QStringLiteral("连接后识别 SYS3；在 UART 面板手动查询板端监听与奇偶增益。\ns/h 读取状态，r 复位，t 切换自测，c 清时钟历史；录制中禁止复位、切换和增益配置。")));
     auto *serialSettings = new QPushButton(QStringLiteral("打开串口面板")); serialSettings->setObjectName("serialSettingsButton"); auxiliary->addRow(serialSettings);
     connect(serialSettings, &QPushButton::clicked, this, [this] { navigate(Page::Diagnostics); m_debugTabs->setCurrentWidget(m_serial); });
     interfaceLayout->addWidget(group(QStringLiteral("辅助接口"), auxiliaryForm), 1);
@@ -544,6 +639,11 @@ QWidget *MainWindow::buildGeometryPage()
     for (int r = 0; r < 128; ++r) for (int c = 0; c < 7; ++c) m_geometryTable->setItem(r, c, new QTableWidgetItem);
     geometryLayout->addWidget(m_geometryTable, 1);
     m_configTabs->addTab(geometry, QStringLiteral("阵列几何"));
+
+    m_channelMask = new ChannelMaskWidget;
+    m_configTabs->addTab(m_channelMask, QStringLiteral("通道屏蔽"));
+    connect(m_channelMask, &ChannelMaskWidget::maskChanged, this, &MainWindow::applySettings);
+    connect(m_channelMask, &ChannelMaskWidget::inputRejected, this, &MainWindow::showError);
 
     auto *specifications = new QWidget; auto *specLayout = new QVBoxLayout(specifications);
     auto *referenceNotice = label(QStringLiteral("参考规格 · README 2026-09-20\n不代表已识别当前位流；电压、实际 CLK 分组与声学性能需要现场确认。"));
@@ -579,7 +679,7 @@ QWidget *MainWindow::buildDebugPage()
 {
     auto *page = new QWidget; auto *layout = new QVBoxLayout(page);
     auto *toolbar = new QHBoxLayout;
-    auto *debugTitle = label(QStringLiteral("UDP / SYS3 设备诊断")); debugTitle->setWordWrap(false);
+    auto *debugTitle = label(QStringLiteral("UDP / UART 设备诊断")); debugTitle->setWordWrap(false);
     toolbar->addWidget(debugTitle); toolbar->addStretch();
     auto *report = new QPushButton(QStringLiteral("导出诊断报告")); toolbar->addWidget(report);
     connect(report, &QPushButton::clicked, this, [this] {
@@ -590,6 +690,7 @@ QWidget *MainWindow::buildDebugPage()
     auto *tabs = new QTabWidget; m_debugTabs = tabs; tabs->setObjectName("debugTabs"); layout->addWidget(tabs, 1);
     auto *overview = new QWidget; auto *grid = new QGridLayout(overview);
     m_commDetails = label(); m_qualityDetails = label(); m_selftestDetails = label(); m_hardwareDetails = label();
+    m_qualityDetails->setObjectName("signalQualityDetails");
     for (auto *l : {m_commDetails, m_qualityDetails, m_selftestDetails, m_hardwareDetails}) l->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     grid->addWidget(group(QStringLiteral("通信状态"), m_commDetails), 0, 0);
     grid->addWidget(group(QStringLiteral("信号质量"), m_qualityDetails), 0, 1);
@@ -611,7 +712,7 @@ QWidget *MainWindow::buildDebugPage()
     tabs->addTab(m_qualityTable, QStringLiteral("通道质量"));
     m_packetDetails = new QPlainTextEdit; m_packetDetails->setReadOnly(true);
     tabs->addTab(m_packetDetails, QStringLiteral("数据报文"));
-    m_serial = new Sys3Panel(m_store.value("serial/port", "COM3").toString()); tabs->addTab(m_serial, QStringLiteral("SYS3 串口"));
+    m_serial = new Sys3Panel(m_store.value("serial/port", "COM3").toString()); tabs->addTab(m_serial, QStringLiteral("UART 串口"));
     connect(m_serial, &Sys3Panel::aboutToReset, this, [this] {
         m_pipeline.stop(); m_receiving = false; m_connect->setText(QStringLiteral("开始接收")); resetAudio();
         statusBar()->showMessage(QStringLiteral("设备复位前已暂停 UDP；恢复后请手动开始接收，建立独立主机会话。"));
@@ -631,6 +732,11 @@ void MainWindow::applySettings()
     const auto previous = m_processing;
     m_processing.localization = m_localEnabled->isChecked(); m_processing.confidenceThreshold = m_threshold->value();
     m_processing.soundSpeed = m_soundSpeed->value(); m_processing.gridColumns = m_gridColumns->value(); m_processing.gridRows = m_gridRows->value();
+    m_processing.disabledChannels = m_channelMask->mask();
+    m_processing.maxSources = m_maxSources->value(); m_processing.minimumSourceSeparationDegrees = m_sourceSeparation->value();
+    const int disabledCount = int(std::count(m_processing.disabledChannels.cbegin(), m_processing.disabledChannels.cend(), true));
+    m_maskStatus->setText(QStringLiteral("启用 %1 / 128 路").arg(128 - disabledCount));
+    m_maskStatus->setToolTip(QStringLiteral("已屏蔽：%1").arg(channelMaskText(m_processing.disabledChannels)));
     m_processing.camera = {m_cameraValues[0]->value(), m_cameraValues[1]->value(), m_cameraValues[2]->value(), m_cameraValues[3]->value(), m_cameraValues[4]->value()};
     m_processing.denoise = m_denoiseEnabled->isChecked(); m_processing.dual = m_dual->isChecked(); m_processing.adaptive = m_adaptive->isChecked();
     m_processing.coefficientB1 = m_b1->value(); m_processing.coefficientB2 = m_b2->value();
@@ -651,7 +757,7 @@ void MainWindow::applySettings()
     m_processing.monitor = m_monitorEnabled->isChecked(); m_processing.monitorChannel = m_monitorChannel->value();
     m_processing.monitorSource = m_monitorSource->currentIndex(); m_processing.monitorGainDb = m_monitorGain->value(); m_processing.bufferMs = m_bufferMs->value();
     const bool directionsOnly = onlyDirectionChange(previous, m_processing);
-    if (!directionsOnly) { ++m_processing.generation; m_seenResult = 0; m_recentDirections.clear(); }
+    if (!directionsOnly) { ++m_processing.generation; m_seenResult = 0; m_recentDirections.clear(); resetFusion(); }
     for (auto *view : {m_monitorView, m_localView, m_noiseView}) view->setCameraView(m_processing.camera);
     m_noiseView->setTargets(m_processing.directions, true, m_activeTarget->currentIndex());
     if (!directionsOnly) m_localView->setResponse({}, m_focus->value());
@@ -669,6 +775,20 @@ void MainWindow::loadSettings()
     m_threshold->setValue(m_store.value("threshold", 0.35).toDouble()); m_focus->setValue(m_store.value("focus", 1.5).toDouble());
     m_soundSpeed->setValue(m_store.value("soundSpeed", 343).toDouble());
     m_gridColumns->setValue(m_store.value("grid/columns", 72).toInt()); m_gridRows->setValue(m_store.value("grid/rows", 45).toInt());
+    m_maxSources->setValue(m_store.value("processing/maxSources", 4).toInt());
+    m_sourceSeparation->setValue(m_store.value("processing/sourceSeparation", 8.0).toDouble());
+    m_fusionModelPath->setText(m_store.value("fusion/model").toString());
+    m_fusionMetadataPath->setText(m_store.value("fusion/metadata").toString());
+    m_fusionRuntimePath->setText(m_store.value("fusion/runtime").toString());
+    m_fusionConfidence->setValue(m_store.value("fusion/confidence", .15).toDouble());
+    m_fusionActive->setValue(m_store.value("fusion/active", .5).toDouble());
+    m_fusionSkew->setValue(m_store.value("fusion/skewMs", 100).toInt());
+    ChannelMask mask {};
+    if (!parseChannelMask(m_store.value("processing/disabledChannels").toString(), &mask, &error)) {
+        mask.fill(true); // Corrupt exclusions must not silently re-enable faulty inputs.
+        showError(QStringLiteral("已保存的屏蔽列表无效；暂时屏蔽全部通道。请在“通道屏蔽”页核对后恢复。"));
+    }
+    m_channelMask->setMask(mask);
     m_b1->setValue(m_store.value("dsp/b1", 5).toDouble()); m_b2->setValue(m_store.value("dsp/b2", 5).toDouble());
     m_dual->setChecked(m_store.value("dsp/dual", true).toBool()); m_adaptive->setChecked(m_store.value("dsp/adaptive", false).toBool());
     m_bandpass->setChecked(m_store.value("dsp/bandpass", false).toBool()); m_logmmse->setChecked(m_store.value("dsp/logmmse", false).toBool()); m_agc->setChecked(m_store.value("dsp/agc", false).toBool());
@@ -711,6 +831,12 @@ void MainWindow::saveSettings()
     m_store.setValue("network/port", m_port->value()); m_store.setValue("network/sourcePort", m_sourcePort->value());
     m_store.setValue("threshold", m_threshold->value()); m_store.setValue("focus", m_focus->value()); m_store.setValue("soundSpeed", m_soundSpeed->value());
     m_store.setValue("grid/columns", m_gridColumns->value()); m_store.setValue("grid/rows", m_gridRows->value());
+    m_store.setValue("processing/disabledChannels", channelMaskText(m_channelMask->mask()));
+    m_store.setValue("processing/maxSources", m_maxSources->value());
+    m_store.setValue("processing/sourceSeparation", m_sourceSeparation->value());
+    m_store.setValue("fusion/model", m_fusionModelPath->text()); m_store.setValue("fusion/metadata", m_fusionMetadataPath->text());
+    m_store.setValue("fusion/runtime", m_fusionRuntimePath->text()); m_store.setValue("fusion/confidence", m_fusionConfidence->value());
+    m_store.setValue("fusion/active", m_fusionActive->value()); m_store.setValue("fusion/skewMs", m_fusionSkew->value());
     m_store.setValue("dsp/b1", m_b1->value()); m_store.setValue("dsp/b2", m_b2->value());
     m_store.setValue("dsp/dual", m_dual->isChecked()); m_store.setValue("dsp/adaptive", m_adaptive->isChecked());
     m_store.setValue("dsp/bandpass", m_bandpass->isChecked()); m_store.setValue("dsp/logmmse", m_logmmse->isChecked()); m_store.setValue("dsp/agc", m_agc->isChecked());
@@ -752,11 +878,12 @@ void MainWindow::openSerial(const QString &port)
 
 void MainWindow::toggleCamera()
 {
+    resetFusion();
     if (m_camera) { m_camera->stop(); m_captureSession.setCamera(nullptr); m_camera.reset(); m_cameraButton->setText(QStringLiteral("打开视频")); m_cameras->setEnabled(true); return; }
     const auto inputs = QMediaDevices::videoInputs();
     for (const auto &device : inputs) if (device.id() == m_cameras->currentData().toByteArray()) {
         m_camera = std::make_unique<QCamera>(device);
-        connect(m_camera.get(), &QCamera::errorOccurred, this, [this](QCamera::Error, const QString &error) { showError(QStringLiteral("USB 摄像头：") + error); });
+        connect(m_camera.get(), &QCamera::errorOccurred, this, [this](QCamera::Error, const QString &error) { resetFusion(); showError(QStringLiteral("USB 摄像头：") + error); });
         m_captureSession.setCamera(m_camera.get()); m_camera->start(); m_cameraButton->setText(QStringLiteral("关闭视频")); m_cameras->setEnabled(false); return;
     }
     showError(QStringLiteral("未发现所选 USB 摄像头，请检查连接和系统隐私权限"));
@@ -774,23 +901,28 @@ void MainWindow::toggleRecording()
     settings.tracks.clear();
     for (int i = 0; i < m_recordTracks->count(); ++i) if (m_recordTracks->item(i)->checkState() == Qt::Checked) settings.tracks.append(i);
     if (settings.tracks.isEmpty()) { showError(QStringLiteral("至少选择一个录制轨道")); return; }
-    if (!settings.arraySource && (!m_processing.denoise || !m_processing.geometry.valid() || state.flags & 0x10 || state.latchedFlags)) {
+    if (!settings.arraySource && (!m_processing.denoise || !m_processing.geometry.valid() || state.flags & 0x10 || state.acousticFaultFlags())) {
         showError(QStringLiteral("降噪录制需要真实坐标、启用 DSP 和无故障实采流；当前条件不满足")); return;
     }
     settings.metadata = {{"source_ip", m_source->text()}, {"source_port", m_sourcePort->value()},
         {"geometry", m_processing.geometry.json()}, {"dsp_generation", QString::number(m_processing.generation)},
         {"start_diagnostics", state.json()}, {"sound_speed", m_processing.soundSpeed}, {"adaptive_wiener", m_processing.adaptive},
         {"dual_reference", m_processing.dual}, {"b1_coefficient", m_processing.coefficientB1}, {"b2_coefficient", m_processing.coefficientB2}};
+    QJsonArray disabled; for (int ch = 0; ch < 128; ++ch) if (m_processing.disabledChannels[ch]) disabled.append(ch);
+    settings.metadata["disabled_processing_channels"] = disabled;
     QJsonArray directions; for (const auto &direction : m_processing.directions) directions.append(QJsonObject{{"azimuth", direction.azimuthDegrees}, {"elevation", direction.elevationDegrees}});
     settings.metadata["directions"] = directions;
     QJsonArray order; for (int node : m_processing.postOrder) order.append(node); settings.metadata["post_order"] = order;
     m_lastRecordError.clear();
+    // Lock destructive UART commands synchronously, not at the next 100 ms UI tick.
+    m_serial->setCaptureBusy(true);
     if (!m_pipeline.recorder().begin(settings)) showError(QStringLiteral("无法启动录制：检查轨道选择或等待上次写盘完成"));
     saveSettings();
 }
 
 QString MainWindow::recordingBlock(const PipelineSnapshot &state) const
 {
+    if (m_serial && m_serial->acquisitionChangePending()) return QStringLiteral("等待串口采集控制完成（复位、自测切换或增益配置）后再启动录制。");
     int selected = 0;
     for (int i = 0; i < m_recordTracks->count(); ++i) selected += m_recordTracks->item(i)->checkState() == Qt::Checked;
     if (!selected) return QStringLiteral("至少勾选一条音轨；空格键可切换当前音轨。");
@@ -801,7 +933,8 @@ QString MainWindow::recordingBlock(const PipelineSnapshot &state) const
     if (m_recordSource->currentIndex() == 1) {
         if (!m_processing.geometry.valid()) return QStringLiteral("处理节点录制需要导入真实 128 阵元坐标。");
         if (!m_processing.denoise) return QStringLiteral("处理节点录制需要在“定向降噪”中启用处理。");
-        if ((state.flags & 0x10) || state.latchedFlags) return QStringLiteral("当前为数字自测或故障流：处理节点已隔离，可改录原始通道保存诊断证据。");
+        if (state.flags & 0x10) return QStringLiteral("数字自测流：处理节点已隔离，可改录原始通道保存诊断证据。");
+        if (state.acousticFaultFlags()) return state.acousticFaultReason();
     }
     return {};
 }
@@ -820,6 +953,8 @@ void MainWindow::calibratePoint(const QPointF &point)
     if (!m_collectCalibration->isChecked()) return;
     if (m_calibration.size() >= 4) { showError(QStringLiteral("已有四点，请拟合或撤销")); return; }
     const auto state = m_pipeline.snapshot();
+    const int trustedSources = int(std::count_if(state.localization.sources.cbegin(), state.localization.sources.cend(), [](const AcousticSource &source) { return source.trusted; }));
+    if (trustedSources > 1) { showError(QStringLiteral("校准时请仅保留一个稳定发声目标，避免混用不同声源的方向。")); return; }
     if (m_recentDirections.size() < 4 || !state.listening || !state.localization.trusted || state.lastPacketAgeMs < 0 || state.lastPacketAgeMs > 300
         || state.localization.generation != m_processing.generation || state.localization.run != state.runs
         || state.frame < state.localization.lastFrame || state.frame - state.localization.lastFrame > SampleRate / 2) {
@@ -898,9 +1033,10 @@ void MainWindow::refresh()
     const bool active = s.listening && s.lastPacketAgeMs >= 0 && s.lastPacketAgeMs < 1500;
     const bool failedReceiver = s.receiverFailed;
     const QString stoppedStatus = !s.error.isEmpty() ? QStringLiteral("接收已停止 · 有历史告警") : s.received ? QStringLiteral("接收已停止") : QStringLiteral("接收未启动");
-    m_health->setText(failedReceiver ? QStringLiteral("接收异常 / 已停止") : !s.listening ? stoppedStatus : !active ? QStringLiteral("等待数据 / 超时") : s.latchedFlags ? QStringLiteral("数据质量告警") : s.flags & 0x10 ? QStringLiteral("数字自测中")
+    m_health->setText(failedReceiver ? QStringLiteral("接收异常 / 已停止") : !s.listening ? stoppedStatus : !active ? QStringLiteral("等待数据 / 超时") : s.acousticFaultFlags() ? QStringLiteral("数据质量故障") : s.flags & 0x10 ? QStringLiteral("数字自测中")
+        : s.latchedFlags & 1 ? QStringLiteral("实采接收中 · 设备曾饱和")
         : s.error.isEmpty() ? QStringLiteral("实采接收中") : QStringLiteral("实采接收中 · 有历史告警"));
-    const QString level = failedReceiver || (active && s.latchedFlags) ? "fault" : !s.listening ? "neutral" : !active || (s.flags & 0x10) || !s.error.isEmpty() ? "warning" : "normal";
+    const QString level = failedReceiver || (active && s.acousticFaultFlags()) ? "fault" : !s.listening ? "neutral" : !active || (s.flags & 0x10) || (s.latchedFlags & 1) || !s.error.isEmpty() ? "warning" : "normal";
     if (m_health->property("level").toString() != level) {
         m_health->setProperty("level", level); m_health->style()->unpolish(m_health); m_health->style()->polish(m_health);
     }
@@ -914,8 +1050,9 @@ void MainWindow::refresh()
     m_b2->setEnabled(m_dual->isChecked());
     m_lowHz->setEnabled(m_bandpass->isChecked()); m_highHz->setEnabled(m_bandpass->isChecked());
     QString acousticBlock = !m_processing.geometry.valid() ? QStringLiteral("先导入真实 128 阵元坐标")
+        : std::count(m_processing.disabledChannels.cbegin(), m_processing.disabledChannels.cend(), false) < 16 ? QStringLiteral("屏蔽后启用通道不足 16 路")
         : !active ? QStringLiteral("等待有效 UDP 实采数据") : s.flags & 0x10 ? QStringLiteral("数字自测流已隔离")
-        : s.latchedFlags ? QStringLiteral("本会话有质量故障，请先排查并重新接收") : QString();
+        : s.acousticFaultReason();
     m_denoiseStatus->setText(!m_processing.denoise ? QStringLiteral("处理未启用 · 输入为原始 128 通道")
         : !acousticBlock.isEmpty() ? QStringLiteral("处理等待：") + acousticBlock : QStringLiteral("处理中 · A/B1/B2 波束 → 维纳 → 后处理"));
     QString monitorState = !m_processing.monitor ? QStringLiteral("监听关闭") : !active ? QStringLiteral("监听等待有效输入")
@@ -927,16 +1064,35 @@ void MainWindow::refresh()
     m_location->setText(s.localization.heat.isEmpty() ? QStringLiteral("%1\n%2\n尚无候选方向").arg(s.acousticStatus, s.localization.reason) : QStringLiteral("%1\n%2\n方位 %3° / 俯仰 %4°\n可信度 %5 / 门限 %6\n有效通道 %7 · 基线 %8 · %9 ms")
         .arg(s.acousticStatus, s.localization.reason).arg(s.localization.direction.azimuthDegrees, 0, 'f', 2).arg(s.localization.direction.elevationDegrees, 0, 'f', 2)
         .arg(s.localization.confidence, 0, 'f', 3).arg(m_threshold->value(), 0, 'f', 2).arg(s.localization.validChannels).arg(s.localization.validPairs).arg(s.localization.elapsedMs, 0, 'f', 1));
+    if (!s.localization.heat.isEmpty()) {
+        const int count = int(std::count_if(s.localization.sources.cbegin(), s.localization.sources.cend(), [](const AcousticSource &source) { return source.trusted; }));
+        m_location->setText(m_location->text() + QStringLiteral("\n可信目标 %1 · 详见“SRP 目标”").arg(count));
+    }
     if (!m_processing.localization) m_location->setText(QStringLiteral("定位未启用\n导入阵列坐标并接收实采数据后，勾选上方开关。"));
     else if (!acousticBlock.isEmpty()) m_location->setText(QStringLiteral("定位等待：") + acousticBlock);
     if (s.runs != m_seenRun || s.localization.lastFrame != m_seenResult || !m_seenResult) {
-        m_localView->setResponse(s.localization, m_focus->value());
-        if (s.runs != m_seenRun || !s.localization.trusted) m_recentDirections.clear();
-        if (s.localization.trusted && s.localization.lastFrame != m_seenResult) {
+        if (!m_fusionPaintedFrame) m_localView->setResponse(s.localization, m_focus->value());
+        m_sourceTable->setRowCount(s.localization.sources.size());
+        for (int i = 0; i < s.localization.sources.size(); ++i) {
+            const auto &source = s.localization.sources[i];
+            const QStringList values {QStringLiteral("S%1").arg(i + 1), QString::number(source.direction.azimuthDegrees, 'f', 2),
+                QString::number(source.direction.elevationDegrees, 'f', 2), QString::number(source.confidence, 'f', 3),
+                source.trusted ? QStringLiteral("可信") : QStringLiteral("候选")};
+            for (int col = 0; col < values.size(); ++col) {
+                auto *item = m_sourceTable->item(i, col);
+                if (!item) { item = new QTableWidgetItem; m_sourceTable->setItem(i, col, item); }
+                item->setText(values[col]);
+                item->setToolTip(QStringLiteral("相对 SRP 响应 %1（非声功率），本帧候选编号 S%2").arg(source.relativePower, 0, 'f', 3).arg(i + 1));
+            }
+        }
+        const int trustedSources = int(std::count_if(s.localization.sources.cbegin(), s.localization.sources.cend(), [](const AcousticSource &source) { return source.trusted; }));
+        if (s.runs != m_seenRun || !s.localization.trusted || trustedSources > 1) m_recentDirections.clear();
+        if (s.localization.trusted && trustedSources <= 1 && s.localization.lastFrame != m_seenResult) {
             m_recentDirections.append(s.localization); if (m_recentDirections.size() > 10) m_recentDirections.removeFirst();
         }
         m_seenRun = s.runs; m_seenResult = s.localization.lastFrame;
     }
+    refreshFusion(s);
     const bool locked = recording.active || recording.finishing;
     m_serial->setCaptureBusy(locked);
     const QVector<QWidget *> recordingWidgets {m_recordSource, m_recordLayout, m_recordTracks, m_recordDirectory, m_recordBrowse, m_recordAll, m_recordNone};
@@ -960,24 +1116,36 @@ void MainWindow::refresh()
             .arg(counter(s.packetSequence, "missing_observed_range"), counter(s.packetSequence, "duplicates"), counter(s.packetSequence, "out_of_order"),
                  counter(s.frameSequence, "missing_observed_range"), counter(s.frameSequence, "forward_gap_observations")).arg(s.discontinuities).arg(s.staleEpochPackets)
             .arg(age(s.lastSourceDatagramAgeMs), age(s.processingDelayMs)));
-        m_qualityDetails->setText(!hasData ? QStringLiteral("尚未收到有效数据\n\n质量状态未知；未接收不等于静音或无故障。") : QStringLiteral("最近 flags = 0x%1\n会话故障锁存 = 0x%2\n%3\n\nbit0 饱和：%4    bit1 队列溢出：%5\nbit2 调度异常：%6    bit3 打包异常：%7\n\n%8\n标志为保持型，不代表每包都新发生一次故障。")
-            .arg(s.flags, 8, 16, QChar('0')).arg(s.latchedFlags, 2, 16, QChar('0')).arg(flagsDescription(s.flags))
-            .arg(bool(s.latchedFlags & 1)).arg(bool(s.latchedFlags & 2)).arg(bool(s.latchedFlags & 4)).arg(bool(s.latchedFlags & 8)).arg(s.acousticStatus));
+        const auto qualityFaults = s.acousticFaultFlags();
+        const QString qualitySummary = qualityFaults & ~quint32(1) ? QStringLiteral("全局故障：需排查后重新接收")
+            : qualityFaults ? QStringLiteral("未屏蔽通道削顶：屏蔽故障通道后自动恢复") : s.acousticStatus;
+        m_qualityDetails->setText(!hasData ? QStringLiteral("尚未收到有效数据\n\n质量状态未知；未接收不等于静音或无故障。") : QStringLiteral("设备 flags 0x%1 · 会话锁存 0x%2\n声学阻断 0x%3 · 通道削顶仅判定未屏蔽路\nbit0 饱和：%4    bit1 队列溢出：%5\nbit2 调度异常：%6    bit3 打包异常：%7\n\n%8\n全局故障不受屏蔽影响；设备 bit0 仅保留告警。")
+            .arg(s.flags, 8, 16, QChar('0')).arg(s.latchedFlags, 2, 16, QChar('0')).arg(qualityFaults, 2, 16, QChar('0'))
+            .arg(bool(s.latchedFlags & 1)).arg(bool(s.latchedFlags & 2)).arg(bool(s.latchedFlags & 4)).arg(bool(s.latchedFlags & 8)).arg(qualitySummary));
+        m_qualityDetails->setToolTip(s.acousticStatus + QStringLiteral("\n") + flagsDescription(s.flags)
+            + QStringLiteral("\n设备 bit0 为保持型总标志，无通道明细，不能精确归因；通道削顶依据实收 PCM 的正/负满量程样本。\n原始统计（含已屏蔽路）完整保留；详细通道见“通道质量”。"));
         m_selftestDetails->setText(QStringLiteral("%1\n已验证 %2 帧 / %3 通道样本\n不匹配 %4 帧 / %5 样本\n连续性错误 %6 · 故障包 %7\n%8")
             .arg(s.selftest.status()).arg(s.selftest.frames).arg(s.selftest.frames * 128).arg(s.selftest.mismatchingFrames).arg(s.selftest.mismatchingSamples)
             .arg(s.selftest.continuityErrors).arg(s.selftest.flaggedPackets).arg(s.selftest.firstMismatch));
         m_selftestProgress->setValue(int(std::min<quint64>(48000, s.selftest.frames)));
-        m_hardwareDetails->setText(QStringLiteral("UDP：%1\n%2\n\nUART 明细见“SYS3 串口”；其 TX 计数不等于 PC 接收。\n电压、温度、CLK 负载和实际位流须外部确认。\n数字自测 PASS 不代表声学验收。")
+        m_hardwareDetails->setText(QStringLiteral("UDP：%1\n%2\n\nUART 明细见“UART 串口”；其 TX 计数不等于 PC 接收。\n电压、温度、CLK 负载和实际位流须外部确认。\n数字自测 PASS 不代表声学验收。")
             .arg(!hasData ? QStringLiteral("尚无有效数据") : active ? QStringLiteral("数据有效到达") : QStringLiteral("已停止或超时，显示历史数据"), m_serial->summary()));
         m_packetDetails->setPlainText(!hasData ? QStringLiteral("尚未收到有效 M128 报文；序号、帧号和采样时间未知。") : QStringLiteral("M128 v1 · UDP 1208 字节\n头 32 字节（大端），记录偏移 32 / 424 / 816，每条 frame_id 8 字节 + PCM 384 字节（s24le）\n\n最近头与首帧号（非实时状态时为历史数据）：\n%1\n\npacket_sequence=%2\nepoch=%3\nlast_frame_id=%4\nflags=0x%5\n\n有效相对采样时间=%6 秒（仅 bit2=0；非 UTC）\n\n包号审计：\n%7\n帧号审计：\n%8")
             .arg(QString::fromLatin1(s.latestHeader.toHex(' '))).arg(s.sequence).arg(s.epoch).arg(s.frame).arg(s.flags, 8, 16, QChar('0'))
             .arg(s.latchedFlags & 4 ? QStringLiteral("不可用") : QString::number(effectiveTimeSeconds(s.frame), 'f', 9))
             .arg(QString::fromUtf8(QJsonDocument(s.packetSequence).toJson()), QString::fromUtf8(QJsonDocument(s.frameSequence).toJson())));
         if (m_qualityTable->isVisible()) for (int ch = 0; ch < 128; ++ch) {
-            const auto &q = s.quality[ch]; const QStringList values {QString::number(ch), QString("%1/%2").arg(ch / 2).arg(ch % 2 ? "VDD" : "GND"), dataConnector(ch) + "/" + dataBank(ch),
+            const bool excluded = s.disabledProcessingChannels[ch];
+            const auto &q = s.quality[ch]; const QStringList values {QString::number(ch) + (excluded ? QStringLiteral(" ×") : QString()), QString("%1/%2").arg(ch / 2).arg(ch % 2 ? "VDD" : "GND"), dataConnector(ch) + "/" + dataBank(ch),
                 QString::number(q.rmsDb, 'f', 1), QString::number(q.acRmsDb, 'f', 1), QString::number(q.dc, 'f', 5), QString::number(q.clipped),
                 QString::number(q.zeros), QString::number(q.unchanged), QString::number(s.selftest.channelMismatches[ch])};
-            for (int col = 0; col < 10; ++col) m_qualityTable->item(ch, col)->setText(col >= 3 && !hasData ? QStringLiteral("—") : values[col]);
+            for (int col = 0; col < 10; ++col) {
+                auto *item = m_qualityTable->item(ch, col);
+                item->setText(col >= 3 && !hasData ? QStringLiteral("—") : values[col]);
+                item->setForeground(excluded ? QBrush(QColor("#8795a3")) : QBrush());
+                item->setToolTip(excluded ? QStringLiteral("已屏蔽：原始统计仅供排查，不参与声学质量阻断；原始监听、录制和自测审计不变。")
+                    : QStringLiteral("参与声学质量判定；削顶故障按当前会话锁存，屏蔽该通道可排除其影响。"));
+            }
             m_qualityTable->item(ch, 2)->setToolTip(QStringLiteral("FPGA 焊盘 %1；CLK 负载分组由实际接线决定，不能按通道号推定。").arg(dataPin(ch)));
         }
     }
@@ -1001,6 +1169,7 @@ void MainWindow::saveDiagnosticReport(const QString &path)
     report["source_ip"] = m_source->text(); report["source_port"] = m_sourcePort->value();
     report["geometry"] = m_processing.geometry.json();
     report["sys3_uart"] = m_serial->json();
+    report["audiovisual_fusion"] = fusionDiagnostics();
     QSaveFile file(path); if (!file.open(QIODevice::WriteOnly)) { showError(file.errorString()); return; }
     const auto bytes = QJsonDocument(report).toJson();
     if (file.write(bytes) != bytes.size() || !file.commit()) showError(file.errorString());
@@ -1027,6 +1196,10 @@ void MainWindow::applyTheme(bool dark)
         "QLabel#acquisitionStatus[level='fault'] {background:#963c3c;color:#fff0f0;}"
         "QGroupBox {background:%2;border:1px solid %4;border-radius:8px;margin-top:16px;padding:12px;}"
         "QGroupBox::title {subcontrol-origin:margin;left:14px;padding:0 5px;color:#43bea5;}"
+        "QGroupBox#uartAudioGroup {margin-top:10px;padding:5px;}"
+        "QGroupBox#uartAudioGroup QPushButton {padding:4px 8px;}"
+        "QGroupBox#uartAudioGroup QSpinBox,QGroupBox#uartAudioGroup QDoubleSpinBox {padding-top:3px;padding-bottom:3px;}"
+        "QTableWidget#uartAudioValues QHeaderView::section {padding:3px;}"
         "QPushButton {background:%2;border:1px solid %4;border-radius:5px;padding:7px 12px;}"
         "QPushButton:hover {border-color:#46bea5;} QPushButton:disabled {color:#718290;}"
         "QPushButton:focus,QLineEdit:focus,QSpinBox:focus,QDoubleSpinBox:focus,QComboBox:focus,QListWidget:focus {border:2px solid #248f7d;}"

@@ -1,0 +1,12 @@
+ONNX Runtime C API headers, version 1.30.0
+Copyright Microsoft Corporation. Distributed under the MIT license in LICENSE.
+
+Unmodified upstream files downloaded from the official v1.30.0 tag:
+https://github.com/microsoft/onnxruntime/tree/v1.30.0/include/onnxruntime/core/session
+
+onnxruntime_c_api.h
+onnxruntime_ep_c_api.h
+onnxruntime_error_code.h
+
+Only public C declarations are vendored. No runtime binary is embedded here.
+The application loads a separately deployed compatible onnxruntime.dll at runtime.

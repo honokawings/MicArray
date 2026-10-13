@@ -47,6 +47,9 @@ struct PipelineSnapshot
     quint32 epoch = 0;
     quint32 flags = 0;
     quint32 latchedFlags = 0;
+    // Immediate per-session PCM saturation evidence, independent of the 100 ms
+    // diagnostic refresh. Masking excludes a channel, but never erases evidence.
+    std::array<bool, Channels> clippedChannels {};
     quint64 discontinuities = 0;
     quint64 staleEpochPackets = 0;
     quint64 analysisReplaced = 0;
@@ -64,6 +67,9 @@ struct PipelineSnapshot
     QByteArray latestHeader;
     QString acousticStatus = QStringLiteral("尚未收到数据");
     LocalizationResult localization;
+    std::array<bool, Channels> disabledProcessingChannels {};
+    quint32 acousticFaultFlags() const;
+    QString acousticFaultReason() const;
     QJsonObject json() const;
 };
 
@@ -77,6 +83,7 @@ public:
     void stop();
     void configure(const ProcessingSettings &settings);
     PipelineSnapshot snapshot() const;
+    qint64 monotonicNowNs() const;
     QByteArray takeMonitorPcm();
     Recorder &recorder();
 private:

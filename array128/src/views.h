@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline.h"
+#include "fusionmodel.h"
 
 #include <QImage>
 #include <QWidget>
@@ -21,6 +22,7 @@ protected:
     void keyPressEvent(QKeyEvent *) override;
 private:
     std::array<ChannelQuality, Channels> m_quality;
+    std::array<bool, Channels> m_disabled {};
     int m_selected = 0;
     bool m_hasData = false;
     bool m_fresh = false;
@@ -47,6 +49,7 @@ public:
     explicit FieldView(QWidget *parent = nullptr);
     void setImage(const QImage &image);
     void setResponse(const LocalizationResult &result, double focus);
+    void setFusionDetections(const QVector<FusionDetection> &detections);
     void setCameraView(const CameraViewSettings &camera);
     void setTargets(const std::array<ScanDirection, 3> &targets, bool show, int active);
     void setCalibrationPoints(const QVector<VideoCalibrationSample> &points);
@@ -67,6 +70,7 @@ private:
     QImage m_heat;
     CameraViewSettings m_camera;
     LocalizationResult m_result;
+    QVector<FusionDetection> m_fusion;
     std::array<ScanDirection, 3> m_targets;
     QVector<VideoCalibrationSample> m_calibration;
     bool m_showTargets = false;

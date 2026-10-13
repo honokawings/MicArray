@@ -45,7 +45,7 @@ QJsonObject hardwareReference()
         {"mems_io_voltage_v", 1.8}, {"passband_low_hz", 20}, {"passband_high_hz", 16000},
         {"dc_retained", true}, {"udp_payload_bytes", 1208}, {"packet_rate_hz", 16000},
         {"udp_payload_mbps", 154.624}, {"wire_budget_mbps", 163.072},
-        {"uart_reference", "SYS3, COM3, 115200 8N1, no flow control"},
+        {"uart_reference", "SYS3 / I2S1 / GAIN1, COM3, 115200 8N1, no flow control; protocol reviewed 2026-10-11"},
         {"uart_supported_by_host", true}};
 }
 
@@ -68,7 +68,7 @@ QVector<QStringList> hardwareSpecificationRows()
         {QStringLiteral("网络"), "192.168.10.2 → 192.168.10.1/24", QStringLiteral("UDP 5000→5000；1000M 全双工，ARP 就绪后采集")},
         {QStringLiteral("MEMS 接口"), "J10 CLK / J25 DATA32–63 / J26 DATA0–31", QStringLiteral("J10/J25 属 L6，J26 属 L7；LVCMOS18")},
         {QStringLiteral("MEMS 电压"), "1.8 V", QStringLiteral("板卡跳线和实测确认；主机不能设定/测量 VCCIO")},
-        {QStringLiteral("UART 诊断"), "SYS3 / COM3 / 115200 8N1", QStringLiteral("无流控；UART 3.3 V；在设备诊断页按需连接")},
+        {QStringLiteral("UART 诊断"), "SYS3 / I2S1 / GAIN1 / 115200 8N1", QStringLiteral("COM3；无流控；UART 3.3 V；含板端监听与奇偶增益")},
         {QStringLiteral("视频输入"), QStringLiteral("本机 USB 摄像头"), QStringLiteral("独立采集，无 FPGA 音视频硬件同步")}
     };
 }
@@ -83,11 +83,13 @@ QString commissioningGuide()
         "实测 VCCIO 与 MEMS VDD 均为 1.8 V；A3V3/A5V0 仍为固定电压。\n"
         "J10 输出 CLK0–7；J26 为 DATA0–31（L7），J25 为 DATA32–63（L6）。\n"
         "CLK 同源不等于焊盘零偏斜；实际负载分组按阵列接线记录，不按 CH/32 推定。\n\n"
-        "2  串口诊断（设备诊断 → SYS3 串口）\n"
+        "2  串口诊断（设备诊断 → UART 串口）\n"
         "COM3，115200 8N1，无流控；UART 电平 3.3 V。先识别 SYS3，不能把 CLK2 当作完整系统。\n"
         "s / h：请求状态；r：完整系统复位并回到实采；t：切换内部 PDM 自测；\n"
         "c：仅清除时钟历史故障，不清当前采集故障或 PHY/MAC 计数。\n"
-        "命令不需要换行；t 间隔至少 0.2 s。回执只表示已识别，完成以新鲜 SYS3 状态为准。\n"
+        "旧单字符命令不需要换行；t 间隔至少 0.2 s。回执只表示已识别，完成以新鲜 SYS3 状态为准。\n"
+        "新版音频命令 @I2S / @GAIN 以换行结束；在音频控制页查询、配置并确认实际生效值。\n"
+        "SYS3 直流位 12–14 表示配置使能、估计审核结束及存在拒绝通道；BIST 使用 unity 旁路。\n"
         "检查 PLL/复位→PHY/MDIO→ARP→UDP；字段 freshness=0 时不得当作当前状态。\n"
         "KEY0/KEY1 仅兼容保留，联调以 UART 为主。PHY 扫描无 ACK 不一定是故障。\n\n"
         "连接时不自动发命令；复位/模式切换在录制中禁用。复位前主机暂停 UDP，恢复后手动重新接收。\n"

@@ -2,6 +2,8 @@
 
 #include "pipeline.h"
 #include "views.h"
+#include "fusionworker.h"
+#include "fusioncontext.h"
 #include "media/audiomonitorbuffer.h"
 
 #include <QMainWindow>
@@ -30,6 +32,7 @@ class QVideoSink;
 namespace MicArray::Array128 {
 
 class Sys3Panel;
+class ChannelMaskWidget;
 
 class MainWindow final : public QMainWindow
 {
@@ -68,14 +71,32 @@ private:
     void updateGeometryTable();
     QString recordingBlock(const PipelineSnapshot &state) const;
     void populateRecordingTracks();
+    QWidget *buildFusionPanel();
+    void configureFusion();
+    void resetFusion();
+    void refreshFusion(const PipelineSnapshot &state);
+    QJsonObject fusionDiagnostics() const;
 
     QSettings m_store;
     Pipeline m_pipeline;
+    FusionWorker m_fusion;
+    FusionVideoBuffer m_fusionVideo;
+    QCheckBox *m_fusionEnabled = nullptr;
+    QLineEdit *m_fusionModelPath = nullptr, *m_fusionMetadataPath = nullptr, *m_fusionRuntimePath = nullptr;
+    QDoubleSpinBox *m_fusionConfidence = nullptr, *m_fusionActive = nullptr;
+    QSpinBox *m_fusionSkew = nullptr;
+    QLabel *m_fusionStatus = nullptr;
+    QTableWidget *m_fusionTable = nullptr;
+    quint64 m_fusionSubmittedFrame = 0, m_fusionRun = 0;
+    quint64 m_fusionPaintedFrame = 0;
+    QString m_fusionGate;
+    FusionDisplayBuffer m_fusionDisplayFrames;
     ProcessingSettings m_processing;
     QTabWidget *m_pages = nullptr;
     QTabWidget *m_configTabs = nullptr;
     QTabWidget *m_debugTabs = nullptr;
     Sys3Panel *m_serial = nullptr;
+    ChannelMaskWidget *m_channelMask = nullptr;
     QTableWidget *m_geometryTable = nullptr;
     QLineEdit *m_bind = nullptr, *m_source = nullptr;
     QSpinBox *m_port = nullptr, *m_sourcePort = nullptr;
@@ -99,7 +120,11 @@ private:
     QCheckBox *m_localEnabled = nullptr;
     QDoubleSpinBox *m_threshold = nullptr, *m_focus = nullptr, *m_soundSpeed = nullptr;
     QSpinBox *m_gridColumns = nullptr, *m_gridRows = nullptr;
+    QSpinBox *m_maxSources = nullptr;
+    QDoubleSpinBox *m_sourceSeparation = nullptr;
+    QLabel *m_maskStatus = nullptr;
     QLabel *m_location = nullptr;
+    QTableWidget *m_sourceTable = nullptr;
     QLabel *m_monitorStatus = nullptr, *m_denoiseStatus = nullptr, *m_recordSummary = nullptr;
     std::array<QDoubleSpinBox *, 5> m_cameraValues {};
     QTableWidget *m_calibrationTable = nullptr;

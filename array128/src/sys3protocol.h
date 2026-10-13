@@ -1,5 +1,7 @@
 #pragma once
 
+#include "audiouartprotocol.h"
+
 #include <QByteArray>
 #include <QJsonObject>
 #include <QStringList>
@@ -34,9 +36,11 @@ QVector<QStringList> sys3Details(const Sys3Frame &frame);
 struct Sys3Session
 {
     bool connected = false, identified = false;
+    bool receiveBacklog = false, captureBusy = false;
     QString port, error;
     Sys3Frame latest;
     quint64 valid = 0, invalid = 0, bytes = 0, missing = 0, duplicates = 0, restarts = 0;
+    quint64 receiveDiscontinuities = 0;
     qint64 lastFrameMs = -1;
     QStringList log;
     char pending = 0;
@@ -46,11 +50,30 @@ struct Sys3Session
     quint32 ackSequence = 0, baseEpoch = 0;
     bool baseMode = false;
     QString commandStatus = QStringLiteral("尚未发送命令");
+    AudioUartFrame latestAudio;
+    quint64 audioValid = 0, audioMissing = 0, audioDuplicates = 0;
+    qint64 lastAudioFrameMs = -1;
+    bool audioIdentified = false;
+    bool audioPending = false, audioQueued = false, audioAwaitingReply = false, audioConfirmationQuery = false;
+    AudioUartCommand audioCommand;
+    qint64 audioCommandMs = -1, audioNextQueryMs = -1;
+    quint16 audioBaseCommands = 0;
+    int audioPreservedChannel = -1;
+    QString audioCommandStatus = QStringLiteral("请先查询板端监听或奇偶增益");
 
     bool current(qint64 now) const;
     QString commandBlock(char command, qint64 now) const;
     bool request(char command, qint64 now);
     char takeCommand(qint64 now);
+    void commandWritten(qint64 now);
+    bool audioCurrent(qint64 now) const;
+    QString audioCommandBlock(const AudioUartCommand &command, qint64 now) const;
+    bool requestAudio(const AudioUartCommand &command, qint64 now);
+    QByteArray takeAudioCommand(qint64 now);
+    void audioCommandWritten(qint64 now);
+    void failAudioCommand(const QString &reason);
+    // After byte loss, never join an old prefix with a different frame's suffix.
+    void receiveDiscontinuity(const QString &reason);
     void feed(const QByteArray &data, qint64 now);
     void tick(qint64 now);
     void failCommand(const QString &reason);
@@ -58,6 +81,7 @@ struct Sys3Session
     QJsonObject json(qint64 now) const;
 private:
     void accept(const Sys3Frame &frame, qint64 now);
+    void acceptAudio(const AudioUartFrame &frame, qint64 now);
     QByteArray m_buffer;
     bool m_discarding = false;
 };

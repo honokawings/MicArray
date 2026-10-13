@@ -19,6 +19,8 @@ public:
     void open(const QString &port);
     void close();
     bool send(char command);
+    bool sendAudio(const AudioUartCommand &command);
+    void setCaptureBusy(bool busy);
     bool running() const;
     Sys3Session snapshot() const;
     qint64 now() const { return m_clock.elapsed(); }

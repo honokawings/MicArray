@@ -18,11 +18,12 @@ ChannelGrid::ChannelGrid(QWidget *parent) : QWidget(parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setFocusPolicy(Qt::StrongFocus);
     setAccessibleName(QStringLiteral("128 通道电平矩阵"));
-    setToolTip(QStringLiteral("DATA/LR 索引排列，不代表物理坐标。点击或方向键选择通道，Home/End 跳至首末通道。停止或超时后，灰色数值仅为历史电平。"));
+    setToolTip(QStringLiteral("DATA/LR 索引排列，不代表物理坐标。点击或方向键选择通道，Home/End 跳至首末通道。× 为已屏蔽通道，保留电平但不参与质量阻断。停止或超时后，灰色数值仅为历史电平。"));
 }
 void ChannelGrid::setData(const PipelineSnapshot &snapshot, int selected)
 {
     m_quality = snapshot.quality; m_selected = std::clamp(selected, 0, Channels - 1); m_hasData = !snapshot.latestHeader.isEmpty();
+    m_disabled = snapshot.disabledProcessingChannels;
     m_fresh = snapshot.listening && snapshot.lastPacketAgeMs >= 0 && snapshot.lastPacketAgeMs < 1500;
     setAccessibleDescription(QStringLiteral("当前通道 %1，%2").arg(m_selected).arg(!m_hasData ? QStringLiteral("等待数据") : m_fresh ? QStringLiteral("实时电平") : QStringLiteral("历史电平")));
     update();
@@ -39,11 +40,13 @@ void ChannelGrid::paintEvent(QPaintEvent *)
         QColor color = QColor::fromHsvF((1 - value) * 0.60, 0.60, 0.23 + value * 0.55);
         if (!m_hasData || !m_fresh) color = QColor("#283744");
         if (m_fresh && q.clipped) color = QColor("#a44238");
+        if (m_disabled[ch]) color = QColor("#283744");
         p.setBrush(color);
         p.setPen(QPen(ch == m_selected ? QColor("#ffe18d") : QColor("#304456"), ch == m_selected ? 2.5 : 0.7));
         p.drawRoundedRect(box, 4, 4);
         p.setPen(Qt::white);
-        p.drawText(box, Qt::AlignCenter, QStringLiteral("%1\n%2").arg(ch).arg(m_hasData ? QString::number(q.rmsDb, 'f', 0) : QStringLiteral("—")));
+        p.drawText(box, Qt::AlignCenter, QStringLiteral("%1%2\n%3").arg(ch).arg(m_disabled[ch] ? QStringLiteral(" ×") : QString())
+            .arg(m_hasData ? QString::number(q.rmsDb, 'f', 0) : QStringLiteral("—")));
     }
     if (hasFocus()) { p.setBrush(Qt::NoBrush); p.setPen(QPen(QColor("#46bea5"), 2)); p.drawRect(rect().adjusted(1, 1, -1, -1)); }
 }
@@ -111,6 +114,7 @@ FieldView::FieldView(QWidget *parent) : QWidget(parent)
     setFocusPolicy(Qt::StrongFocus);
 }
 void FieldView::setImage(const QImage &image) { m_image = image; update(); }
+void FieldView::setFusionDetections(const QVector<FusionDetection> &detections) { m_fusion = detections; update(); }
 void FieldView::setCameraView(const CameraViewSettings &camera) { m_camera = camera; update(); }
 void FieldView::setTargets(const std::array<ScanDirection, 3> &targets, bool show, int active)
 {
@@ -122,10 +126,11 @@ void FieldView::setResponse(const LocalizationResult &result, double focus)
     m_result = result;
     if (result.heat.size() != result.columns * result.rows || result.heat.isEmpty()) { m_heat = {}; update(); return; }
     m_heat = QImage(result.columns, result.rows, QImage::Format_ARGB32_Premultiplied);
+    const bool trusted = result.trusted || std::any_of(result.sources.cbegin(), result.sources.cend(), [](const auto &source) { return source.trusted; });
     for (int y = 0; y < result.rows; ++y) for (int x = 0; x < result.columns; ++x) {
         const double value = std::pow(std::clamp(double(result.heat[y * result.columns + x]), 0.0, 1.0), focus);
-        const double mapped = result.trusted ? value : value * 0.38;
-        QColor color = QColor::fromHsvF((1 - mapped) * 0.67, 0.90, 1.0, 0.05 + value * (result.trusted ? 0.50 : 0.23));
+        const double mapped = trusted ? value : value * 0.38;
+        QColor color = QColor::fromHsvF((1 - mapped) * 0.67, 0.90, 1.0, 0.05 + value * (trusted ? 0.50 : 0.23));
         m_heat.setPixelColor(x, y, color);
     }
     update();
@@ -156,12 +161,27 @@ void FieldView::paintEvent(QPaintEvent *)
         if (!projection.inView) return QPointF(-1000, -1000);
         return QPointF(box.x() + projection.normalizedPoint.x() * box.width(), box.y() + projection.normalizedPoint.y() * box.height());
     };
-    if (m_result.trusted) {
-        const QPointF center = point(m_result.direction);
+    auto drawSource = [&](const ScanDirection &direction, const QString &name) {
+        const QPointF center = point(direction);
         p.setPen(QPen(QColor("#ffe69b"), 2)); p.drawEllipse(center, 13, 13);
         p.drawLine(center + QPointF(-22, 0), center + QPointF(22, 0));
         p.drawLine(center + QPointF(0, -22), center + QPointF(0, 22));
+        p.drawText(center + QPointF(16, -16), name);
+    };
+    if (m_result.sources.isEmpty() && m_result.trusted) drawSource(m_result.direction, "S1");
+    for (int i = 0; i < m_result.sources.size(); ++i)
+        if (m_result.sources[i].trusted) drawSource(m_result.sources[i].direction, QStringLiteral("S%1").arg(i + 1));
+    p.save(); p.setClipRect(box); p.setBrush(Qt::NoBrush);
+    for (int i = 0; i < m_fusion.size(); ++i) {
+        const auto &detection = m_fusion[i];
+        const QRectF bounds(box.x() + detection.box.x() * box.width(), box.y() + detection.box.y() * box.height(),
+            detection.box.width() * box.width(), detection.box.height() * box.height());
+        const QPointF source(box.x() + detection.sourcePoint.x() * box.width(), box.y() + detection.sourcePoint.y() * box.height());
+        p.setPen(QPen(QColor("#6ef6fb"), 2, Qt::DashLine)); p.drawRect(bounds);
+        p.setPen(QPen(QColor("#6ef6fb"), 2)); p.drawEllipse(source, 5, 5);
+        p.drawText(source + QPointF(8, 18), QStringLiteral("Y%1 · 仿真模型").arg(i + 1));
     }
+    p.restore();
     if (m_showTargets) {
         const QColor colors[] {QColor("#75efb8"), QColor("#ffb660"), QColor("#dba3ff")};
         const QStringList names {"A", "B1", "B2"};

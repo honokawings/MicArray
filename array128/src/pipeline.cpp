@@ -17,14 +17,71 @@
 
 namespace MicArray::Array128 {
 
+namespace {
+quint32 effectiveAcousticFaults(quint32 latchedFlags, const std::array<bool, Channels> &clipped,
+                               const std::array<bool, Channels> &disabled)
+{
+    // M128 bit0 is aggregate/sticky, with no channel attribution. Keep it in
+    // diagnostics, but base the channel quality gate on observed PCM endpoints.
+    // Queue/schedule/framing/selftest faults are global and cannot be masked.
+    quint32 faults = latchedFlags & (ErrorFlags & ~quint32(1));
+    for (int ch = 0; ch < Channels; ++ch) if (clipped[ch] && !disabled[ch]) faults |= 1;
+    return faults;
+}
+
+QString acousticDataStatus(const PipelineSnapshot &status, bool geometryValid)
+{
+    if (status.flags & 0x10) return QStringLiteral("数字自测：禁止定位和波束降噪");
+    if (status.acousticFaultFlags()) return status.acousticFaultReason();
+    if (!geometryValid) return QStringLiteral("等待导入真实 128 阵元坐标");
+    return status.latchedFlags & 1 ? QStringLiteral("实采流；设备曾饱和，未屏蔽通道未见满量程削顶")
+        : QStringLiteral("实采流，可用于声学处理");
+}
+}
+
+quint32 PipelineSnapshot::acousticFaultFlags() const
+{
+    return effectiveAcousticFaults(latchedFlags, clippedChannels, disabledProcessingChannels);
+}
+
+QString PipelineSnapshot::acousticFaultReason() const
+{
+    const auto faults = acousticFaultFlags();
+    if (faults & ~quint32(1)) {
+        QStringList reasons;
+        if (faults & 2) reasons.append(QStringLiteral("队列溢出"));
+        if (faults & 4) reasons.append(QStringLiteral("调度异常"));
+        if (faults & 8) reasons.append(QStringLiteral("打包异常"));
+        if (faults & 0x20) reasons.append(QStringLiteral("自测失败"));
+        return QStringLiteral("会话全局故障（%1）：通道屏蔽无法排除，请排查并重新接收").arg(reasons.join(QStringLiteral("、")));
+    }
+    if (faults & 1) {
+        QStringList channels;
+        int count = 0;
+        for (int ch = 0; ch < Channels; ++ch) if (clippedChannels[ch] && !disabledProcessingChannels[ch]) {
+            ++count;
+            if (channels.size() < 8) channels.append(QStringLiteral("CH%1").arg(ch));
+        }
+        return QStringLiteral("未屏蔽通道削顶（%1%2，共 %3 路）：请屏蔽故障通道或排查后重新接收")
+            .arg(channels.join(QStringLiteral("、")), count > 8 ? QStringLiteral("…") : QString()).arg(count);
+    }
+    return {};
+}
+
 QJsonObject PipelineSnapshot::json() const
 {
-    QJsonArray channels;
+    QJsonArray channels, disabled, sources, faultChannels;
+    for (int ch = 0; ch < Channels; ++ch) if (disabledProcessingChannels[ch]) disabled.append(ch);
+    for (int ch = 0; ch < Channels; ++ch) if (clippedChannels[ch] && !disabledProcessingChannels[ch]) faultChannels.append(ch);
+    for (const auto &source : localization.sources) sources.append(QJsonObject{
+        {"azimuth_deg", source.direction.azimuthDegrees}, {"elevation_deg", source.direction.elevationDegrees},
+        {"confidence", source.confidence}, {"relative_response", source.relativePower}, {"trusted", source.trusted}});
     for (int ch = 0; ch < Channels; ++ch) {
         const auto &q = quality[ch];
         channels.append(QJsonObject {{"channel", ch}, {"data_lane", ch / 2}, {"lr", ch % 2 ? "VDD" : "GND"},
             {"clock_group", QJsonValue(QJsonValue::Null)}, {"connector", dataConnector(ch)},
-            {"io_bank", dataBank(ch)}, {"fpga_pad", dataPin(ch)},
+            {"io_bank", dataBank(ch)}, {"fpga_pad", dataPin(ch)}, {"excluded_from_processing", disabledProcessingChannels[ch]},
+            {"excluded_from_quality_gate", disabledProcessingChannels[ch]}, {"pcm_saturation_latched", clippedChannels[ch]},
             {"rms_dbfs", q.rmsDb}, {"ac_rms_dbfs", q.acRmsDb},
             {"peak_dbfs", q.peakDb}, {"dc_full_scale", q.dc}, {"clipped", QString::number(q.clipped)},
             {"zeros", QString::number(q.zeros)}, {"unchanged_adjacent", QString::number(q.unchanged)}});
@@ -38,9 +95,16 @@ QJsonObject PipelineSnapshot::json() const
         {"analysis_windows_replaced", QString::number(analysisReplaced)}, {"monitor_samples_dropped", QString::number(monitorDrops)},
         {"runs", QString::number(runs)}, {"epoch", QString::number(epoch)}, {"flags", int(flags)},
         {"latched_flags", int(latchedFlags)}, {"packet_rate", packetRate}, {"udp_bytes_per_second", byteRate},
+        {"acoustic_fault_flags", int(acousticFaultFlags())}, {"acoustic_fault_channels", faultChannels},
         {"packet_sequence", packetSequence}, {"frame_sequence", frameSequence},
         {"discontinuities", QString::number(discontinuities)}, {"selftest", selftest.json()},
         {"acoustic_status", acousticStatus}, {"channels", channels}, {"error", error},
+        {"disabled_processing_channels", disabled},
+        {"srp_localization", QJsonObject{{"generation", QString::number(localization.generation)},
+            {"run", QString::number(localization.run)}, {"last_frame", QString::number(localization.lastFrame)},
+            {"host_observation_time_ns", QString::number(localization.observationTimeNs)},
+            {"sources", sources}, {"valid_channels", localization.validChannels}, {"valid_pairs", localization.validPairs},
+            {"elapsed_ms", localization.elapsedMs}, {"reason", localization.reason}}},
         {"hardware_reference", hardwareReference()},
         {"unobservable", "UDP has no PHY/PLL/ARP telemetry; separately connected SYS3 UART reports these with per-domain freshness. Voltage, clock loads and acoustics require external validation."}};
 }
@@ -69,6 +133,7 @@ struct Pipeline::State
     ProcessingSettings pendingSettings;
     quint64 pendingRun = 0, pendingFrame = 0;
     quint64 acousticToken = 0, pendingToken = 0;
+    qint64 pendingObservationNs = -1;
 
     State()
     {
@@ -79,18 +144,22 @@ struct Pipeline::State
                 QVector<QVector<float>> window;
                 ProcessingSettings config;
                 quint64 run, frame, token;
+                qint64 observationNs;
                 {
                     QMutexLocker lock(&mutex);
                     while (pendingWindow.isEmpty() && !quitAnalysis) analysisReady.wait(&mutex);
                     if (quitAnalysis) break;
                     window = std::move(pendingWindow); pendingWindow.clear();
                     config = pendingSettings; run = pendingRun; frame = pendingFrame; token = pendingToken;
+                    observationNs = pendingObservationNs;
                 }
                 auto result = localize(window, config);
                 result.run = run; result.lastFrame = frame;
+                result.observationTimeNs = observationNs;
                 QMutexLocker lock(&mutex);
                 if (!stopping && config.generation == settings.generation && run == status.runs && token == acousticToken
-                    && !(status.latchedFlags & ErrorFlags) && !(status.flags & 0x10)) status.localization = result;
+                    && config.disabledChannels == settings.disabledChannels
+                    && !status.acousticFaultFlags() && !(status.flags & 0x10)) status.localization = result;
             }
         }));
         analysisThread->setObjectName("M128Localization");
@@ -165,6 +234,7 @@ struct Pipeline::State
         std::array<double, Channels> sum {}, sumSquare {}, peak {};
         std::array<qint32, Channels> previousSample {};
         std::array<ChannelQuality, Channels> quality;
+        std::array<bool, Channels> clippedChannels {};
         quint64 qualityFrames = 0;
         quint64 observed = 0, discontinuities = 0, stale = 0;
         QElapsedTimer publish; publish.start();
@@ -232,7 +302,7 @@ struct Pipeline::State
                     continue;
                 }
                 if (!hasPrevious || newEpoch || idleRestart || packet.selftest() != lastSelftest) {
-                    ++run; epoch = packet.epoch; latched = 0; packets = {}; frames = {};
+                    ++run; epoch = packet.epoch; latched = 0; clippedChannels = {}; packets = {}; frames = {};
                     audit = SelftestAudit(selftestReference()); baselineDrops = drops;
                     hasPrevious = false; quality = {}; qualityFrames = 0; sum = {}; sumSquare = {}; peak = {};
                     clearAcoustic();
@@ -243,10 +313,23 @@ struct Pipeline::State
                     || event == SequenceTracker::Event::BeforeStart || event == SequenceTracker::Event::CapacityExceeded;
                 if (hasPrevious && !packetContinuous) { ++discontinuities; clearAcoustic(); }
                 latched |= packet.flags & ErrorFlags;
+                // Inspect the entire packet before admitting any frame into DSP.
+                // A clip in its final channel/frame must invalidate earlier work
+                // immediately, not when throttled quality statistics are published.
+                if (!packet.selftest()) for (int r = 0; r < FramesPerPacket; ++r) for (int ch = 0; ch < Channels; ++ch) {
+                    const auto sample = packet.sample(r, ch);
+                    clippedChannels[ch] = clippedChannels[ch] || sample == -8388608 || sample == 8388607;
+                }
+                {
+                    QMutexLocker lock(&mutex);
+                    status.flags = packet.flags; status.latchedFlags = latched; status.clippedChannels = clippedChannels;
+                }
                 audit.observe(packet, packetContinuous, drops != baselineDrops);
                 capture.append({packet, datagram.arrivalNs, run, packetContinuous && hasPrevious});
-                const bool usable = !packet.selftest() && !latched && !oldPacket;
-                if (!usable && !block[0].isEmpty()) clearAcoustic();
+                const bool usable = !packet.selftest() && !effectiveAcousticFaults(latched, clippedChannels, config.disabledChannels) && !oldPacket;
+                // A completed 512-sample block can be empty while an analysis
+                // window/result is still live. A fault must invalidate both.
+                if (!usable && (!block[0].isEmpty() || !window[0].isEmpty())) clearAcoustic();
                 for (int r = 0; r < 3; ++r) {
                     frames.observe(packet.frameIds[r]);
                     if (r && packet.frameIds[r] != packet.frameIds[r - 1] + 1) { ++discontinuities; clearAcoustic(); }
@@ -274,9 +357,12 @@ struct Pipeline::State
                         }
                         if (config.localization && window[0].size() == 2048 && packet.frameIds[r] - lastAnalysisFrame >= 4800) {
                             QMutexLocker lock(&mutex);
-                            if (!pendingWindow.isEmpty()) ++status.analysisReplaced;
-                            pendingWindow = window; pendingSettings = config; pendingRun = run; pendingFrame = packet.frameIds[r]; pendingToken = acousticToken;
-                            lastAnalysisFrame = packet.frameIds[r]; analysisReady.wakeOne();
+                            if (applied == revision) {
+                                if (!pendingWindow.isEmpty()) ++status.analysisReplaced;
+                                pendingWindow = window; pendingSettings = config; pendingRun = run; pendingFrame = packet.frameIds[r]; pendingToken = acousticToken;
+                                pendingObservationNs = qint64(datagram.arrivalNs) - qint64((1023.5 + 2 - r) * 1e9 / 48000.0);
+                                lastAnalysisFrame = packet.frameIds[r]; analysisReady.wakeOne();
+                            }
                         }
                     }
                 }
@@ -290,9 +376,7 @@ struct Pipeline::State
                     status.flags = packet.flags; status.latchedFlags = latched;
                     status.sequence = packet.sequence; status.frame = lastFrame;
                     status.latestHeader = packet.bytes.first(40);
-                    status.acousticStatus = packet.selftest() ? QStringLiteral("数字自测：禁止定位和波束降噪")
-                        : latched ? QStringLiteral("本会话有质量故障：已隔离声学处理")
-                        : !config.geometry.valid() ? QStringLiteral("等待导入真实 128 阵元坐标") : QStringLiteral("实采流，可用于声学处理");
+                    status.acousticStatus = acousticDataStatus(status, settings.geometry.valid());
                 }
             }
             recorder.enqueue(capture);
@@ -347,6 +431,7 @@ void Pipeline::start(const NetworkSettings &settings)
     stop();
     auto &s = *m_state;
     { QMutexLocker lock(&s.mutex); s.status = PipelineSnapshot(); s.status.selftest = SelftestAudit(selftestReference());
+        s.status.disabledProcessingChannels = s.settings.disabledChannels;
         s.queue.clear(); s.lastArrivalNs = -1; s.lastSourceArrivalNs = -1; s.stopping = false; }
     s.processingThread.reset(QThread::create([&s] { s.process(); }));
     s.networkThread.reset(QThread::create([&s, settings] { s.receive(settings); }));
@@ -378,6 +463,7 @@ void Pipeline::configure(const ProcessingSettings &settings)
     QMutexLocker lock(&s.mutex);
     const bool directionsOnly = onlyDirectionChange(s.settings, settings);
     s.settings = settings;
+    s.status.disabledProcessingChannels = settings.disabledChannels;
     s.settings.monitorChannel = std::clamp(settings.monitorChannel, 0, 127);
     s.settings.bufferMs = std::clamp(settings.bufferMs, 50, 1000);
     auto order = settings.postOrder;
@@ -385,6 +471,8 @@ void Pipeline::configure(const ProcessingSettings &settings)
     if (order != QVector<int>({0, 1, 2})) s.settings.postOrder = {0, 1, 2};
     ++s.revision;
     if (!directionsOnly) { s.status.localization = {}; s.pendingWindow.clear(); s.monitor.clear(); ++s.acousticToken; }
+    if (s.status.listening && s.lastArrivalNs >= 0 && s.clock.nsecsElapsed() - s.lastArrivalNs < 1500000000ll)
+        s.status.acousticStatus = acousticDataStatus(s.status, settings.geometry.valid());
 }
 
 PipelineSnapshot Pipeline::snapshot() const
@@ -392,9 +480,15 @@ PipelineSnapshot Pipeline::snapshot() const
     const auto &s = *m_state;
     QMutexLocker lock(&s.mutex);
     auto status = s.status;
+    status.disabledProcessingChannels = s.settings.disabledChannels;
     status.lastPacketAgeMs = s.lastArrivalNs < 0 ? -1 : (s.clock.nsecsElapsed() - s.lastArrivalNs) / 1000000;
     status.lastSourceDatagramAgeMs = s.lastSourceArrivalNs < 0 ? -1 : (s.clock.nsecsElapsed() - s.lastSourceArrivalNs) / 1000000;
     return status;
+}
+
+qint64 Pipeline::monotonicNowNs() const
+{
+    return m_state->clock.nsecsElapsed(); // Clock is initialized once and never restarted.
 }
 
 QByteArray Pipeline::takeMonitorPcm()
