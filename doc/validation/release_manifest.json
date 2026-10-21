@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "version": "StreamFix-R2-20261021",
+  "runtime_files": [
+    {
+      "path": "pl.bit",
+      "bytes": 13321503,
+      "sha256": "e0a4298b8958d2cff9ca819daba96b48c9a254b7c20c606b9b60e055383cb22f"
+    },
+    {
+      "path": "README.md",
+      "bytes": 1478,
+      "sha256": "1c7a8aa97b223c1b6325d0287fde468cc11a900e14feb0e4c7308c3de2201b84"
+    },
+    {
+      "path": "上位机/avcodec-61.dll",
+      "bytes": 15974200,
+      "sha256": "9b169979689a91951fdf4ac402f0fc621642327b15c0a14d3f247eaada08f726"
+    },
+    {
+      "path": "上位机/avformat-61.dll",
+      "bytes": 3566392,
+      "sha256": "6de09e4fb59f11d0c461023ec1b7bf4b5dd1132e677ad46f0fc2bfbc2fa45e8b"
+    },
+    {
+      "path": "上位机/avutil-59.dll",
+      "bytes": 1052984,
+      "sha256": "971d4e45a1edb27a6abd0575917da0dd5df58d1687e3cb00b683ab25ff96707a"
+    },
+    {
+      "path": "上位机/D3Dcompiler_47.dll",
+      "bytes": 4173928,
+      "sha256": "e994847e01a6f1e4cbdc5a864616ac262f67ee4f14db194984661a8d927ab7f4"
+    },
+    {
+      "path": "上位机/generic/qtuiotouchplugin.dll",
+      "bytes": 99688,
+      "sha256": "9f0842a47971747be0e1ffac7cc545174981f1e97110814e7118f50c4e1f24c1"
+    },
+    {
+      "path": "上位机/iconengines/qsvgicon.dll",
+      "bytes": 75112,
+      "sha256": "640f492983b02bc4bc9f70318ef9a6d40dbd6bba552d8ff7b59352f8ceb6caf8"
+    },
+    {
+      "path": "上位机/imageformats/qgif.dll",
+      "bytes": 49000,
+      "sha256": "584472c6231b7de2412f666ac99a6f1663de12a9e06c581c34bec9549044eea3"
+    },
+    {
+      "path": "上位机/imageformats/qico.dll",
+      "bytes": 50024,
+      "sha256": "2e90c215173cd2d89b91073d9988d2d7c76758d2e2671d96c9c85c60294f9b22"
+    },
+    {
+      "path": "上位机/imageformats/qjpeg.dll",
+      "bytes": 644968,
+      "sha256": "b5c4ff62d0bf9e28d235de6040f2bd03b9245d1d9715f8830af4745bd8fa63ba"
+    },
+    {
+      "path": "上位机/imageformats/qsvg.dll",
+      "bytes": 39784,
+      "sha256": "41ddead62ab516d931b2ab743885cd53d9be78523ec877295f6ca8276e43c677"
+    },
+    {
+      "path": "上位机/libgcc_s_seh-1.dll",
+      "bytes": 109056,
+      "sha256": "5e27589147caa6d7a30f4cc058a14c455dc62233901ffff9a1797ede425e9f86"
+    },
+    {
+      "path": "上位机/libstdc++-6.dll",
+      "bytes": 2243072,
+      "sha256": "8013488c5528bad7966ca07f3ea2e7a9b743cacb258fe76b46a326f821cc83b0"
+    },
+    {
+      "path": "上位机/libwinpthread-1.dll",
+      "bytes": 53248,
+      "sha256": "c7c7dced65fff71c7bb61f80c771c562f533d26d72722d9d6091129a3b03d5ce"
+    },
+    {
+      "path": "上位机/MicArray.exe",
+      "bytes": 2504717,
+      "sha256": "028897a6e262f97777433173c869993a7fe074833f62b619a8e17ec5eedbb47e"
+    },
+    {
+      "path": "上位机/multimedia/ffmpegmediaplugin.dll",
+      "bytes": 659816,
+      "sha256": "6d1153a585dd1a60d8b792886ce4699504cfee65147ee322ca86965e6a430225"
+    },
+    {
+      "path": "上位机/multimedia/windowsmediaplugin.dll",
+      "bytes": 417640,
+      "sha256": "6d02d031af46cf7b4dea64b1036e98e2e89c7296be0d93e5773eccfe0522857d"
+    },
+    {
+      "path": "上位机/networkinformation/qnetworklistmanager.dll",
+      "bytes": 100712,
+      "sha256": "40837490633dfc36a340dd2bec4ced640ccd5d27e3de86649a6a54040f8fff31"
+    },
+    {
+      "path": "上位机/opengl32sw.dll",
+      "bytes": 20639888,
+      "sha256": "b04de4541863bc7d8879040a78889c4849c1b1da2784c4630f734c146c2998ce"
+    },
+    {
+      "path": "上位机/platforms/qwindows.dll",
+      "bytes": 1272168,
+      "sha256": "804739071bba619b4a4312b5bb29a142545a64c4c80218e5b2e6672ad33ee8ac"
+    },
+    {
+      "path": "上位机/qt.conf",
+      "bytes": 30,
+      "sha256": "e6047c864b52bc6648ecd2c44629751a10c148b05f743d425f97fb6305cc9640"
+    },
+    {
+      "path": "上位机/Qt6Charts.dll",
+      "bytes": 1920856,
+      "sha256": "9da13f446a8ce4c798a712c757ae7d27d192daa38a437b1e25669141821ec1c4"
+    },
+    {
+      "path": "上位机/Qt6Concurrent.dll",
+      "bytes": 37208,
+      "sha256": "b7c86968ef27b4dc8d1547525f137b970930ea9c61e21f6dcb8cd04007f1030c"
+    },
+    {
+      "path": "上位机/Qt6Core.dll",
+      "bytes": 11309920,
+      "sha256": "10758b858b9985bfbfe70b7459bf5dbbdaf9874120e41c080c067d99e1cbd8e6"
+    },
+    {
+      "path": "上位机/Qt6Gui.dll",
+      "bytes": 11544920,
+      "sha256": "94e1a542e7c10d4c3b816ef43ccedd5b799fbdbec1a96cbc7a25dd8dcd1e6f9e"
+    },
+    {
+      "path": "上位机/Qt6Multimedia.dll",
+      "bytes": 1393496,
+      "sha256": "d45968b53ea2b1776252427ba2424c1e5887644045af3679444946757eb06d97"
+    },
+    {
+      "path": "上位机/Qt6Network.dll",
+      "bytes": 1987928,
+      "sha256": "2914e75fd9f187c0606a07f45c842330bf32a8ad259f57d76908d84ef58bceac"
+    },
+    {
+      "path": "上位机/Qt6OpenGL.dll",
+      "bytes": 605528,
+      "sha256": "1c6f6e528b4ab8aff4538115b27de169a48b766f2f98d87c6106423ea40c9c79"
+    },
+    {
+      "path": "上位机/Qt6OpenGLWidgets.dll",
+      "bytes": 64344,
+      "sha256": "2b3125569e7c988e40ddb99a7a6209580ca18dcbc8068abfd2c452b554ff2f31"
+    },
+    {
+      "path": "上位机/Qt6Svg.dll",
+      "bytes": 635224,
+      "sha256": "89a32215a10c1c25fe7f0022ea77d6ab6128c8bfac0e30ab144f2e4312b860f6"
+    },
+    {
+      "path": "上位机/Qt6Widgets.dll",
+      "bytes": 7199064,
+      "sha256": "d345e3d7d693fa0150cb03a12112b6a3f27213bb59929bae2f5179b6fabf6d0b"
+    },
+    {
+      "path": "上位机/settings/MicArrayPLFullV3Trial/MicArray.ini",
+      "bytes": 991,
+      "sha256": "3b96ebc8f4f0bdcc09d03ee10f83cfcb0dc20222440f9cffb42be6ee74f9b7f0"
+    },
+    {
+      "path": "上位机/styles/qmodernwindowsstyle.dll",
+      "bytes": 257384,
+      "sha256": "497e0721d72f1bc09a6ef30498b2d1889abbf0e38e9d566658325ba9d300fa5a"
+    },
+    {
+      "path": "上位机/swresample-5.dll",
+      "bytes": 134456,
+      "sha256": "d64d3f03732606f805f45e3e70570d3bcd56c38f1877b7703fd3a7d30d6f84b0"
+    },
+    {
+      "path": "上位机/swscale-8.dll",
+      "bytes": 662328,
+      "sha256": "d308172f0b721b5863db20b7c5a0f9a1a053a9de570537611505e74b62e4acdc"
+    },
+    {
+      "path": "上位机/tls/qcertonlybackend.dll",
+      "bytes": 111464,
+      "sha256": "09027d005cbf80fcfaa33c85c57359ff8c5df9b79fdba1a212862788141f1dea"
+    },
+    {
+      "path": "上位机/tls/qschannelbackend.dll",
+      "bytes": 281960,
+      "sha256": "d56b8fc096460ce012626d54affd553976968a6549a816e216a13415733e5cda"
+    }
+  ],
+  "assets": [
+    {
+      "name": "MicArray-PLDenoise-Routed-Recovery-20261021.zip",
+      "bytes": 151701246,
+      "sha256": "f31c1c72bc4d751ee1809157afdeb8541252635ddcfc1c7fbae5850c314daec3"
+    },
+    {
+      "name": "MicArray-PLDenoise-StreamFix-R2-Windows-x64-20261021.zip",
+      "bytes": 42404864,
+      "sha256": "b905156c21da5841f7eee435ff076b06a8f1b43bed6ac0349501ef413624e852"
+    }
+  ]
+}

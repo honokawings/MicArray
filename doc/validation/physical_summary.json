@@ -1,0 +1,49 @@
+{
+  "scope": "Frozen complete routed Stage3 design, not incremental denoise-only usage.",
+  "part": "xc7z035ffg676-2",
+  "clock_mhz": 100,
+  "resources": {
+    "LUT": {
+      "used": 163976,
+      "available": 171900
+    },
+    "FF": {
+      "used": 128777,
+      "available": 343800
+    },
+    "BRAM36_equivalent": {
+      "used": 498,
+      "available": 500
+    },
+    "DSP": {
+      "used": 711,
+      "available": 900
+    }
+  },
+  "setup_wns_ns": 0.006,
+  "hold_whs_ns": 0.006,
+  "drc_errors": 0,
+  "unresolved_blackboxes": 0,
+  "bus_skew_checks": 32,
+  "bus_skew_violations": 0,
+  "bit_sha256": "e0a4298b8958d2cff9ca819daba96b48c9a254b7c20c606b9b60e055383cb22f",
+  "routed_dcp_sha256": "bc27f50b61143551cb40ec3bb5102da9c141b8dc52a916e6e9236bd28242c4b8",
+  "original_reports": [
+    {
+      "name": "utilization.rpt",
+      "sha256": "9b9b6ed8c5da34d421b18af2a33fc280ea6bb6a75a1863584d2e4298ead73cba"
+    },
+    {
+      "name": "timing_summary.rpt",
+      "sha256": "5c411f3cd3e1b8f0a7de45793364f0d689c1351bb8db3e12b74c121f144c78ba"
+    },
+    {
+      "name": "drc.rpt",
+      "sha256": "9a162bce523c242c8d2a86a6879b5e2cd6870534f16a4b131ff7095beac8885c"
+    },
+    {
+      "name": "bus_skew.rpt",
+      "sha256": "3958eb201f9f2511e3a1015582db4f6453e34658fe0040af4f790fa9a7f6edb2"
+    }
+  ]
+}

@@ -12,6 +12,7 @@ AudioProcessor::AudioProcessor(QObject *parent)
 {
     qRegisterMetaType<GainConfiguration>("MicArray::GainConfiguration");
     qRegisterMetaType<GainSnapshot>("MicArray::GainSnapshot");
+    qRegisterMetaType<PlLocationResult>("MicArray::PlLocationResult");
     configure(AudioSettings {});
 }
 
@@ -65,10 +66,42 @@ void AudioProcessor::processPcmFrame(const QByteArray &payload, quint32 timestam
     emit levelChanged(m_peakLevel, m_bytesReceived, timestampSeconds, timestampMicros);
 }
 
+void AudioProcessor::resetSpatialMaps(quint64 epoch)
+{
+    m_spatialEpoch = epoch;
+    m_spatialAssembler.reset();
+}
+
 void AudioProcessor::processArrayFrame(const QByteArray &payload, quint32 timestampSeconds, quint32 timestampMicros)
 {
     m_bytesReceived += payload.size();
-    const GainProcessResult adjusted = m_gainProcessor.process(payload, m_format.sampleRate());
+    const auto sideband = AudioLocationSidebandDecoder::decode(payload, timestampSeconds, timestampMicros);
+    if (!sideband.valid) {
+        ++m_droppedFrames;
+        emit audioWarning(sideband.error);
+        emit frameProcessed(false);
+        return;
+    }
+    for (const QString &warning : sideband.warnings) {
+        emit audioWarning(warning);
+    }
+    for (PlLocationResult location : sideband.locations) {
+        location.streamEpoch = m_spatialEpoch;
+        emit plLocationDecoded(location);
+    }
+    QStringList mapWarnings;
+    auto maps = m_spatialAssembler.consume(payload, timestampSeconds, timestampMicros, &mapWarnings);
+    for (PlSpatialMap &map : maps)
+    {
+        map.streamEpoch = m_spatialEpoch;
+        emit plSpatialMapDecoded(map);
+    }
+    for (const QString &warning : mapWarnings)
+    {
+        emit audioWarning(warning);
+    }
+    emit rawFrameReady(sideband.pcmPayload, timestampSeconds, timestampMicros);
+    const GainProcessResult adjusted = m_gainProcessor.process(sideband.pcmPayload, m_format.sampleRate());
     if (!adjusted.valid) {
         ++m_droppedFrames;
         emit audioWarning(adjusted.error);

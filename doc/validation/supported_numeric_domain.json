@@ -1,0 +1,85 @@
+{
+  "status": "SUPPORTED_DOMAIN_BOUNDS_AND_CSIM_PASS",
+  "scope": "exact_ldexp is exact exponent adjustment only for supported finite-normal binary64 intermediates and signed zero; it is not a full-domain IEEE754 ldexp replacement. Unsupported inputs set sticky fault bit1 and return0.",
+  "input_contract": {
+    "samples": "IEEE float32 finite within [-1,1], including signed zero and float subnormals",
+    "float32_min_nonzero_power_of_two": -149,
+    "window": "Unmodified original C++ symmetric Hann2048, with exact exported binary64 constants",
+    "hann_min_nonzero": 2.355394838837732e-06,
+    "hann_max": 0.9999994111509436,
+    "gain": "original LogMMSE gain clamped to binary64 [.1,1]"
+  },
+  "analytical_bounds": {
+    "windowed_nonzero_min_strict_power_of_two": -168,
+    "windowed_abs_max": 1,
+    "first_exp_range": [
+      -168,
+      0
+    ],
+    "normalized_forward_nonzero_min_strict_power_of_two": -170,
+    "normalized_abs_max": 0.5,
+    "unpacked_fft_nonzero_min_power_of_two": -31,
+    "unpacked_fft_abs_upper_strict_power_of_two": 16,
+    "unpacked_fft_bound_scope": "Conservative signed48 output bound, stronger real vendor valid44bit bound is not required. Exact integer/2^31 unpacking.",
+    "restored_forward_nonzero_min_power_of_two": -197,
+    "restored_forward_abs_upper_strict_power_of_two": 18,
+    "reduced_nonzero_min_strict_power_of_two": -201,
+    "second_exp_range": [
+      -201,
+      18
+    ],
+    "normalized_inverse_nonzero_min_strict_power_of_two": -221,
+    "restored_inverse_nonzero_min_power_of_two": -241,
+    "restored_inverse_abs_upper_strict_power_of_two": 25,
+    "all_helper_nonzero_results_exponent_range_conservative": [
+      -241,
+      25
+    ],
+    "binary64_normal_exponent_range": [
+      -1022,
+      1023
+    ],
+    "explanation": "Every nonzero float32 converts exactly to a normal double. Multiplication by nonzero Hann keeps magnitude >2^-168. frexp-style normalization uses the frame maximum exponent and cannot exceed .5. Signed48 FFT words unpack exactly; restoration and gain [.1,1] establish second normalization bounds. Inverse restoration adds second_exp-9. Thus no helper input or target can be double subnormal/nonfinite in this supported domain. Zero takes its explicit signed-zero branch. Quantization may intentionally round tiny normalized values to integer0, as the reference vendor fixed FFT does."
+  },
+  "boundary_tests": {
+    "level": "Csim with real Xilinx bitacc FFT Cmodel; not yet actual RTL boundary-stream evidence",
+    "log": "../logmmse_r4/hls_boundary_csim.log",
+    "helper_checks": 5335126,
+    "scale_test_shifts": [
+      -202,
+      -101,
+      0,
+      101,
+      202
+    ],
+    "special_float32_hex": [
+      "00000000",
+      "80000000",
+      "00000001",
+      "80000001",
+      "007fffff",
+      "00800000",
+      "3f7fffff",
+      "3f800000",
+      "bf800000"
+    ],
+    "quantizer": "ties-to-even at selected Q31 integer boundaries and both IEEE64 nextafter neighbors, positive and negative, independently checked with nearbyint(ldexp(x,31))",
+    "kernel_streams": 7,
+    "hops_each": 5,
+    "kernel_checks": [
+      "numeric_fault zero",
+      "all outputs finite and within [-1,1]",
+      "first2 hops allzero"
+    ],
+    "note": "These tests corroborate the stated domain bounds; sampled tests are not described as an all-IEEE formal proof.",
+    "reuse_scope": "Unchanged exact_ldexp/quantize helper source and original constants; R5 differs only HLS internal RAM/ROM port pragmas. Boundary helper tests were run on R4 code, not claimed as R5 actual RTL."
+  },
+  "continued_fraction": "iteration_bounds.json gives cap55 analytical denominator/rounding bounds and1250000-point corroboration.",
+  "whole_vendor_kernel_conversion_semantics": {
+    "scope": "The bounds above prove exact_ldexp helper supported normal-double exponent adjustment and safe numeric magnitudes, not complete all-IEEE behavior of every vendor operator.",
+    "float32_subnormal_inputs_or_outputs": "Actual selected FPEXT and FPTRUNC IP flush abs<2^-126 to signedzero. Normal real-recording equivalence is independently tested; arbitrary subnormal CPU bit equivalence is not claimed.",
+    "actual_true_vendor_characterization": "[archived-local-evidence]/conversion_semantics.json",
+    "characterization_sha256": "f1fa8dacadfaddf3002b2c10785f2fda01fdcbd1e2dbcf882a310dbffe23005e",
+    "production_unchanged": true
+  }
+}

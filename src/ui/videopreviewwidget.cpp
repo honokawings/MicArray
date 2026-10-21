@@ -1,6 +1,7 @@
 #include "ui/videopreviewwidget.h"
 
 #include <QMouseEvent>
+#include <QPainter>
 #include <QResizeEvent>
 
 namespace MicArray {
@@ -17,6 +18,46 @@ void VideoPreviewWidget::setFrame(const QImage &image)
 {
     m_frame = image;
     refreshPixmap();
+}
+
+void VideoPreviewWidget::setLocationMarker(const QPointF &normalizedPoint, const QString &label)
+{
+    m_locationMarkerPoint = normalizedPoint;
+    m_locationMarkerLabel = label;
+    m_locationMarkerVisible = true;
+    update();
+}
+
+void VideoPreviewWidget::clearLocationMarker()
+{
+    m_locationMarkerVisible = false;
+    update();
+}
+
+void VideoPreviewWidget::paintEvent(QPaintEvent *event)
+{
+    QLabel::paintEvent(event);
+    const QRectF target = videoRect();
+    if (!m_locationMarkerVisible || target.isEmpty())
+    {
+        return;
+    }
+    const QPointF point(target.left() + m_locationMarkerPoint.x() * target.width(),
+                        target.top() + m_locationMarkerPoint.y() * target.height());
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setClipRect(target);
+    painter.setPen(QPen(Qt::white, 2));
+    painter.setBrush(QColor(255, 65, 65, 210));
+    painter.drawEllipse(point, 9, 9);
+    painter.drawLine(point + QPointF(-15, 0), point + QPointF(15, 0));
+    painter.drawLine(point + QPointF(0, -15), point + QPointF(0, 15));
+    QRectF label = painter.boundingRect(target, Qt::AlignLeft, m_locationMarkerLabel);
+    label.moveTopLeft(point + QPointF(13, -label.height() - 8));
+    if (label.right() > target.right()) { label.moveRight(target.right() - 4); }
+    if (label.top() < target.top()) { label.moveTop(target.top() + 4); }
+    painter.fillRect(label.adjusted(-4, -2, 4, 2), QColor(0, 0, 0, 170));
+    painter.drawText(label, Qt::AlignLeft, m_locationMarkerLabel);
 }
 
 QRectF VideoPreviewWidget::videoRect() const

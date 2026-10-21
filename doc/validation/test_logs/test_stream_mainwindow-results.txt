@@ -1,0 +1,14 @@
+********* Start testing of MainWindowPressureTest *********
+Config: Using QtTest library 6.11.1, Qt 6.11.1 (x86_64-little_endian-llp64 shared (dynamic) release build; by GCC 13.1.0), windows 11
+PASS   : MainWindowPressureTest::initTestCase()
+QWARN  : MainWindowPressureTest::sustainedAudio(debug_hidden) QFontDatabase: Cannot find font directory E:/QT/6.11.1/mingw_64/lib/fonts.
+Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
+QWARN  : MainWindowPressureTest::sustainedAudio(debug_hidden) This plugin does not support propagateSizeHints()
+QINFO  : MainWindowPressureTest::sustainedAudio(debug_hidden) [MAINWINDOW_PRESSURE_METRICS] {"actual_float_bits_compared":480000,"debug_renders":0,"debug_visible":false,"frames":2400,"nominal_samples_per_second":48000,"pl_peak_samples":1200,"platform":"offscreen","producer_max_lateness_us":28615,"raw_peak_samples":1000,"samples":480000,"scope":"real_MainWindow_Page_worker_offscreen_widget_render_no_socket_no_audio_backend","slot_completion_only":false,"stage":3,"wall_seconds":10.0128187}
+PASS   : MainWindowPressureTest::sustainedAudio(debug_hidden)
+QWARN  : MainWindowPressureTest::sustainedAudio(debug_visible) This plugin does not support propagateSizeHints()
+QINFO  : MainWindowPressureTest::sustainedAudio(debug_visible) [MAINWINDOW_PRESSURE_METRICS] {"actual_float_bits_compared":480000,"debug_renders":114,"debug_visible":true,"frames":2400,"nominal_samples_per_second":48000,"pl_peak_samples":1400,"platform":"offscreen","producer_max_lateness_us":27806,"raw_peak_samples":1400,"samples":480000,"scope":"real_MainWindow_Page_worker_offscreen_widget_render_no_socket_no_audio_backend","slot_completion_only":false,"stage":3,"wall_seconds":10.0096927}
+PASS   : MainWindowPressureTest::sustainedAudio(debug_visible)
+PASS   : MainWindowPressureTest::cleanupTestCase()
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 20855ms
+********* Finished testing of MainWindowPressureTest *********

@@ -28,6 +28,8 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QProgressBar>
+#include <QPropertyAnimation>
+#include <QPointer>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
@@ -152,6 +154,9 @@ private slots:
     void mainWindowUsesAudioVideoFusionTitle();
     void monitorStatisticsDoNotContainUnlabelledProgressBar();
     void debugPageProvidesPostTailPreview();
+    void hiddenDebugPageDoesNotRenderContinuousFrames();
+    void visibleDebugPageCoalescesToLatestFrame();
+    void debugPreviewRateAndAnimationObjectsAreBounded();
     void recordingPageProvidesChannelSelectionAndCommands();
     void recordingSourceSelectionControlsStartAvailability();
     void recordingRoutesOnlyFramesFromTheActiveSource();
@@ -1563,7 +1568,7 @@ void DashboardTest::
     QVERIFY(fpgaIndex >= 0);
     QVERIFY(raw48Index >= 0);
     QCOMPARE(inputMode->itemText(fpgaIndex),
-             QStringLiteral("FPGA 波束形成通道（CH1/CH2/CH3）"));
+             QStringLiteral("旧设备兼容：预先波束形成的 CH1/CH2/CH3"));
     QCOMPARE(inputMode->itemText(raw48Index),
              QStringLiteral("48 通道软件波束形成（CH0–CH47）"));
     QCOMPARE(reuseCalibration->text(),
@@ -2090,6 +2095,7 @@ void DashboardTest::liveLocalizationPageProvidesCalibrationControls()
 {
     AppSettings settings;
     LiveLocalizationSettings stored;
+    stored.localizationSource = QStringLiteral("host");
     stored.displayMode = QStringLiteral("heatmap");
     stored.heatmapGridColumns = 320;
     stored.heatmapGridRows = 180;
@@ -2820,6 +2826,110 @@ void DashboardTest::debugPageProvidesPostTailPreview()
     auto *postTail = window.findChild<QLabel *>(QStringLiteral("debugPostTailLabel"));
     QVERIFY(postTail != nullptr);
     QVERIFY(postTail->styleSheet().contains(QStringLiteral("monospace")));
+}
+
+void DashboardTest::hiddenDebugPageDoesNotRenderContinuousFrames()
+{
+    MainWindow window;
+    window.show();
+    auto *meta = window.findChild<QLabel *>(QStringLiteral("debugMetaLabel"));
+    QVERIFY(meta != nullptr);
+    const QString original = meta->text();
+    HostFrame frame;
+    frame.type = FrameType::Audio;
+    frame.rawType = static_cast<quint16>(FrameType::Audio);
+    frame.payload = QByteArray(AudioFrameDecoder::FramePayloadBytes, '\0');
+    frame.payloadLength = frame.payload.size();
+    for (quint32 i = 0; i < 600; ++i) {
+        frame.timestampMicros = i;
+        QVERIFY(QMetaObject::invokeMethod(&window, "updateDebugFrame", Qt::DirectConnection,
+                                         Q_ARG(HostFrame, frame)));
+    }
+    QTest::qWait(120);
+    QCOMPARE(window.property("debugFramesReceived").toULongLong(), qulonglong(600));
+    QCOMPARE(window.property("debugFramesRendered").toULongLong(), qulonglong(0));
+    QCOMPARE(meta->text(), original);
+    QCOMPARE(window.findChildren<QPropertyAnimation *>(QStringLiteral("debugOpacityAnimation")).size(), 0);
+}
+
+void DashboardTest::visibleDebugPageCoalescesToLatestFrame()
+{
+    MainWindow window;
+    window.show();
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *debug = window.findChild<QWidget *>(QStringLiteral("advancedFrameDebugPage"));
+    auto *meta = window.findChild<QLabel *>(QStringLiteral("debugMetaLabel"));
+    QVERIFY(tabs != nullptr && debug != nullptr && meta != nullptr);
+    HostFrame frame;
+    frame.type = FrameType::Audio;
+    frame.rawType = static_cast<quint16>(FrameType::Audio);
+    frame.payload = QByteArray(AudioFrameDecoder::FramePayloadBytes, '\0');
+    frame.payloadLength = frame.payload.size();
+    frame.timestampSeconds = 42;
+    for (quint32 i = 0; i < 600; ++i) {
+        frame.timestampMicros = i;
+        QVERIFY(QMetaObject::invokeMethod(&window, "updateDebugFrame", Qt::DirectConnection,
+                                         Q_ARG(HostFrame, frame)));
+    }
+    tabs->setCurrentWidget(debug);
+    QTRY_COMPARE(window.property("debugFramesRendered").toULongLong(), qulonglong(1));
+    QVERIFY(meta->text().contains(QStringLiteral("42.000599")));
+    for (quint32 i = 600; i < 800; ++i) {
+        frame.timestampMicros = i;
+        QVERIFY(QMetaObject::invokeMethod(&window, "updateDebugFrame", Qt::DirectConnection,
+                                         Q_ARG(HostFrame, frame)));
+    }
+    QTRY_COMPARE(window.property("debugFramesRendered").toULongLong(), qulonglong(2));
+    QVERIFY(meta->text().contains(QStringLiteral("42.000799")));
+}
+
+void DashboardTest::debugPreviewRateAndAnimationObjectsAreBounded()
+{
+    MainWindow window;
+    window.show();
+    auto *tabs = window.findChild<QTabWidget *>(QStringLiteral("mainTabs"));
+    auto *debug = window.findChild<QWidget *>(QStringLiteral("advancedFrameDebugPage"));
+    QVERIFY(tabs != nullptr && debug != nullptr);
+    tabs->setCurrentWidget(debug);
+    HostFrame frame;
+    frame.type = FrameType::Audio;
+    frame.rawType = static_cast<quint16>(FrameType::Audio);
+    frame.payload = QByteArray(AudioFrameDecoder::FramePayloadBytes, '\0');
+    frame.payloadLength = frame.payload.size();
+    QVERIFY(QMetaObject::invokeMethod(&window, "updateDebugFrame", Qt::DirectConnection,
+                                     Q_ARG(HostFrame, frame)));
+    QTRY_COMPARE(window.findChildren<QPropertyAnimation *>(QStringLiteral("debugOpacityAnimation")).size(), 7);
+    QVector<QPointer<QPropertyAnimation>> originalAnimations;
+    for (auto *animation : window.findChildren<QPropertyAnimation *>(QStringLiteral("debugOpacityAnimation")))
+        originalAnimations.append(animation);
+    const auto before = window.property("debugFramesRendered").toULongLong();
+    QTimer producer;
+    producer.setTimerType(Qt::PreciseTimer);
+    producer.setInterval(5);
+    connect(&producer, &QTimer::timeout, &window, [&] {
+        ++frame.timestampMicros;
+        QMetaObject::invokeMethod(&window, "updateDebugFrame", Qt::DirectConnection,
+                                  Q_ARG(HostFrame, frame));
+    });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    producer.start();
+    QTest::qWait(650);
+    producer.stop();
+    QVERIFY(window.property("debugFramesReceived").toULongLong() > 20);
+    const auto renders = window.property("debugFramesRendered").toULongLong() - before;
+    QVERIFY(renders <= qulonglong(elapsed.elapsed() / 50 + 2));
+    QCOMPARE(window.findChildren<QPropertyAnimation *>(QStringLiteral("debugOpacityAnimation")).size(), 7);
+    for (const auto &animation : originalAnimations) QVERIFY(!animation.isNull());
+    tabs->setCurrentIndex(0);
+    const auto hiddenRenders = window.property("debugFramesRendered").toULongLong();
+    for (int i = 0; i < 100; ++i) {
+        ++frame.timestampMicros;
+        QVERIFY(QMetaObject::invokeMethod(&window, "updateDebugFrame", Qt::DirectConnection,
+                                         Q_ARG(HostFrame, frame)));
+    }
+    QTest::qWait(100);
+    QCOMPARE(window.property("debugFramesRendered").toULongLong(), hiddenRenders);
 }
 
 void DashboardTest::recordingPageProvidesChannelSelectionAndCommands()

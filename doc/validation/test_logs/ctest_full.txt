@@ -1,0 +1,43 @@
+Internal ctest changing into directory: <build>
+Test project <build>
+      Start  1: test_protocol
+ 1/16 Test  #1: test_protocol ....................   Passed    0.44 sec
+      Start  2: test_device
+ 2/16 Test  #2: test_device ......................   Passed    6.44 sec
+      Start  3: test_media
+ 3/16 Test  #3: test_media .......................   Passed    3.17 sec
+      Start  4: test_app
+ 4/16 Test  #4: test_app .........................   Passed    0.94 sec
+      Start  5: test_ui
+ 5/16 Test  #5: test_ui ..........................   Passed   20.63 sec
+      Start  6: test_analysis
+ 6/16 Test  #6: test_analysis ....................***Failed    8.44 sec
+
+      Start  7: test_plintegration
+ 7/16 Test  #7: test_plintegration ...............   Passed    9.00 sec
+      Start  8: test_plheatmap
+ 8/16 Test  #8: test_plheatmap ...................   Passed    1.69 sec
+      Start  9: test_cameralens
+ 9/16 Test  #9: test_cameralens ..................   Passed    0.56 sec
+      Start 10: test_pldenoise
+10/16 Test #10: test_pldenoise ...................   Passed   10.35 sec
+      Start 11: test_pldenoise_ui
+11/16 Test #11: test_pldenoise_ui ................   Passed    1.19 sec
+      Start 12: test_plwiener
+12/16 Test #12: test_plwiener ....................   Passed    0.84 sec
+      Start 13: test_plfull
+13/16 Test #13: test_plfull ......................   Passed    0.54 sec
+      Start 14: test_stream_wallclock
+14/16 Test #14: test_stream_wallclock ............   Passed  123.17 sec
+      Start 15: test_stream_contract
+15/16 Test #15: test_stream_contract .............   Passed    1.16 sec
+      Start 16: test_stream_mainwindow
+16/16 Test #16: test_stream_mainwindow ...........   Passed   21.46 sec
+
+94% tests passed, 1 tests failed out of 16
+
+Total Test time (real) = 210.05 sec
+
+The following tests FAILED:
+	  6 - test_analysis (Failed)
+Errors while running CTest

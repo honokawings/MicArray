@@ -1,8 +1,10 @@
 #include "app/appsettings.h"
 
+#include "analysis/calibrationprofile.h"
 #include "control/controlvalues.h"
 #include "control/directioncontrolmapper.h"
 
+#include <QJsonDocument>
 #include <QSettings>
 #include <QRegularExpression>
 #include <QFileInfo>
@@ -16,6 +18,33 @@
 namespace MicArray {
 
 namespace {
+
+CameraLensCalibration readCameraLens(QSettings *settings, const QString &group)
+{
+    const auto document = QJsonDocument::fromJson(
+        settings->value(group + QStringLiteral("cameraLensJson")).toByteArray());
+    CameraLensCalibration lens;
+    if (document.isObject())
+    {
+        cameraLensFromJson(document.object(), &lens);
+    }
+    return lens;
+}
+
+void saveCameraLens(QSettings *settings, const QString &group,
+                    const CameraLensCalibration &lens)
+{
+    const auto key = group + QStringLiteral("cameraLensJson");
+    if (lens.isValid())
+    {
+        settings->setValue(key, QJsonDocument(cameraLensToJson(lens))
+                                    .toJson(QJsonDocument::Compact));
+    }
+    else
+    {
+        settings->remove(key);
+    }
+}
 
 bool parseCanonicalInteger(const QString &text, int *result)
 {
@@ -218,6 +247,10 @@ AudioAnalysisSettings sanitizeAudioAnalysisSettings(AudioAnalysisSettings value)
 LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettings value)
 {
     const LiveLocalizationSettings defaults;
+    if (value.localizationSource != QStringLiteral("pl")
+        && value.localizationSource != QStringLiteral("host")) {
+        value.localizationSource = defaults.localizationSource;
+    }
     value.locatorId = value.locatorId.trimmed();
     if (value.locatorId.isEmpty()) {
         value.locatorId = defaults.locatorId;
@@ -226,6 +259,12 @@ LiveLocalizationSettings sanitizeLiveLocalizationSettings(LiveLocalizationSettin
     if (value.displayMode != QStringLiteral("marker")
         && value.displayMode != QStringLiteral("heatmap")) {
         value.displayMode = defaults.displayMode;
+    }
+    value.plDisplayMode = value.plDisplayMode.trimmed().toLower();
+    if (value.plDisplayMode != QStringLiteral("marker")
+        && value.plDisplayMode != QStringLiteral("fusion")
+        && value.plDisplayMode != QStringLiteral("plheatmap")) {
+        value.plDisplayMode = defaults.plDisplayMode;
     }
     if (!std::isfinite(value.heatmapOpacity)
         || value.heatmapOpacity < 0.0 || value.heatmapOpacity > 1.0) {
@@ -331,6 +370,12 @@ QString noiseModeKey(NoiseReductionMode mode)
 
 QString noiseInputModeKey(NoiseReductionInputMode inputMode)
 {
+    if (inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile)
+        return QStringLiteral("pl-full-denoising-fixed-demo");
+    if (inputMode == NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing)
+        return QStringLiteral("pl-fixed-wiener-original-post");
+    if (inputMode == NoiseReductionInputMode::PlThreeBeamOriginalDenoising)
+        return QStringLiteral("pl-three-beam-original-dsp");
     return inputMode == NoiseReductionInputMode::Raw48SoftwareBeamforming
         ? QStringLiteral("raw-48-software")
         : QStringLiteral("fpga-beamformed");
@@ -338,6 +383,12 @@ QString noiseInputModeKey(NoiseReductionInputMode inputMode)
 
 NoiseReductionInputMode noiseInputModeFromKey(const QString &key)
 {
+    if (key == QStringLiteral("pl-full-denoising-fixed-demo"))
+        return NoiseReductionInputMode::PlFullDenoisingFixedProfile;
+    if (key == QStringLiteral("pl-fixed-wiener-original-post"))
+        return NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing;
+    if (key == QStringLiteral("pl-three-beam-original-dsp"))
+        return NoiseReductionInputMode::PlThreeBeamOriginalDenoising;
     if (key == QStringLiteral("raw-48-software")) {
         return NoiseReductionInputMode::Raw48SoftwareBeamforming;
     }
@@ -464,7 +515,10 @@ NoiseReductionSettings sanitizeNoiseReductionSettings(
 {
     const NoiseReductionSettings defaults;
     if (value.inputMode != NoiseReductionInputMode::FpgaBeamformedChannels
-        && value.inputMode != NoiseReductionInputMode::Raw48SoftwareBeamforming) {
+        && value.inputMode != NoiseReductionInputMode::Raw48SoftwareBeamforming
+        && value.inputMode != NoiseReductionInputMode::PlThreeBeamOriginalDenoising
+        && value.inputMode != NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing
+        && value.inputMode != NoiseReductionInputMode::PlFullDenoisingFixedProfile) {
         value.inputMode = defaults.inputMode;
     }
     if (value.algorithm != NoiseReductionAlgorithm::FixedParameterWiener
@@ -840,6 +894,7 @@ AudioAnalysisSettings AppSettings::audioAnalysis() const
             &value.camera.rollDegrees)) {
         value.camera.rollDegrees = defaults.camera.rollDegrees;
     }
+    value.camera.lens = readCameraLens(m_settings.get(), QStringLiteral("audioAnalysis/"));
     return sanitizeAudioAnalysisSettings(value);
 }
 
@@ -847,12 +902,16 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
 {
     const LiveLocalizationSettings defaults;
     LiveLocalizationSettings value;
+    value.localizationSource = m_settings->value(
+        QStringLiteral("liveLocalization/localizationSource"), defaults.localizationSource).toString();
     value.enabled = m_settings->value(QStringLiteral("liveLocalization/enabled"),
                                       defaults.enabled).toBool();
     value.locatorId = m_settings->value(QStringLiteral("liveLocalization/locatorId"),
                                         defaults.locatorId).toString();
     value.displayMode = m_settings->value(QStringLiteral("liveLocalization/displayMode"),
                                           defaults.displayMode).toString();
+    value.plDisplayMode = m_settings->value(QStringLiteral("liveLocalization/plDisplayMode"),
+                                            defaults.plDisplayMode).toString();
     if (!spatialResolutionModeFromKey(
             m_settings->value(
                 QStringLiteral("liveLocalization/spatialResolutionMode"),
@@ -993,6 +1052,7 @@ LiveLocalizationSettings AppSettings::liveLocalization() const
     } else if (calibrationCount != 0) {
         value.calibrationVersion = -1;
     }
+    value.camera.lens = readCameraLens(m_settings.get(), QStringLiteral("liveLocalization/"));
     return sanitizeLiveLocalizationSettings(value);
 }
 
@@ -1250,6 +1310,7 @@ NoiseReductionSettings AppSettings::noiseReduction() const
     readDouble(QStringLiteral("cameraRollDegrees"),
                value.camera.rollDegrees,
                &value.camera.rollDegrees);
+    value.camera.lens = readCameraLens(m_settings.get(), QStringLiteral("noiseReduction/"));
     return sanitizeNoiseReductionSettings(value);
 }
 
@@ -1351,6 +1412,7 @@ void AppSettings::saveAppearance(const AppearanceSettings &settingsValue)
 void AppSettings::saveAudioAnalysis(const AudioAnalysisSettings &settingsValue)
 {
     const AudioAnalysisSettings value = sanitizeAudioAnalysisSettings(settingsValue);
+    saveCameraLens(m_settings.get(), QStringLiteral("audioAnalysis/"), value.camera.lens);
     m_settings->setValue(QStringLiteral("audioAnalysis/lastWavePath"), value.lastWavePath);
     m_settings->setValue(QStringLiteral("audioAnalysis/lastPhotoPath"), value.lastPhotoPath);
     m_settings->setValue(QStringLiteral("audioAnalysis/outputChannel"), value.outputChannel);
@@ -1387,10 +1449,13 @@ void AppSettings::saveAudioAnalysis(const AudioAnalysisSettings &settingsValue)
 void AppSettings::saveLiveLocalization(const LiveLocalizationSettings &settingsValue)
 {
     const LiveLocalizationSettings value = sanitizeLiveLocalizationSettings(settingsValue);
+    saveCameraLens(m_settings.get(), QStringLiteral("liveLocalization/"), value.camera.lens);
     const QString group = QStringLiteral("liveLocalization/");
+    m_settings->setValue(group + QStringLiteral("localizationSource"), value.localizationSource);
     m_settings->setValue(group + QStringLiteral("enabled"), value.enabled);
     m_settings->setValue(group + QStringLiteral("locatorId"), value.locatorId);
     m_settings->setValue(group + QStringLiteral("displayMode"), value.displayMode);
+    m_settings->setValue(group + QStringLiteral("plDisplayMode"), value.plDisplayMode);
     m_settings->setValue(group + QStringLiteral("spatialResolutionMode"),
                          spatialResolutionModeKey(value.spatialResolutionMode));
     m_settings->setValue(group + QStringLiteral("heatmapOpacity"), value.heatmapOpacity);
@@ -1466,6 +1531,7 @@ void AppSettings::saveNoiseReduction(
 {
     const NoiseReductionSettings value =
         sanitizeNoiseReductionSettings(settingsValue);
+    saveCameraLens(m_settings.get(), QStringLiteral("noiseReduction/"), value.camera.lens);
     const QString group = QStringLiteral("noiseReduction/");
     m_settings->setValue(group + QStringLiteral("enabled"), value.enabled);
     m_settings->setValue(group + QStringLiteral("inputMode"),

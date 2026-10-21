@@ -1,0 +1,48 @@
+********* Start testing of StreamStallFixedTest *********
+Config: Using QtTest library 6.11.1, Qt 6.11.1 (x86_64-little_endian-llp64 shared (dynamic) release build; by GCC 13.1.0), windows 11
+PASS   : StreamStallFixedTest::initTestCase()
+QWARN  : StreamStallFixedTest::mixedBurstPreservesEveryPlSample(AUD3) QFontDatabase: Cannot find font directory E:/QT/6.11.1/mingw_64/lib/fonts.
+Note that Qt no longer ships fonts. Deploy some (from https://dejavu-fonts.github.io/ for example) or switch to fontconfig.
+QINFO  : StreamStallFixedTest::mixedBurstPreservesEveryPlSample(AUD3) [FIXED_CONTINUITY_PASS] stage= 1  input_frames=128 raw_frames=128 compared_samples= 25000  fault=0 pending=0
+PASS   : StreamStallFixedTest::mixedBurstPreservesEveryPlSample(AUD3)
+QINFO  : StreamStallFixedTest::mixedBurstPreservesEveryPlSample(AUW1) [FIXED_CONTINUITY_PASS] stage= 2  input_frames=128 raw_frames=128 compared_samples= 25600  fault=0 pending=0
+PASS   : StreamStallFixedTest::mixedBurstPreservesEveryPlSample(AUW1)
+QINFO  : StreamStallFixedTest::mixedBurstPreservesEveryPlSample(AUF1) [FIXED_CONTINUITY_PASS] stage= 3  input_frames=128 raw_frames=128 compared_samples= 25600  fault=0 pending=0
+PASS   : StreamStallFixedTest::mixedBurstPreservesEveryPlSample(AUF1)
+QINFO  : StreamStallFixedTest::commitAckBurstPreservesEverySample(AUD3) [FIXED_ACK_CONTINUITY_PASS] stage= 1  pre_ack_samples=6600 continuation_samples=12800 compared_samples= 18400  fault=0 pending=0
+PASS   : StreamStallFixedTest::commitAckBurstPreservesEverySample(AUD3)
+QINFO  : StreamStallFixedTest::commitAckBurstPreservesEverySample(AUW1) [FIXED_ACK_CONTINUITY_PASS] stage= 2  pre_ack_samples=6600 continuation_samples=12800 compared_samples= 19400  fault=0 pending=0
+PASS   : StreamStallFixedTest::commitAckBurstPreservesEverySample(AUW1)
+QINFO  : StreamStallFixedTest::commitAckBurstPreservesEverySample(AUF1) [FIXED_ACK_CONTINUITY_PASS] stage= 3  pre_ack_samples=6600 continuation_samples=12800 compared_samples= 19400  fault=0 pending=0
+PASS   : StreamStallFixedTest::commitAckBurstPreservesEverySample(AUF1)
+QINFO  : StreamStallFixedTest::twoSecondCapacityHasExplicitBoundary(AUD3) [FIXED_CAPACITY_PASS] stage= 1  accepted_samples=96000 first_rejected_sample=96000 reason= PL 连续音频共享邮箱超过两秒容量或任务无效：缓存 96000，新增 200，上限 96000；未丢样本继续处理；PL 音频已暂停，请重新同步方向配置
+PASS   : StreamStallFixedTest::twoSecondCapacityHasExplicitBoundary(AUD3)
+QINFO  : StreamStallFixedTest::twoSecondCapacityHasExplicitBoundary(AUW1) [FIXED_CAPACITY_PASS] stage= 2  accepted_samples=96000 first_rejected_sample=96000 reason= PL 连续音频共享邮箱超过两秒容量或任务无效：缓存 96000，新增 200，上限 96000；未丢样本继续处理；PL 音频已暂停，请重新同步方向配置
+PASS   : StreamStallFixedTest::twoSecondCapacityHasExplicitBoundary(AUW1)
+QINFO  : StreamStallFixedTest::twoSecondCapacityHasExplicitBoundary(AUF1) [FIXED_CAPACITY_PASS] stage= 3  accepted_samples=96000 first_rejected_sample=96000 reason= PL 连续音频共享邮箱超过两秒容量或任务无效：缓存 96000，新增 200，上限 96000；未丢样本继续处理；PL 音频已暂停，请重新同步方向配置
+PASS   : StreamStallFixedTest::twoSecondCapacityHasExplicitBoundary(AUF1)
+QINFO  : StreamStallFixedTest::resetRetainsOldCreditsAndStartsCleanEpoch(AUD3) [FIXED_RESET_CREDIT_PASS] stage= 1  old_credits= 1  new_epoch_samples= 5600  pending=0 fault=0
+PASS   : StreamStallFixedTest::resetRetainsOldCreditsAndStartsCleanEpoch(AUD3)
+QINFO  : StreamStallFixedTest::resetRetainsOldCreditsAndStartsCleanEpoch(AUW1) [FIXED_RESET_CREDIT_PASS] stage= 2  old_credits= 1  new_epoch_samples= 6600  pending=0 fault=0
+PASS   : StreamStallFixedTest::resetRetainsOldCreditsAndStartsCleanEpoch(AUW1)
+QINFO  : StreamStallFixedTest::resetRetainsOldCreditsAndStartsCleanEpoch(AUF1) [FIXED_RESET_CREDIT_PASS] stage= 3  old_credits= 1  new_epoch_samples= 6600  pending=0 fault=0
+PASS   : StreamStallFixedTest::resetRetainsOldCreditsAndStartsCleanEpoch(AUF1)
+QINFO  : StreamStallFixedTest::modeSwitchRetainsOldCredits(AUD3_to_AUW1) [FIXED_MODE_CREDIT_PASS] previous_stage= 1  next_stage= 2  old_credits= 1  compared_samples= 6600  pending=0 fault=0
+PASS   : StreamStallFixedTest::modeSwitchRetainsOldCredits(AUD3_to_AUW1)
+QINFO  : StreamStallFixedTest::modeSwitchRetainsOldCredits(AUW1_to_AUD3) [FIXED_MODE_CREDIT_PASS] previous_stage= 2  next_stage= 1  old_credits= 1  compared_samples= 5600  pending=0 fault=0
+PASS   : StreamStallFixedTest::modeSwitchRetainsOldCredits(AUW1_to_AUD3)
+QINFO  : StreamStallFixedTest::partialEpochTailsPrecedeTheirAuthorizations(AUD3) [FIXED_PARTIAL_EPOCH_PASS] stage= 1  epochs=3 partial_lengths=50,70,80 worker_paused_across_acks=2 compared_samples= 1400  warnings=0 fault=0
+PASS   : StreamStallFixedTest::partialEpochTailsPrecedeTheirAuthorizations(AUD3)
+QINFO  : StreamStallFixedTest::partialEpochTailsPrecedeTheirAuthorizations(AUW1) [FIXED_PARTIAL_EPOCH_PASS] stage= 2  epochs=3 partial_lengths=50,70,80 worker_paused_across_acks=2 compared_samples= 2200  warnings=0 fault=0
+PASS   : StreamStallFixedTest::partialEpochTailsPrecedeTheirAuthorizations(AUW1)
+QINFO  : StreamStallFixedTest::partialEpochTailsPrecedeTheirAuthorizations(AUF1) [FIXED_PARTIAL_EPOCH_PASS] stage= 3  epochs=3 partial_lengths=50,70,80 worker_paused_across_acks=2 compared_samples= 2200  warnings=0 fault=0
+PASS   : StreamStallFixedTest::partialEpochTailsPrecedeTheirAuthorizations(AUF1)
+QINFO  : StreamStallFixedTest::authorizationCapacityCountsQueuedAndInFlight(AUD3) [FIXED_AUTH_BOUNDARY_PASS] stage= 1  combined_control_capacity=64 actual_executing=1 first_rejected=65 final_controls=0
+PASS   : StreamStallFixedTest::authorizationCapacityCountsQueuedAndInFlight(AUD3)
+QINFO  : StreamStallFixedTest::authorizationCapacityCountsQueuedAndInFlight(AUW1) [FIXED_AUTH_BOUNDARY_PASS] stage= 2  combined_control_capacity=64 actual_executing=1 first_rejected=65 final_controls=0
+PASS   : StreamStallFixedTest::authorizationCapacityCountsQueuedAndInFlight(AUW1)
+QINFO  : StreamStallFixedTest::authorizationCapacityCountsQueuedAndInFlight(AUF1) [FIXED_AUTH_BOUNDARY_PASS] stage= 3  combined_control_capacity=64 actual_executing=1 first_rejected=65 final_controls=0
+PASS   : StreamStallFixedTest::authorizationCapacityCountsQueuedAndInFlight(AUF1)
+PASS   : StreamStallFixedTest::cleanupTestCase()
+Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 738ms
+********* Finished testing of StreamStallFixedTest *********

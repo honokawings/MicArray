@@ -3,10 +3,14 @@
 #include "app/appsettings.h"
 #include "control/controlvalues.h"
 #include "media/noisereductionworker.h"
+#include "media/noisereductionmailbox.h"
+#include "control/pldenoisesession.h"
 
 #include <QImage>
 #include <QThread>
 #include <QWidget>
+
+#include <deque>
 
 class QCheckBox;
 class QComboBox;
@@ -49,13 +53,18 @@ public:
     void submitRawAudioFrame(const QByteArray &payload,
                              quint32 timestampSeconds,
                              quint32 timestampMicros);
+    void submitPlSidebandFrame(const QByteArray &payload,
+                               quint32 timestampSeconds, quint32 timestampMicros);
     void setControlSendResult(bool success, const QString &message);
     void showPresentation();
     ControlValues currentControlValues() const;
     NoiseReductionSettings currentSettings() const { return m_settings; }
-    int pendingAudioFrames() const { return m_pendingAudioFrames; }
+    int pendingAudioFrames() const {
+        const auto state = m_mailbox->snapshot();
+        return state.queuedAudioFrames + state.inFlight - state.controlInFlight;
+    }
     quint64 droppedAudioFrames() const { return m_droppedAudioFrames; }
-    quint64 submittedAudioFrames() const { return m_submittedAudioFrames; }
+    quint64 submittedAudioFrames() const { return m_mailbox->snapshot().submittedAudioFrames; }
 
 signals:
     void configureWorkerRequested(const NoiseReductionSettings &settings,
@@ -64,17 +73,49 @@ signals:
     void rawAudioFrameRequested(const QByteArray &payload,
                                 quint32 timestampSeconds,
                                 quint32 timestampMicros);
+    void plBeamFrameRequested(const PlBeamFrame &frame);
+    void plWienerFrameRequested(const PlWienerFrame &frame);
+    void plFinalFrameRequested(const PlFinalFrame &frame);
     void controlSendRequested(const ControlValues &values);
     void noiseRecordingFrameReady(
         const NoiseReductionRecordingFrame &frame);
     void quickRecordingToggleRequested();
     void settingsChanged();
+    void persistentPlDiagnostic(const QString &message);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     static constexpr int MaximumPendingFrames = 32;
+    static constexpr int MaximumBufferedPlSamples = 96000;
+    static constexpr int MaximumBufferedReferenceSamples = 96000;
+    static constexpr int MaximumQueuedAuthorizations = 64;
+
+    enum class WorkKind { Raw, Beam, Wiener, Final, Authorize };
+    struct PendingWork {
+        WorkKind kind = WorkKind::Raw;
+        quint64 generation = 0;
+        int samples = 0;
+        bool referenceOnly = false;
+        QByteArray raw;
+        quint32 seconds = 0;
+        quint32 micros = 0;
+        PlBeamFrame beam;
+        PlWienerFrame wiener;
+        PlFinalFrame final;
+        quint16 stream = 0;
+        bool restart = false;
+    };
+    void enqueuePlWork(PendingWork work);
+    void enqueueReferenceWork(PendingWork work);
+    bool enqueueAuthorization(quint16 stream, bool restart);
+    void submitWorkerWork(PendingWork work);
+    bool enqueueWorkerControl(std::function<void()> operation, bool authorization = false);
+    void clearQueuedAudioWork(const QString &reason);
+    void updateMailboxProperties();
+    void logPlDiagnostic(const QString &event, const QString &reason = {});
+    void scheduleQueuePeakDiagnostic();
 
     void buildUi();
     void buildPresentationWindow();
@@ -83,7 +124,7 @@ private:
     NoiseReductionSettings settingsFromUi() const;
     void applySettingsFromUi();
     bool workerShouldBeActive() const;
-    void updateWorkerActive();
+    void updateWorkerActive(bool configurePl = true);
     void refreshStatusLabel();
     void refreshProcessingAvailability();
     void refreshNodeSummaries();
@@ -101,6 +142,7 @@ private:
         const QPointF &normalizedPoint,
         bool finished);
     void requestControlSend();
+    void configurePlMode(bool force = false);
     void showPlotFrame(const NoiseReductionPlotFrame &frame);
     void setPresentationMode(bool enabled);
 
@@ -108,6 +150,32 @@ private:
     NoiseReductionSettings m_settings;
     QThread m_workerThread;
     NoiseReductionWorker *m_worker = nullptr;
+    NoiseReductionMailbox *m_mailbox = nullptr;
+    PlDenoiseTransport *m_plTransport = nullptr;
+    PlDenoiseSession *m_plSession = nullptr;
+    QTimer *m_plWatchdog = nullptr;
+    QElapsedTimer m_plStarted;
+    QElapsedTimer m_plLastStatus;
+    QString m_plStatusMessage;
+    quint64 m_workGeneration = 0;
+    qint64 m_plBufferedSamples = 0;
+    qint64 m_referenceBufferedSamples = 0;
+    qint64 m_plQueuedSamples = 0;
+    qint64 m_referenceQueuedSamples = 0;
+    qint64 m_plQueuePeakSamples = 0;
+    qint64 m_referenceQueuePeakSamples = 0;
+    int m_queuedAuthorizations = 0;
+    int m_inFlightAuthorizations = 0;
+    bool m_queueDiagnosticScheduled = false;
+    bool m_faultDiagnosticLatched = false;
+    quint64 m_plFaultCount = 0;
+    quint16 m_diagnosticResetTransaction = 0;
+    QString m_lastWorkerWarning;
+    quint64 m_workerWarningRepeats = 0;
+    quint64 m_acceptedPlFrames = 0;
+    quint64 m_completedPlFrames = 0;
+    quint64 m_referenceDroppedFrames = 0;
+    PlDenoiseStatus m_lastPlStatus;
     bool m_active = false;
     bool m_recordingRequired = false;
     bool m_workerActive = false;

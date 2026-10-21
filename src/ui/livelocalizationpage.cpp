@@ -11,11 +11,14 @@
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFile>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QJsonDocument>
+#include <QSaveFile>
 #include <QLineF>
 #include <QMetaObject>
 #include <QPushButton>
@@ -47,6 +50,16 @@ QDoubleSpinBox *angleSpin(QWidget *parent, const QString &objectName,
     return spin;
 }
 
+bool matchesLensAspect(const QSize &size, const CameraLensCalibration &lens)
+{
+    if (size.isEmpty() || !lens.isValid())
+    {
+        return true;
+    }
+    const double expected = double(lens.referenceWidth) / lens.referenceHeight;
+    return std::abs(double(size.width()) / size.height() / expected - 1.0) < 0.005;
+}
+
 } // namespace
 
 LiveLocalizationPage::LiveLocalizationPage(AppSettings *settings, QWidget *parent)
@@ -56,6 +69,33 @@ LiveLocalizationPage::LiveLocalizationPage(AppSettings *settings, QWidget *paren
 {
     setObjectName(QStringLiteral("liveLocalizationPage"));
     buildUi();
+    m_heatmapExpiryTimer.setSingleShot(true);
+    connect(&m_heatmapExpiryTimer, &QTimer::timeout, this, [this] {
+        clearReferenceHeatmap();
+        m_referenceHeatmapLabel->setText(plHeatmapSelected() ? QStringLiteral("PL 热力图：结果过期，已清除") : QStringLiteral("上位机热力图：结果过期，已清除"));
+    });
+    connect(&m_plController, &PlLocalizationController::directionsChanged, this,
+        [this](const QVector<SoundSourceDirection> &directions) {
+            if (m_active && m_settings.enabled && m_settings.localizationSource == QStringLiteral("pl") && !m_calibrating) {
+                m_view->setDirections(directions);
+                m_resultLabel->setText(directions.isEmpty()
+                    ? QStringLiteral("PL：本帧无可信声源")
+                    : QStringLiteral("显示方位 %1° / 俯仰 %2°，置信度 %3%")
+                        .arg(directions.first().azimuthDegrees, 0, 'f', 2)
+                        .arg(directions.first().elevationDegrees, 0, 'f', 2)
+                        .arg(directions.first().confidence * 100.0, 0, 'f', 0));
+            }
+            emit plDirectionsChanged(m_settings.enabled ? directions : QVector<SoundSourceDirection> {});
+        });
+    connect(&m_plController, &PlLocalizationController::statusChanged, this, [this](const QString &status) {
+        m_plResultLabel->setText(status);
+        if (m_settings.localizationSource == QStringLiteral("pl")) {
+            m_statusLabel->setText(status);
+            m_view->setStatusText(status.contains(QStringLiteral("原始方位"))
+                ? QStringLiteral("PL 实时定位：按视频标定投影") : status);
+        }
+        emit plStatusChanged(status);
+    });
     m_view->setSpatialResponseActive(false);
     restoreSettings();
     m_workerThread.setObjectName(QStringLiteral("LiveSourceLocalizationThread"));
@@ -74,44 +114,30 @@ LiveLocalizationPage::LiveLocalizationPage(AppSettings *settings, QWidget *paren
     });
     connect(this, &LiveLocalizationPage::calibrationSampleRequested,
             m_worker, &LiveLocalizationWorker::captureStableDirection, Qt::QueuedConnection);
-    connect(m_worker, &LiveLocalizationWorker::localizationReady, this,
-             [this](const LiveLocalizationResult &result) {
-                 if (!m_active || !m_settings.enabled
-                     || result.generation
-                         != m_gridGeneration) {
-                    return;
-                }
-                m_view->setDirections(result.directions);
-                if (result.directions.isEmpty()) {
-                    m_resultLabel->setText(QStringLiteral("方位角 --　俯仰角 --"));
-                    return;
-                }
-                const auto &direction = result.directions.first();
-                m_resultLabel->setText(
-                    QStringLiteral("方位角 %1°　俯仰角 %2°　置信度 %3%　耗时 %4 ms")
-                        .arg(direction.azimuthDegrees, 0, 'f', 1)
-                        .arg(direction.elevationDegrees, 0, 'f', 1)
-                        .arg(direction.confidence * 100.0, 0, 'f', 0)
-                        .arg(result.elapsedMilliseconds));
-            });
+    connect(m_worker, &LiveLocalizationWorker::localizationReady,
+            this, &LiveLocalizationPage::acceptHostLocalizationResult);
     connect(m_worker, &LiveLocalizationWorker::spatialResponseReady,
-            m_view, &LiveLocalizationView::setSpatialResponse);
+            this, &LiveLocalizationPage::acceptSpatialResponse);
     connect(m_worker, &LiveLocalizationWorker::statusChanged, this,
             [this](const QString &status) {
-                m_statusLabel->setText(status);
-                m_view->setStatusText(status);
+                if (m_settings.localizationSource == QStringLiteral("host")) {
+                    m_statusLabel->setText(status);
+                    m_view->setStatusText(status);
+                }
             });
     connect(m_worker, &LiveLocalizationWorker::spatialResponseSupported,
             this, [this](bool supported) {
+                if (!softwareResponseSelected()) { return; }
                 const int heatmap =
-                    m_displayModeCombo->findData(QStringLiteral("heatmap"));
+                    m_displayModeCombo->findData(plFusionSelected()
+                        ? QStringLiteral("fusion") : QStringLiteral("heatmap"));
                 if (heatmap >= 0) {
                     m_displayModeCombo->setItemData(
                         heatmap, supported ? QVariant() : QVariant(0), Qt::UserRole - 1);
                 }
                 if (!supported
                     && m_displayModeCombo->currentData().toString()
-                        == QStringLiteral("heatmap")) {
+                        != QStringLiteral("marker")) {
                     m_displayModeCombo->setCurrentIndex(
                         m_displayModeCombo->findData(QStringLiteral("marker")));
                 }
@@ -119,6 +145,7 @@ LiveLocalizationPage::LiveLocalizationPage(AppSettings *settings, QWidget *paren
     connect(m_worker, &LiveLocalizationWorker::calibrationSampleReady,
             this, &LiveLocalizationPage::acceptCalibrationDirection);
     connectUi();
+    updateLocalizationSource();
     m_workerThread.start();
     emit configureWorkerRequested(m_settings);
 }
@@ -140,9 +167,10 @@ void LiveLocalizationPage::setActive(bool active)
     }
     m_active = active;
     startNewProcessingEpoch();
+    updateLocalizationSource();
     const bool processingActive =
-        active && m_settings.enabled;
-    m_view->setSpatialResponseActive(processingActive);
+        hostProcessingActive();
+    m_view->setSpatialResponseActive(processingActive || (m_active && m_settings.enabled && plHeatmapSelected()));
     emit workerActiveRequested(processingActive);
 }
 
@@ -153,7 +181,27 @@ void LiveLocalizationPage::setVideoFrame(const QImage &image,
     const bool sizeChanged = image.size() != m_videoFrame.size();
     m_videoFrame = image;
     m_view->setFrame(image);
+    m_saveRawFrameButton->setEnabled(!image.isNull());
     if (sizeChanged) {
+        m_videoGeometryLabel->setText(image.isNull()
+            ? QStringLiteral("原始视频尺寸：等待视频")
+            : QStringLiteral("原始视频尺寸：%1 × %2（不含显示黑边）")
+                .arg(image.width()).arg(image.height()));
+        if (m_settings.camera.lens.enabled
+            && !matchesLensAspect(image.size(), m_settings.camera.lens))
+        {
+            m_settings.camera.lens.enabled = false;
+            m_settings.calibrationSamples.clear();
+            m_settings.calibrationRmsPixels = 0.0;
+            m_rmsLabel->setText(QStringLiteral("RMS 误差：--"));
+            applyCameraToUi(m_settings.camera);
+            m_view->setCameraView(m_settings.camera);
+            m_lensStatusLabel->setText(QStringLiteral("视频宽高比改变，镜头投影已关闭；请核对裁剪方式。"));
+            persistSettings();
+            startNewProcessingEpoch();
+            refreshCalibrationDetails();
+            refreshCalibrationOverlay();
+        }
         rebuildSpatialGrid();
     }
 }
@@ -162,12 +210,187 @@ void LiveLocalizationPage::submitAdjustedAudioFrame(const QByteArray &payload,
                                                     quint32 timestampSeconds,
                                                     quint32 timestampMicros)
 {
-    if (!m_active || !m_settings.enabled
+    if (!hostProcessingActive()
         || m_pendingAudioFrames >= MaxPendingAudioFrames) {
         return;
     }
     ++m_pendingAudioFrames;
     emit audioFrameRequested(payload, timestampSeconds, timestampMicros);
+}
+
+void LiveLocalizationPage::setPlLocation(const PlLocationResult &location)
+{
+    m_plController.accept(location);
+}
+
+bool LiveLocalizationPage::plHeatmapSelected() const
+{
+    return m_settings.localizationSource == QStringLiteral("pl")
+        && m_settings.plDisplayMode == QStringLiteral("plheatmap");
+}
+
+void LiveLocalizationPage::setPlSpatialMap(const PlSpatialMap &map)
+{
+    const quint16 delta = map.locatorFrameCounter - m_plMapFrameBarrier;
+    if (!m_active || !m_settings.enabled || !plHeatmapSelected() || m_calibrating
+        || (m_hasPlMapBarrier && (delta == 0 || delta >= 0x8000u))
+        || !m_plController.isCurrentFrame(map.locatorFrameCounter, map.sourceMask))
+    {
+        return;
+    }
+    const auto response = m_plProjector.project(map, m_settings.camera, m_gridGeneration);
+    m_view->setSpatialResponse(response);
+    if (response.normalizedValues.isEmpty())
+    {
+        m_heatmapExpiryTimer.stop();
+        m_referenceHeatmapLabel->setText(QStringLiteral("PL 热力图：本帧无可信声源，已清除"));
+    }
+    else
+    {
+        m_heatmapExpiryTimer.start(1000);
+        m_referenceHeatmapLabel->setText(
+            QStringLiteral("PL 热力图：37×37 扫描，8 位响应；定位点来自同帧多峰精化；帧 %1")
+                .arg(map.locatorFrameCounter));
+    }
+}
+
+void LiveLocalizationPage::clearPlLocation()
+{
+    m_plController.reset();
+    // Device disconnect/reset ends both layers' processing epoch. Queued old
+    // software responses cannot repopulate the new session's heatmap.
+    startNewProcessingEpoch();
+}
+
+bool LiveLocalizationPage::hostProcessingActive() const
+{
+    return m_active && m_settings.enabled && softwareResponseSelected();
+}
+
+bool LiveLocalizationPage::plFusionSelected() const
+{
+    return m_settings.localizationSource == QStringLiteral("pl")
+        && m_settings.plDisplayMode == QStringLiteral("fusion");
+}
+
+bool LiveLocalizationPage::softwareResponseSelected() const
+{
+    return m_settings.localizationSource == QStringLiteral("host") || plFusionSelected();
+}
+
+void LiveLocalizationPage::clearReferenceHeatmap()
+{
+    m_heatmapExpiryTimer.stop();
+    LiveSpatialResponse empty;
+    empty.generation = m_gridGeneration;
+    m_view->setSpatialResponse(empty);
+    m_referenceHeatmapLabel->setText(plHeatmapSelected() ? QStringLiteral("PL 热力图：等待完整的 37×37 空间响应，需要配套新版 bit") : QStringLiteral("上位机热力图：等待原始阵列音频"));
+}
+
+void LiveLocalizationPage::acceptHostLocalizationResult(const LiveLocalizationResult &result)
+{
+    // The software worker also finds peaks to assess its heatmap. Those peaks
+    // must never become markers or calibration truth when PL is selected.
+    if (!hostProcessingActive() || m_calibrating
+        || m_settings.localizationSource != QStringLiteral("host")
+        || result.generation != m_gridGeneration) {
+        return;
+    }
+    m_view->setDirections(result.directions);
+    if (result.directions.isEmpty()) {
+        m_resultLabel->setText(QStringLiteral("方位角 --　俯仰角 --"));
+        return;
+    }
+    const auto &direction = result.directions.first();
+    m_resultLabel->setText(
+        QStringLiteral("方位角 %1°　俯仰角 %2°　置信度 %3%　耗时 %4 ms")
+            .arg(direction.azimuthDegrees, 0, 'f', 1)
+            .arg(direction.elevationDegrees, 0, 'f', 1)
+            .arg(direction.confidence * 100.0, 0, 'f', 0)
+            .arg(result.elapsedMilliseconds));
+}
+
+void LiveLocalizationPage::acceptSpatialResponse(const LiveSpatialResponse &response)
+{
+    if (!hostProcessingActive() || m_calibrating || response.generation != m_gridGeneration) {
+        return;
+    }
+    m_view->setSpatialResponse(response);
+    const bool usable = response.columns > 0 && response.rows > 0
+        && response.normalizedValues.size() == response.columns * response.rows
+        && response.reliability > 0.0;
+    if (usable) {
+        m_heatmapExpiryTimer.start(std::max(1000, m_settings.updateIntervalMs * 3));
+        m_referenceHeatmapLabel->setText(QStringLiteral("上位机热力图：已更新；定位点仍来自 PL"));
+    } else {
+        m_heatmapExpiryTimer.stop();
+        m_referenceHeatmapLabel->setText(QStringLiteral("上位机热力图：空间响应不足"));
+    }
+}
+
+void LiveLocalizationPage::updateLocalizationSource()
+{
+    const bool host = m_settings.localizationSource == QStringLiteral("host");
+    const bool software = softwareResponseSelected();
+    const QList<QWidget *> widgets = {m_locatorCombo,
+        m_spatialResolutionModeCombo, m_neuralPeakEnhancementCheck, m_heatmapOpacitySpin,
+        m_heatmapFocusSpin, m_heatmapGridColumnsSpin, m_heatmapGridRowsSpin, m_updateIntervalSpin};
+    for (QWidget *widget : widgets)
+    {
+        const bool visible = software || (plHeatmapSelected()
+            && (widget == m_heatmapOpacitySpin || widget == m_heatmapFocusSpin));
+        widget->setEnabled(visible);
+        qobject_cast<QFormLayout *>(widget->parentWidget()->layout())->setRowVisible(widget, visible);
+    }
+    m_displayModeCombo->setEnabled(true);
+    m_neuralPeakEnhancementStrengthSpin->setEnabled(software && m_settings.neuralPeakEnhancementEnabled);
+    qobject_cast<QFormLayout *>(m_neuralPeakEnhancementStrengthSpin->parentWidget()->layout())
+        ->setRowVisible(m_neuralPeakEnhancementStrengthSpin, software);
+    m_view->setSpatialResponseActive(hostProcessingActive() || (m_active && m_settings.enabled && plHeatmapSelected()));
+    {
+        const QSignalBlocker blocker(m_displayModeCombo);
+        m_displayModeCombo->clear();
+        m_displayModeCombo->addItem(QStringLiteral("纯标记"), QStringLiteral("marker"));
+        m_displayModeCombo->addItem(host ? QStringLiteral("真实空间响应热力图")
+            : QStringLiteral("上位机热力图 + PL 定位"),
+            host ? QStringLiteral("heatmap") : QStringLiteral("fusion"));
+        if (!host)
+        {
+            m_displayModeCombo->addItem(QStringLiteral("PL 热力图 + PL 多声源"), QStringLiteral("plheatmap"));
+        }
+        const QString mode = host ? m_settings.displayMode : m_settings.plDisplayMode;
+        m_displayModeCombo->setCurrentIndex(m_displayModeCombo->findData(mode));
+        m_view->setDisplayMode(mode);
+    }
+    m_displayModeCombo->setToolTip(plHeatmapSelected()
+        ? QStringLiteral("热力图和多个定位点均由 PL 计算；需要配套新版 bit，PS 继续转发")
+        : host
+        ? QStringLiteral("热力图由上位机依据原始 PCM 计算")
+        : QStringLiteral("融合模式由上位机计算真实空间响应热力图，定位点仍使用 PL LOC3；无需更换 bit"));
+    m_locatorCombo->setToolTip(QStringLiteral("软件热力图算法，不改变 PL 上传的定位角度"));
+    m_view->setDirections(!host && m_active && m_settings.enabled && !m_calibrating
+        ? m_plController.directions() : QVector<SoundSourceDirection> {});
+    if (!host)
+    {
+        const auto directions = m_plController.directions();
+        const QString status = !m_settings.enabled
+            ? QStringLiteral("实时定位已关闭")
+            : directions.isEmpty() ? QStringLiteral("等待新的可信 PL 定位")
+                : QStringLiteral("PL 实时定位：按视频标定投影");
+        m_view->setStatusText(status);
+        m_statusLabel->setText(status);
+        m_resultLabel->setText(!m_settings.enabled || directions.isEmpty()
+            ? QStringLiteral("PL：暂无可信声源")
+            : QStringLiteral("显示方位 %1° / 俯仰 %2°，置信度 %3%")
+                .arg(directions.first().azimuthDegrees, 0, 'f', 2)
+                .arg(directions.first().elevationDegrees, 0, 'f', 2)
+                .arg(directions.first().confidence * 100.0, 0, 'f', 0));
+    }
+    m_plResultLabel->setVisible(!host);
+    m_referenceHeatmapLabel->setVisible(plFusionSelected() || plHeatmapSelected());
+    if (!hostProcessingActive()) { clearReferenceHeatmap(); }
+    emit plDirectionsChanged(m_settings.enabled ? m_plController.directions() : QVector<SoundSourceDirection> {});
+    emit workerActiveRequested(hostProcessingActive());
 }
 
 bool LiveLocalizationPage::saveCalibrationProfile(
@@ -187,6 +410,12 @@ bool LiveLocalizationPage::loadCalibrationProfile(
 {
     VideoCalibrationProfile profile;
     if (!VideoCalibrationProfileStore::load(filePath, &profile, errorMessage)) {
+        return false;
+    }
+    if (profile.camera.lens.enabled
+        && !matchesLensAspect(m_videoFrame.size(), profile.camera.lens))
+    {
+        if (errorMessage) { *errorMessage = QStringLiteral("视频宽高比与镜头标定不一致，请核对裁剪方式。"); }
         return false;
     }
 
@@ -213,6 +442,61 @@ bool LiveLocalizationPage::loadCalibrationProfile(
     rebuildSpatialGrid();
     refreshCalibrationDetails();
     refreshCalibrationOverlay();
+    return true;
+}
+
+bool LiveLocalizationPage::loadLensCalibration(const QString &filePath, QString *errorMessage)
+{
+    const auto fail = [errorMessage](const QString &message) {
+        if (errorMessage) { *errorMessage = message; }
+        return false;
+    };
+    if (m_calibrating) { return fail(QStringLiteral("请先结束四点校准。")); }
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) { return fail(file.errorString()); }
+    const auto document = QJsonDocument::fromJson(file.readAll());
+    const auto object = document.object();
+    CameraLensCalibration lens;
+    if (!document.isObject()
+        || object.value(QStringLiteral("format")).toString() != QStringLiteral("MicArrayCameraLens")
+        || object.value(QStringLiteral("version")).toInt() != 1
+        || !object.value(QStringLiteral("lens")).isObject()
+        || !cameraLensFromJson(object.value(QStringLiteral("lens")).toObject(), &lens, errorMessage))
+    {
+        return fail(QStringLiteral("镜头文件格式或参数无效。"));
+    }
+    if (!matchesLensAspect(m_videoFrame.size(), lens))
+    {
+        return fail(QStringLiteral("视频宽高比与镜头标定不一致，请核对裁剪方式。"));
+    }
+    m_settings.camera.lens = lens;
+    // Existing sample RMS belongs to the previous projection, so invalidate it.
+    m_settings.calibrationSamples.clear();
+    m_settings.calibrationRmsPixels = 0.0;
+    m_settings.calibrationReferenceVideoSize = {lens.referenceWidth, lens.referenceHeight};
+    m_savedCamera = m_settings.camera;
+    applyCameraToUi(m_settings.camera);
+    m_view->setCameraView(m_settings.camera);
+    m_rmsLabel->setText(QStringLiteral("RMS 误差：--"));
+    m_progressLabel->setText(QStringLiteral("镜头参数已载入；安装朝向需实测核对"));
+    persistSettings();
+    startNewProcessingEpoch();
+    refreshCalibrationDetails();
+    refreshCalibrationOverlay();
+    if (errorMessage) { errorMessage->clear(); }
+    return true;
+}
+
+bool LiveLocalizationPage::saveRawVideoFrame(const QString &filePath, QString *errorMessage) const
+{
+    QSaveFile file(filePath);
+    if (m_videoFrame.isNull() || !file.open(QIODevice::WriteOnly)
+        || !m_videoFrame.save(&file, "PNG") || !file.commit())
+    {
+        if (errorMessage) { *errorMessage = QStringLiteral("没有视频或原始帧保存失败。"); }
+        return false;
+    }
+    if (errorMessage) { errorMessage->clear(); }
     return true;
 }
 
@@ -248,6 +532,10 @@ void LiveLocalizationPage::buildUi()
     auto *localizationLayout = new QFormLayout(localizationGroup);
     m_enabledCheck = new QCheckBox(QStringLiteral("启用实时定位"), localizationGroup);
     m_enabledCheck->setObjectName(QStringLiteral("liveLocalizationEnabledCheck"));
+    m_sourceCombo = new QComboBox(localizationGroup);
+    m_sourceCombo->setObjectName(QStringLiteral("liveLocalizationSourceCombo"));
+    m_sourceCombo->addItem(QStringLiteral("FPGA 定位（PL LOC3）"), QStringLiteral("pl"));
+    m_sourceCombo->addItem(QStringLiteral("上位机 SRP-PHAT（参考分析）"), QStringLiteral("host"));
     m_locatorCombo = new QComboBox(localizationGroup);
     m_locatorCombo->setObjectName(QStringLiteral("liveLocalizationLocatorCombo"));
     SoundSourceLocatorRegistry registry;
@@ -325,6 +613,7 @@ void LiveLocalizationPage::buildUi()
         "但误报风险越高；数值越高则判定越严格。建议从 0.40 开始调节。"));
     m_confidenceSpin->installEventFilter(this);
     localizationLayout->addRow(m_enabledCheck);
+    localizationLayout->addRow(QStringLiteral("定位来源"), m_sourceCombo);
     localizationLayout->addRow(QStringLiteral("算法"), m_locatorCombo);
     localizationLayout->addRow(QStringLiteral("显示方式"), m_displayModeCombo);
     localizationLayout->addRow(
@@ -348,6 +637,14 @@ void LiveLocalizationPage::buildUi()
     localizationLayout->addRow(
         QStringLiteral("神经锐化强度"),
         m_neuralPeakEnhancementStrengthSpin);
+    m_plResultLabel = new QLabel(QStringLiteral("PL 定位：等待 LOC3 新帧"), localizationGroup);
+    m_plResultLabel->setObjectName(QStringLiteral("plLocationResultLabel"));
+    m_plResultLabel->setWordWrap(true);
+    localizationLayout->addRow(m_plResultLabel);
+    m_referenceHeatmapLabel = new QLabel(QStringLiteral("上位机热力图：等待原始阵列音频"), localizationGroup);
+    m_referenceHeatmapLabel->setObjectName(QStringLiteral("referenceHeatmapStatusLabel"));
+    m_referenceHeatmapLabel->setWordWrap(true);
+    localizationLayout->addRow(m_referenceHeatmapLabel);
     realtimePanelLayout->addWidget(localizationGroup);
     realtimePanelLayout->addStretch();
     realtimeTab->setWidget(realtimePanel);
@@ -370,6 +667,26 @@ void LiveLocalizationPage::buildUi()
     cameraLayout->addRow(QStringLiteral("水平视场角"), m_horizontalFovSpin);
     cameraLayout->addRow(QStringLiteral("垂直视场角"), m_verticalFovSpin);
     cameraLayout->addRow(QStringLiteral("滚转角"), m_rollSpin);
+    m_lensEnabledCheck = new QCheckBox(QStringLiteral("使用镜头畸变投影"), cameraGroup);
+    m_lensEnabledCheck->setObjectName(QStringLiteral("cameraLensEnabledCheck"));
+    m_lensEnabledCheck->setToolTip(QStringLiteral("按镜头模型将方向投到原始视频；视频画面保持原样。"));
+    m_lensStatusLabel = new QLabel(QStringLiteral("镜头参数：未载入"), cameraGroup);
+    m_lensStatusLabel->setObjectName(QStringLiteral("cameraLensStatusLabel"));
+    m_lensStatusLabel->setWordWrap(true);
+    m_videoGeometryLabel = new QLabel(QStringLiteral("原始视频尺寸：等待视频"), cameraGroup);
+    m_videoGeometryLabel->setObjectName(QStringLiteral("rawVideoGeometryLabel"));
+    m_importLensButton = new QPushButton(QStringLiteral("载入镜头参数"), cameraGroup);
+    m_importLensButton->setObjectName(QStringLiteral("importCameraLensButton"));
+    m_saveRawFrameButton = new QPushButton(QStringLiteral("保存原始视频帧"), cameraGroup);
+    m_saveRawFrameButton->setObjectName(QStringLiteral("saveRawVideoFrameButton"));
+    m_saveRawFrameButton->setEnabled(false);
+    auto *lensButtons = new QHBoxLayout;
+    lensButtons->addWidget(m_importLensButton);
+    lensButtons->addWidget(m_saveRawFrameButton);
+    cameraLayout->addRow(m_lensEnabledCheck);
+    cameraLayout->addRow(m_lensStatusLabel);
+    cameraLayout->addRow(m_videoGeometryLabel);
+    cameraLayout->addRow(lensButtons);
     auto *restoreRow = new QHBoxLayout;
     m_restoreSavedButton = new QPushButton(QStringLiteral("恢复已保存"), cameraGroup);
     m_restoreDefaultsButton = new QPushButton(QStringLiteral("恢复默认"), cameraGroup);
@@ -518,13 +835,61 @@ void LiveLocalizationPage::updateCalibrationTableHeight()
 
 void LiveLocalizationPage::connectUi()
 {
+    connect(m_lensEnabledCheck, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (m_calibrating)
+        {
+            const QSignalBlocker blocker(m_lensEnabledCheck);
+            m_lensEnabledCheck->setChecked(m_settings.camera.lens.enabled);
+            return;
+        }
+        if (enabled && !matchesLensAspect(m_videoFrame.size(), m_settings.camera.lens))
+        {
+            const QSignalBlocker blocker(m_lensEnabledCheck);
+            m_lensEnabledCheck->setChecked(false);
+            m_lensStatusLabel->setText(QStringLiteral("视频宽高比不匹配，无法启用镜头投影。"));
+            return;
+        }
+        m_settings.camera.lens.enabled = enabled;
+        m_settings.calibrationSamples.clear();
+        m_settings.calibrationRmsPixels = 0.0;
+        m_rmsLabel->setText(QStringLiteral("RMS 误差：--"));
+        applyCameraToUi(m_settings.camera);
+        updateCameraFromUi(true);
+        startNewProcessingEpoch();
+        refreshCalibrationDetails();
+    });
+    connect(m_importLensButton, &QPushButton::clicked, this, [this] {
+        const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("载入镜头参数"), {},
+                                                      QStringLiteral("JSON 镜头参数 (*.json)"));
+        if (path.isEmpty()) { return; }
+        QString error;
+        m_statusLabel->setText(loadLensCalibration(path, &error)
+            ? QStringLiteral("镜头参数已载入，请进行实际声源验证") : error);
+    });
+    connect(m_saveRawFrameButton, &QPushButton::clicked, this, [this] {
+        const auto path = QFileDialog::getSaveFileName(this, QStringLiteral("保存原始视频帧"),
+            QStringLiteral("camera-raw.png"), QStringLiteral("PNG 图像 (*.png)"));
+        if (path.isEmpty()) { return; }
+        QString error;
+        m_statusLabel->setText(saveRawVideoFrame(path, &error)
+            ? QStringLiteral("原始帧已保存：%1 × %2").arg(m_videoFrame.width()).arg(m_videoFrame.height())
+            : error);
+    });
+    connect(m_sourceCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (m_calibrating) { cancelCalibration(); }
+        m_settings.localizationSource = m_sourceCombo->itemData(index).toString();
+        startNewProcessingEpoch();
+        updateLocalizationSource();
+        persistSettings();
+    });
     connect(m_enabledCheck, &QCheckBox::toggled, this, [this](bool enabled) {
         m_settings.enabled = enabled;
         startNewProcessingEpoch();
         m_view->setSpatialResponseActive(
-            m_active && enabled);
+            hostProcessingActive());
         persistSettings();
-        emit workerActiveRequested(m_active && enabled);
+        emit workerActiveRequested(hostProcessingActive());
+        updateLocalizationSource();
     });
     connect(m_locatorCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
         m_settings.locatorId = m_locatorCombo->itemData(index).toString();
@@ -533,8 +898,13 @@ void LiveLocalizationPage::connectUi()
         emit configureWorkerRequested(m_settings);
     });
     connect(m_displayModeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
-        m_settings.displayMode = m_displayModeCombo->itemData(index).toString();
-        m_view->setDisplayMode(m_settings.displayMode);
+        const QString mode = m_displayModeCombo->itemData(index).toString();
+        if (m_settings.localizationSource == QStringLiteral("pl")) {
+            m_settings.plDisplayMode = mode;
+        } else {
+            m_settings.displayMode = mode;
+        }
+        startNewProcessingEpoch();
         persistSettings();
     });
     connect(m_spatialResolutionModeCombo,
@@ -673,7 +1043,17 @@ void LiveLocalizationPage::connectUi()
                     return;
                 }
                 m_pendingCalibrationPoint = point;
-                emit calibrationSampleRequested(++m_calibrationRequestId);
+                const quint64 request = ++m_calibrationRequestId;
+                if (m_settings.localizationSource == QStringLiteral("pl")) {
+                    VideoCalibrationSample sample;
+                    QString error;
+                    const bool valid = m_plController.stableCalibrationSample(&sample, &error);
+                    QTimer::singleShot(0, this, [this, request, valid, sample, error] {
+                        acceptCalibrationDirection(request, valid, sample, error);
+                    });
+                } else {
+                    emit calibrationSampleRequested(request);
+                }
                 m_progressLabel->setText(QStringLiteral("正在评估第 %1/4 点的声源稳定性…")
                                              .arg(m_workingSamples.size() + 1));
             });
@@ -684,6 +1064,8 @@ void LiveLocalizationPage::restoreSettings()
     m_settings = m_settingsStore != nullptr
         ? m_settingsStore->liveLocalization() : LiveLocalizationSettings {};
     m_savedCamera = m_settings.camera;
+    m_sourceCombo->setCurrentIndex(std::max(0, m_sourceCombo->findData(m_settings.localizationSource)));
+    m_plController.setConfidenceThreshold(m_settings.confidenceThreshold);
     m_enabledCheck->setChecked(m_settings.enabled);
     m_locatorCombo->setCurrentIndex(
         std::max(0, m_locatorCombo->findData(m_settings.locatorId)));
@@ -734,6 +1116,16 @@ void LiveLocalizationPage::applyCameraToUi(const CameraViewSettings &camera)
     const QSignalBlocker c(m_horizontalFovSpin);
     const QSignalBlocker d(m_verticalFovSpin);
     const QSignalBlocker e(m_rollSpin);
+    const QSignalBlocker lensBlocker(m_lensEnabledCheck);
+    m_settings.camera.lens = camera.lens;
+    m_lensEnabledCheck->setEnabled(camera.lens.isValid());
+    m_lensEnabledCheck->setChecked(camera.lens.enabled);
+    m_horizontalFovSpin->setEnabled(!camera.lens.enabled);
+    m_verticalFovSpin->setEnabled(!camera.lens.enabled);
+    m_lensStatusLabel->setText(camera.lens.isValid()
+        ? QStringLiteral("镜头模型：鱼眼；参考尺寸 %1 × %2；安装朝向需实测核对")
+            .arg(camera.lens.referenceWidth).arg(camera.lens.referenceHeight)
+        : QStringLiteral("镜头参数：未载入"));
     m_centerAzimuthSpin->setValue(camera.centerAzimuthDegrees);
     m_centerElevationSpin->setValue(camera.centerElevationDegrees);
     m_horizontalFovSpin->setValue(camera.horizontalFovDegrees);
@@ -751,6 +1143,7 @@ void LiveLocalizationPage::updateCameraFromUi(bool persist)
     m_view->setCameraView(m_settings.camera);
     rebuildSpatialGrid();
     refreshCalibrationOverlay();
+    emit plDirectionsChanged(m_settings.enabled ? m_plController.directions() : QVector<SoundSourceDirection> {});
     if (persist) {
         m_savedCamera = m_settings.camera;
         persistSettings();
@@ -759,11 +1152,17 @@ void LiveLocalizationPage::updateCameraFromUi(bool persist)
 
 void LiveLocalizationPage::startNewProcessingEpoch()
 {
+    m_hasPlMapBarrier = m_plController.hasObservation();
+    m_plMapFrameBarrier = m_plController.currentFrame();
+    emit workerActiveRequested(false);
+    m_heatmapExpiryTimer.stop();
+    m_plController.setConfidenceThreshold(m_settings.confidenceThreshold);
     m_view->setDirections({});
-    m_view->setSpatialResponse({});
+    clearReferenceHeatmap();
     m_resultLabel->setText(
         QStringLiteral("方位角 --　俯仰角 --"));
     rebuildSpatialGrid();
+    updateLocalizationSource();
 }
 
 void LiveLocalizationPage::rebuildSpatialGrid()
@@ -771,7 +1170,7 @@ void LiveLocalizationPage::rebuildSpatialGrid()
     const quint64 generation = ++m_gridGeneration;
     m_view->setExpectedSpatialResponseGeneration(generation);
     SpatialResponseGrid grid;
-    if (m_videoFrame.isNull()) {
+    if (m_videoFrame.isNull() || !softwareResponseSelected()) {
         emit spatialGridRequested(grid, generation);
         return;
     }
@@ -796,6 +1195,7 @@ void LiveLocalizationPage::startCalibration()
         return;
     }
     m_calibrating = true;
+    clearReferenceHeatmap();
     m_workingSamples.clear();
     m_view->setCalibrationMode(true);
     m_view->setDirections({});

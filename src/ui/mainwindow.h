@@ -74,6 +74,8 @@ private slots:
     void showArrayFrame(const DecodedAudioFrame &frame);
     void renderPendingVideoFrame();
     void renderPendingAudioFrame();
+    void updateDebugFrame(const HostFrame &frame);
+    void renderPendingDebugFrame();
     void updateAudioSettingsFromUi();
     void updateHealthSnapshot();
     void enqueueAudioFrame(const HostFrame &frame);
@@ -108,7 +110,6 @@ private:
     void connectSignals();
     void loadSettings();
     void saveSettings();
-    void updateDebugFrame(const HostFrame &frame);
     void updateDebugError(const ParseError &error);
     void updateCalibrationGrid(const DecodedAudioFrame &frame);
     ControlValues collectControlValues() const;
@@ -151,6 +152,12 @@ private:
     GainConfiguration m_gainConfiguration;
     QTimer m_videoRenderTimer;
     QTimer m_audioRenderTimer;
+    QTimer m_debugRenderTimer;
+    QElapsedTimer m_lastDebugRender;
+    HostFrame m_pendingDebugFrame;
+    bool m_hasPendingDebugFrame = false;
+    quint64 m_debugFramesReceived = 0;
+    quint64 m_debugFramesRendered = 0;
     QImage m_pendingVideoImage;
     double m_pendingVideoFps = 0.0;
     quint32 m_pendingVideoTimestampSeconds = 0;
@@ -212,6 +219,7 @@ private:
     QLabel *m_presentationProtocolStatsLabel = nullptr;
     QLabel *m_presentationTransitionOverlay = nullptr;
     QLabel *m_debugMetaLabel = nullptr;
+    QWidget *m_debugPage = nullptr;
     QLabel *m_debugHeadLabel = nullptr;
     QLabel *m_debugTailLabel = nullptr;
     QLabel *m_debugPostTailLabel = nullptr;
@@ -247,6 +255,9 @@ private:
     QToolButton *m_themeButton = nullptr;
     QPushButton *m_exportDiagnosticsButton = nullptr;
     QLineEdit *m_recordingDirectoryEdit = nullptr;
+    bool m_activeRecordingRaw = true;
+    QCheckBox *m_recordRawPcmCheck = nullptr;
+    QLabel *m_plLocationStatsLabel = nullptr;
     QComboBox *m_recordingSourceModeCombo = nullptr;
     QStackedWidget *m_recordingSourceStack = nullptr;
     QComboBox *m_recordingFileLayoutCombo = nullptr;
@@ -262,6 +273,7 @@ private:
     std::optional<RecordingInputSource> m_activeRecordingInputSource;
     QString m_lastRecordingError;
     bool m_controlDirty = false;
+    quint64 m_plSpatialEpoch = 0;
 };
 
 } // namespace MicArray

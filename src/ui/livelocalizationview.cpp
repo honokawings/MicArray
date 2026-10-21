@@ -142,7 +142,9 @@ void LiveLocalizationView::paintEvent(QPaintEvent *event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    if (m_displayMode == QStringLiteral("heatmap")) {
+    painter.setClipRect(target);
+    const bool fusion = m_displayMode == QStringLiteral("fusion") || m_displayMode == QStringLiteral("plheatmap");
+    if (m_displayMode == QStringLiteral("heatmap") || fusion) {
         const QImage heatmap = heatmapImage();
         if (!heatmap.isNull()) {
             painter.setOpacity(m_heatmapOpacity);
@@ -151,7 +153,7 @@ void LiveLocalizationView::paintEvent(QPaintEvent *event)
         }
     }
     for (const SoundSourceDirection &direction : m_directions) {
-        if (m_displayMode != QStringLiteral("marker")) {
+        if (m_displayMode != QStringLiteral("marker") && !fusion) {
             break;
         }
         const ProjectionResult projected = projectDirection(direction, m_camera);
@@ -167,12 +169,35 @@ void LiveLocalizationView::paintEvent(QPaintEvent *event)
         painter.drawEllipse(point, 9, 9);
         painter.drawLine(point + QPointF(-15, 0), point + QPointF(15, 0));
         painter.drawLine(point + QPointF(0, -15), point + QPointF(0, 15));
-        painter.drawText(point + QPointF(13, -10),
-                         QStringLiteral("%1° / %2°  %3%")
+        const QString label = QStringLiteral("%4%1° / %2°  %3%")
                              .arg(direction.azimuthDegrees, 0, 'f', 1)
                              .arg(direction.elevationDegrees, 0, 'f', 1)
-                             .arg(direction.confidence * 100.0, 0, 'f', 0));
-        break;
+                             .arg(direction.confidence * 100.0, 0, 'f', 0)
+                             .arg(direction.sourceId >= 0
+                                 ? QStringLiteral("PL 声源%1：").arg(direction.sourceId + 1)
+                                 : QString());
+        const QString displayed = projected.inView ? label : QStringLiteral("视野外：") + label;
+        const double width = painter.fontMetrics().horizontalAdvance(displayed);
+        double labelX = point.x() + 13;
+        if (labelX + width > target.right() - 4) { labelX = point.x() - width - 13; }
+        labelX = std::clamp(labelX, target.left() + 4,
+                            std::max(target.left() + 4, target.right() - width - 4));
+        const double labelY = std::clamp(point.y() - 10,
+                                         target.top() + painter.fontMetrics().ascent() + 4,
+                                         std::max(target.top() + painter.fontMetrics().ascent() + 4, target.bottom() - 4));
+        painter.drawText(QPointF(labelX, labelY), displayed);
+    }
+    if (fusion) {
+        const QString sources = m_displayMode == QStringLiteral("plheatmap")
+            ? QStringLiteral("热力图：PL 空间响应 37×37   定位点：PL 多峰精化")
+            : QStringLiteral("热力图：上位机参考   定位点：PL");
+        painter.setPen(Qt::white);
+        painter.setBrush(QColor(0, 0, 0, 150));
+        const QRectF label = painter.boundingRect(
+            target.adjusted(12, 12, -12, -12), Qt::AlignLeft | Qt::AlignTop, sources);
+        painter.drawRoundedRect(label.adjusted(-7, -4, 7, 4), 4, 4);
+        painter.drawText(target.adjusted(12, 12, -12, -12),
+                         Qt::AlignLeft | Qt::AlignTop, sources);
     }
     for (int index = 0; index < m_calibrationSamples.size(); ++index) {
         const QPointF normalized = m_calibrationSamples.at(index).normalizedVideoPoint;

@@ -8,6 +8,8 @@
 
 #include "app/appsettings.h"
 #include "media/audioframedecoder.h"
+#include "media/audiolocationsideband.h"
+#include "media/plspatialmap.h"
 #include "media/channelgainprocessor.h"
 
 namespace MicArray {
@@ -28,6 +30,7 @@ public slots:
     void setChannelAutomatic(int channel, bool automatic);
     void setAllAutomatic(bool automatic);
     void resetGain();
+    void resetSpatialMaps(quint64 epoch);
 
     QAudioFormat format() const { return m_format; }
     double peakLevel() const { return m_peakLevel; }
@@ -40,6 +43,9 @@ public slots:
 signals:
     void levelChanged(double peakLevel, qint64 bytesReceived, quint32 timestampSeconds, quint32 timestampMicros);
     void arrayFrameDecoded(const DecodedAudioFrame &frame);
+    void plLocationDecoded(const PlLocationResult &location);
+    void plSpatialMapDecoded(const PlSpatialMap &map);
+    void rawFrameReady(const QByteArray &payload, quint32 timestampSeconds, quint32 timestampMicros);
     void adjustedFrameReady(const QByteArray &payload,
                             quint32 timestampSeconds,
                             quint32 timestampMicros,
@@ -57,6 +63,8 @@ private:
     int m_droppedFrames = 0;
     AudioFrameDecoder m_decoder;
     ChannelGainProcessor m_gainProcessor;
+    PlSpatialMapAssembler m_spatialAssembler;
+    quint64 m_spatialEpoch = 0;
 };
 
 } // namespace MicArray

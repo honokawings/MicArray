@@ -5,6 +5,8 @@
 #include <QString>
 #include <QVector>
 
+#include <array>
+
 namespace MicArray {
 
 struct MicrophonePosition {
@@ -54,6 +56,22 @@ struct SoundSourceDirection {
     double residualSamples = 0.0;
     int validPairCount = 0;
     qint64 centerSample = 0;
+    int sourceId = -1;
+};
+
+struct CameraLensCalibration {
+    bool enabled = false;
+    // Intrinsics in full-video normalized coordinates, excluding letterboxing.
+    double fx = 0.0;
+    double fy = 0.0;
+    double cx = 0.5;
+    double cy = 0.5;
+    std::array<double, 4> coefficients {};
+    int referenceWidth = 0;
+    int referenceHeight = 0;
+
+    bool isValid() const;
+    bool operator==(const CameraLensCalibration &) const = default;
 };
 
 struct CameraViewSettings {
@@ -62,6 +80,7 @@ struct CameraViewSettings {
     double horizontalFovDegrees = 90.0;
     double verticalFovDegrees = 60.0;
     double rollDegrees = 0.0;
+    CameraLensCalibration lens;
 
     bool isValid() const;
     bool operator==(const CameraViewSettings &) const = default;

@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-21",
+  "scope": "Fresh publication worktree; production DSP unchanged from frozen R2.",
+  "configure_and_build_native_exit_code": 0,
+  "full_ctest_with_private_golden": {
+    "suites": 16,
+    "passed": 15,
+    "failed": 1,
+    "seconds": 210.05,
+    "failure": {
+      "suite": "test_analysis",
+      "test": "evaluatesMaximumSpatialGridWithinCpuBudget",
+      "median_ms": 109,
+      "budget_ms": 100,
+      "isolated_retry_median_ms": 110,
+      "isolated_retry_failed": true
+    },
+    "denoise_and_three_streaming_suites_passed": true
+  },
+  "public_fixture_absent_retest": {
+    "suites": [
+      {
+        "suite": "test_pldenoise",
+        "passed": 28,
+        "failed": 0,
+        "skipped": 6
+      },
+      {
+        "suite": "test_plwiener",
+        "passed": 16,
+        "failed": 0,
+        "skipped": 4
+      },
+      {
+        "suite": "test_plfull",
+        "passed": 34,
+        "failed": 0,
+        "skipped": 4
+      }
+    ],
+    "total_skipped": 14,
+    "native_exit_code": 0
+  },
+  "python_unittest": {
+    "tests": 45,
+    "failed": 0,
+    "native_exit_code": 0
+  },
+  "mock_server_self_test": {
+    "passed": true,
+    "native_exit_code": 0
+  },
+  "field_feedback": {
+    "source": "Human user in task conversation",
+    "audio_stop_reported_resolved": true,
+    "scope": "User report, not an independent acoustic benchmark or programmed-device readback."
+  },
+  "limits": [
+    "No fresh whole-board clean-environment build or repeat route was performed for publication.",
+    "Routed design timing is from the frozen Stage3 implementation.",
+    "No objective acoustic equivalence, measured SNR improvement, or end-to-end latency acceptance."
+  ]
+}

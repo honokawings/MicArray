@@ -16,9 +16,10 @@ namespace {
 using Parameters = std::array<double, 5>;
 using Matrix = std::array<std::array<double, 5>, 5>;
 
-CameraViewSettings cameraFromParameters(const Parameters &parameters)
+CameraViewSettings cameraFromParameters(const Parameters &parameters,
+                                        const CameraViewSettings &base)
 {
-    CameraViewSettings camera;
+    CameraViewSettings camera = base;
     camera.centerAzimuthDegrees = parameters[0];
     camera.centerElevationDegrees = parameters[1];
     camera.horizontalFovDegrees = parameters[2];
@@ -47,12 +48,13 @@ void clampParameters(Parameters *parameters)
 
 bool residualsFor(const QVector<VideoCalibrationSample> &samples,
                   const Parameters &parameters,
+                  const CameraViewSettings &base,
                   QVector<double> *residuals,
                   double *cost)
 {
     residuals->clear();
     *cost = 0.0;
-    const CameraViewSettings camera = cameraFromParameters(parameters);
+    const CameraViewSettings camera = cameraFromParameters(parameters, base);
     if (!camera.isValid()) {
         return false;
     }
@@ -149,12 +151,19 @@ CameraViewFitResult fitCameraView(const QVector<VideoCalibrationSample> &samples
                                   const QSize &videoSize)
 {
     CameraViewFitResult result;
+    if (initial.lens.enabled && !initial.lens.isValid())
+    {
+        result.error = QStringLiteral("镜头参数无效");
+        return result;
+    }
     if (!observationsAreValid(samples) || videoSize.width() <= 0 || videoSize.height() <= 0) {
         result.error = QStringLiteral("四点校准数据不足或位置退化");
         return result;
     }
 
-    QVector<CameraViewSettings> starts {initial, CameraViewSettings {}};
+    CameraViewSettings neutral;
+    neutral.lens = initial.lens;
+    QVector<CameraViewSettings> starts {initial, neutral};
     CameraViewSettings wider = initial;
     wider.horizontalFovDegrees = std::clamp(initial.horizontalFovDegrees + 20.0, 10.0, 170.0);
     wider.verticalFovDegrees = std::clamp(initial.verticalFovDegrees + 15.0, 10.0, 170.0);
@@ -163,24 +172,28 @@ CameraViewFitResult fitCameraView(const QVector<VideoCalibrationSample> &samples
     double bestCost = std::numeric_limits<double>::infinity();
     Parameters bestParameters {};
     for (const CameraViewSettings &start : std::as_const(starts)) {
-        Parameters parameters = parametersFromCamera(start.isValid() ? start : CameraViewSettings {});
+        Parameters parameters = parametersFromCamera(start.isValid() ? start : neutral);
         clampParameters(&parameters);
         double lambda = 1.0e-3;
         QVector<double> residuals;
         double cost = 0.0;
-        if (!residualsFor(samples, parameters, &residuals, &cost)) {
+        if (!residualsFor(samples, parameters, initial, &residuals, &cost)) {
             continue;
         }
         for (int iteration = 0; iteration < 100; ++iteration) {
             QVector<std::array<double, 5>> jacobian(residuals.size());
             for (int parameter = 0; parameter < 5; ++parameter) {
+                if (initial.lens.enabled && (parameter == 2 || parameter == 3))
+                {
+                    continue;
+                }
                 Parameters shifted = parameters;
                 const double step = parameter >= 2 && parameter <= 3 ? 0.02 : 0.01;
                 shifted[parameter] += step;
                 clampParameters(&shifted);
                 QVector<double> shiftedResiduals;
                 double shiftedCost = 0.0;
-                if (!residualsFor(samples, shifted, &shiftedResiduals, &shiftedCost)
+                if (!residualsFor(samples, shifted, initial, &shiftedResiduals, &shiftedCost)
                     || shiftedResiduals.size() != residuals.size()) {
                     continue;
                 }
@@ -220,7 +233,7 @@ CameraViewFitResult fitCameraView(const QVector<VideoCalibrationSample> &samples
             clampParameters(&candidate);
             QVector<double> candidateResiduals;
             double candidateCost = 0.0;
-            if (residualsFor(samples, candidate, &candidateResiduals, &candidateCost)
+            if (residualsFor(samples, candidate, initial, &candidateResiduals, &candidateCost)
                 && candidateCost < cost) {
                 parameters = candidate;
                 residuals = candidateResiduals;
@@ -243,7 +256,7 @@ CameraViewFitResult fitCameraView(const QVector<VideoCalibrationSample> &samples
         result.error = QStringLiteral("视频视角参数拟合未收敛");
         return result;
     }
-    result.camera = cameraFromParameters(bestParameters);
+    result.camera = cameraFromParameters(bestParameters, initial);
     double squaredPixels = 0.0;
     double maximumResidual = 0.0;
     for (const VideoCalibrationSample &sample : samples) {

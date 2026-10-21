@@ -8,6 +8,7 @@
 #include "media/bandpassfilter.h"
 #include "media/logmmseprocessor.h"
 #include "media/wienernoisereducer.h"
+#include "media/pldenoisetransport.h"
 
 #include <QAudioFormat>
 #include <QAudioSink>
@@ -41,12 +42,19 @@ public slots:
     void processRawFrame(const QByteArray &payload,
                          quint32 timestampSeconds,
                          quint32 timestampMicros);
+    void authorizePlConfiguration(quint16 configId, bool restartStream);
+    void processPlBeamFrame(const PlBeamFrame &frame);
+    void processPlWienerFrame(const PlWienerFrame &frame);
+    void processPlFinalFrame(const PlFinalFrame &frame);
+    void invalidatePlStream(const QString &reason);
+    void setDiagnosticStageCapture(bool enabled) { m_diagnosticStageCapture = enabled; }
     void shutdown();
 
 signals:
     void frameConsumed();
     void plotFrameReady(const NoiseReductionPlotFrame &frame);
     void recordingFrameReady(const NoiseReductionRecordingFrame &frame);
+    void diagnosticStageFrameReady(const NoiseReductionRecordingFrame &frame);
     void warningRaised(const QString &message);
     void statusChanged(const QString &message);
 
@@ -73,6 +81,12 @@ private:
     void ensureAudioOutput();
     void closeAudioOutput();
     void resetProcessing();
+    void processInputFrame(const NoiseReductionInputFrame &input,
+                           quint32 timestampSeconds, quint32 timestampMicros);
+    void processSuppressionFrame(const NoiseReductionInputFrame &input, QVector<float> denoised,
+                                 quint32 timestampSeconds, quint32 timestampMicros);
+    void finishOutputFrame(const NoiseReductionInputFrame &input, const QVector<float> &denoised,
+                           quint32 timestampSeconds, quint32 timestampMicros);
     QVector<float> applyPostProcessing(
         QVector<float> samples,
         std::array<QVector<float>, 4> *capturedStages);
@@ -98,6 +112,13 @@ private:
     int m_sampleRate = 48000;
     bool m_active = false;
     bool m_shutdown = false;
+    bool m_plAuthorized = false;
+    bool m_fullProfileCompatible = false;
+    bool m_diagnosticStageCapture = false;
+    bool m_plHaveSequence = false;
+    quint16 m_plExpectedConfig = 0;
+    quint16 m_plStreamConfig = 0;
+    quint32 m_plNextSample = 0;
     qint64 m_lastPlotTimestamp = -1;
     NoiseReductionFrameDecoder m_decoder;
     FractionalDelayBeamformer m_beamformer;

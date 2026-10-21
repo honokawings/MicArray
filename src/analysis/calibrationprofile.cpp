@@ -133,6 +133,65 @@ bool sampleFromJson(const QJsonValue &value,
 
 } // namespace
 
+QJsonObject cameraLensToJson(const CameraLensCalibration &lens)
+{
+    QJsonArray coefficients;
+    for (const double coefficient : lens.coefficients)
+    {
+        coefficients.append(coefficient);
+    }
+    return {
+        {QStringLiteral("model"), QStringLiteral("opencv-fisheye")},
+        {QStringLiteral("enabled"), lens.enabled},
+        {QStringLiteral("fxNormalized"), lens.fx},
+        {QStringLiteral("fyNormalized"), lens.fy},
+        {QStringLiteral("cxNormalized"), lens.cx},
+        {QStringLiteral("cyNormalized"), lens.cy},
+        {QStringLiteral("coefficients"), coefficients},
+        {QStringLiteral("referenceWidth"), lens.referenceWidth},
+        {QStringLiteral("referenceHeight"), lens.referenceHeight},
+    };
+}
+
+bool cameraLensFromJson(const QJsonObject &object,
+                        CameraLensCalibration *lens,
+                        QString *errorMessage)
+{
+    CameraLensCalibration candidate;
+    if (!lens || object.value(QStringLiteral("model")).toString()
+                     != QStringLiteral("opencv-fisheye")
+        || !object.value(QStringLiteral("enabled")).isBool()
+        || !readNumber(object, QStringLiteral("fxNormalized"), &candidate.fx, errorMessage)
+        || !readNumber(object, QStringLiteral("fyNormalized"), &candidate.fy, errorMessage)
+        || !readNumber(object, QStringLiteral("cxNormalized"), &candidate.cx, errorMessage)
+        || !readNumber(object, QStringLiteral("cyNormalized"), &candidate.cy, errorMessage)
+        || !readInteger(object, QStringLiteral("referenceWidth"), &candidate.referenceWidth, errorMessage)
+        || !readInteger(object, QStringLiteral("referenceHeight"), &candidate.referenceHeight, errorMessage))
+    {
+        return fail(QStringLiteral("镜头模型或参数无效。"), errorMessage);
+    }
+    const auto values = object.value(QStringLiteral("coefficients")).toArray();
+    if (values.size() != 4)
+    {
+        return fail(QStringLiteral("镜头模型需要四个畸变系数。"), errorMessage);
+    }
+    for (int index = 0; index < 4; ++index)
+    {
+        if (!values[index].isDouble())
+        {
+            return fail(QStringLiteral("镜头畸变系数必须是有限数值。"), errorMessage);
+        }
+        candidate.coefficients[index] = values[index].toDouble();
+    }
+    candidate.enabled = object.value(QStringLiteral("enabled")).toBool();
+    if (!candidate.isValid())
+    {
+        return fail(QStringLiteral("镜头参数无效或投影在前半球发生折叠。"), errorMessage);
+    }
+    *lens = candidate;
+    return true;
+}
+
 bool VideoCalibrationProfileStore::validate(const VideoCalibrationProfile &profile,
                                             QString *errorMessage)
 {
@@ -199,7 +258,7 @@ bool VideoCalibrationProfileStore::save(const QString &filePath,
     for (const VideoCalibrationSample &sample : profile.samples) {
         samples.append(sampleToJson(sample));
     }
-    const QJsonObject root {
+    QJsonObject root {
         {QStringLiteral("format"), QString::fromLatin1(ProfileFormat)},
         {QStringLiteral("version"), ProfileVersion},
         {QStringLiteral("savedAtUtc"),
@@ -217,6 +276,12 @@ bool VideoCalibrationProfileStore::save(const QString &filePath,
         {QStringLiteral("calibrationRmsPixels"), profile.calibrationRmsPixels},
         {QStringLiteral("samples"), samples},
     };
+
+    if (profile.camera.lens.isValid())
+    {
+        root.insert(QStringLiteral("version"), 2);
+        root.insert(QStringLiteral("lens"), cameraLensToJson(profile.camera.lens));
+    }
 
     QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
@@ -259,7 +324,7 @@ bool VideoCalibrationProfileStore::load(const QString &filePath,
         || root.value(QStringLiteral("format")).toString()
             != QString::fromLatin1(ProfileFormat)
         || !readInteger(root, QStringLiteral("version"), &version, errorMessage)
-        || version != ProfileVersion) {
+        || (version != ProfileVersion && version != 2)) {
         return fail(QStringLiteral("校准文件格式或版本不受支持。"), errorMessage);
     }
 
@@ -283,6 +348,15 @@ bool VideoCalibrationProfileStore::load(const QString &filePath,
     if (!cameraFromJson(root.value(QStringLiteral("camera")),
                         &candidate.camera, errorMessage)) {
         return false;
+    }
+    if (version == 2)
+    {
+        if (!root.value(QStringLiteral("lens")).isObject()
+            || !cameraLensFromJson(root.value(QStringLiteral("lens")).toObject(),
+                                    &candidate.camera.lens, errorMessage))
+        {
+            return fail(QStringLiteral("镜头标定数据缺失或无效。"), errorMessage);
+        }
     }
     const QJsonValue referenceValue = root.value(QStringLiteral("referenceVideo"));
     if (!referenceValue.isObject()) {

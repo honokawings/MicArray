@@ -1,4 +1,5 @@
 #include "ui/mainwindow.h"
+#include "analysis/directionprojection.h"
 
 #include "ui/displayformat.h"
 #include "ui/uitheme.h"
@@ -37,6 +38,7 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <utility>
 
 namespace MicArray {
 namespace {
@@ -81,6 +83,7 @@ MainWindow::MainWindow(QWidget *parent)
     qRegisterMetaType<DecodedAudioFrame>("MicArray::DecodedAudioFrame");
     qRegisterMetaType<GainConfiguration>("MicArray::GainConfiguration");
     qRegisterMetaType<GainSnapshot>("MicArray::GainSnapshot");
+    qRegisterMetaType<PlSpatialMap>("MicArray::PlSpatialMap");
 
     m_audioProcessor = new AudioProcessor;
     m_videoDecoder = new VideoDecoder;
@@ -99,8 +102,13 @@ MainWindow::MainWindow(QWidget *parent)
     setProperty("audioFramesInFlight", 0);
     m_videoRenderTimer.setInterval(33);
     m_audioRenderTimer.setInterval(33);
+    m_debugRenderTimer.setInterval(50);
+    m_debugRenderTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_videoRenderTimer, &QTimer::timeout, this, &MainWindow::renderPendingVideoFrame);
     connect(&m_audioRenderTimer, &QTimer::timeout, this, &MainWindow::renderPendingAudioFrame);
+    connect(&m_debugRenderTimer, &QTimer::timeout, this, &MainWindow::renderPendingDebugFrame);
+    setProperty("debugFramesReceived", qulonglong(0));
+    setProperty("debugFramesRendered", qulonglong(0));
     m_videoRenderTimer.start();
     m_audioRenderTimer.start();
     m_healthTimer.setInterval(1000);
@@ -135,6 +143,7 @@ MainWindow::~MainWindow()
     m_healthTimer.stop();
     m_videoRenderTimer.stop();
     m_audioRenderTimer.stop();
+    m_debugRenderTimer.stop();
     m_audioFrameQueue.clear();
     m_videoFrameQueue.clear();
     m_client.disconnectFromDevice();
@@ -150,7 +159,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::buildUi()
 {
-    setWindowTitle(QStringLiteral("MicArray Operator Station"));
+    setWindowTitle(QStringLiteral("MicArray Operator Station · 合并版 20261014"));
     resize(1366, 768);
 
     auto *central = new QWidget(this);
@@ -202,7 +211,9 @@ void MainWindow::buildUi()
     m_mainTabs->addTab(m_audioAnalysisPage, QStringLiteral("音频分析"));
     m_liveLocalizationPage = new LiveLocalizationPage(&m_settings, m_mainTabs);
     m_mainTabs->addTab(m_liveLocalizationPage, QStringLiteral("声源定位"));
-    m_mainTabs->addTab(buildDebugPage(), QStringLiteral("高级帧调试"));
+    m_debugPage = buildDebugPage();
+    m_debugPage->setObjectName(QStringLiteral("advancedFrameDebugPage"));
+    m_mainTabs->addTab(m_debugPage, QStringLiteral("高级帧调试"));
     m_mainTabs->addTab(buildCalibrationPage(), QStringLiteral("阵列校准"));
     m_rootLayout->addWidget(m_mainTabs, 1);
 
@@ -381,6 +392,10 @@ QWidget *MainWindow::buildMonitorPage()
     centerLayout->addWidget(m_presentationVideoSplitter, 1);
     centerLayout->addWidget(m_waveformWidget);
     centerLayout->addWidget(m_videoStatsLabel);
+    m_plLocationStatsLabel = new QLabel(QStringLiteral("PL 定位：等待 LOC3 新帧"), center);
+    m_plLocationStatsLabel->setObjectName(QStringLiteral("plLocationStatsLabel"));
+    m_plLocationStatsLabel->setWordWrap(true);
+    centerLayout->addWidget(m_plLocationStatsLabel);
     centerLayout->addWidget(m_audioStatsLabel);
     auto *dashboardDetails = new QTabWidget(center);
     m_dashboardHeatmap = new ArrayHeatmapWidget(dashboardDetails);
@@ -454,6 +469,11 @@ QWidget *MainWindow::buildRecordingPage()
         QStringLiteral("降噪数据流"),
         static_cast<int>(RecordingInputSource::NoiseReductionStages));
     sourceLayout->addWidget(m_recordingSourceModeCombo);
+    m_recordRawPcmCheck = new QCheckBox(QStringLiteral("录制原始 PCM（保持 48 路编号与幅值）"), sourceGroup);
+    m_recordRawPcmCheck->setObjectName(QStringLiteral("recordRawPcmCheck"));
+    m_recordRawPcmCheck->setChecked(true);
+    m_recordRawPcmCheck->setToolTip(QStringLiteral("取消勾选时录制上位机增益处理后的音频。PL 旁带不会进入 WAV。"));
+    sourceLayout->addWidget(m_recordRawPcmCheck);
 
     m_recordingSourceStack = new QStackedWidget(sourceGroup);
     m_recordingSourceStack->setObjectName(QStringLiteral("recordingSourceStack"));
@@ -620,6 +640,12 @@ QWidget *MainWindow::buildRecordingPage()
             &QComboBox::currentIndexChanged,
             this,
             [this]() {
+                if (m_activeRecordingInputSource == RecordingInputSource::NoiseReductionStages
+                    && m_noiseReductionPage->currentSettings().inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile
+                    && !recordingConfigurationIsValid()
+                    && (m_audioRecorder.state() == RecordingState::Recording || m_audioRecorder.state() == RecordingState::Starting)) {
+                    m_audioRecorder.stopRecording(QStringLiteral("PL 全链只提供兼容固定参数下的最终 AGC 阶段，已停止不兼容录制"));
+                }
                 updateRecordingStartEnabled();
             });
 
@@ -640,9 +666,10 @@ QWidget *MainWindow::buildDebugPage()
     settingsLayout->addRow(QStringLiteral("历史保留"), m_debugHistorySpin);
     layout->addWidget(settingsGroup);
 
-    auto *debugGroup = new QGroupBox(QStringLiteral("最近解析帧"), page);
+    auto *debugGroup = new QGroupBox(QStringLiteral("最近预览帧"), page);
     auto *form = new QFormLayout(debugGroup);
     m_debugMetaLabel = new QLabel(QStringLiteral("-"), debugGroup);
+    m_debugMetaLabel->setObjectName(QStringLiteral("debugMetaLabel"));
     m_debugHeadLabel = new QLabel(QStringLiteral("-"), debugGroup);
     m_debugTailLabel = new QLabel(QStringLiteral("-"), debugGroup);
     m_debugPostTailLabel = new QLabel(QStringLiteral("-"), debugGroup);
@@ -684,9 +711,10 @@ QWidget *MainWindow::buildDebugPage()
     }
     layout->addWidget(segmentGroup);
 
-    auto *historyGroup = new QGroupBox(QStringLiteral("解析帧历史"), page);
+    auto *historyGroup = new QGroupBox(QStringLiteral("预览帧历史（最高 20 Hz）"), page);
     auto *historyLayout = new QVBoxLayout(historyGroup);
     m_debugHistoryView = new QPlainTextEdit(historyGroup);
+    m_debugHistoryView->setObjectName(QStringLiteral("debugHistoryView"));
     m_debugHistoryView->setReadOnly(true);
     m_debugHistoryView->setMaximumBlockCount(m_debugHistorySpin->value());
     m_debugHistoryView->setStyleSheet(QStringLiteral("QPlainTextEdit { font-family: Consolas, 'Courier New', monospace; }"));
@@ -842,6 +870,12 @@ void MainWindow::connectSignals()
     connect(m_averageWindowSpin, &QSpinBox::valueChanged, this, &MainWindow::updateAudioSettingsFromUi);
     connect(m_audioPlaybackCheck, &QCheckBox::toggled, this, &MainWindow::updateAudioSettingsFromUi);
     connect(m_mainTabs, &QTabWidget::currentChanged, this, [this](int index) {
+        if (m_mainTabs->widget(index) == m_debugPage) {
+            renderPendingDebugFrame();
+            m_debugRenderTimer.start();
+        } else {
+            m_debugRenderTimer.stop();
+        }
         const bool analysisActive = m_mainTabs->widget(index) == m_audioAnalysisPage;
         const bool noiseReductionActive =
             m_mainTabs->widget(index) == m_noiseReductionPage;
@@ -878,6 +912,47 @@ void MainWindow::connectSignals()
     connect(m_videoDecoder, &VideoDecoder::decodeError, &m_logger, [this](const QString &message) {
         m_logger.warning(QStringLiteral("video"), message);
     }, Qt::QueuedConnection);
+    connect(m_audioProcessor, &AudioProcessor::plLocationDecoded,
+            this, [this](const PlLocationResult &location) {
+                if (m_client.state() == DeviceState::Connected && location.streamEpoch == m_plSpatialEpoch) {
+                    m_liveLocalizationPage->setPlLocation(location);
+                }
+            }, Qt::QueuedConnection);
+    connect(m_audioProcessor, &AudioProcessor::plSpatialMapDecoded,
+            this, [this](const PlSpatialMap &map)
+    {
+        if (m_client.state() == DeviceState::Connected && map.streamEpoch == m_plSpatialEpoch)
+        {
+            m_liveLocalizationPage->setPlSpatialMap(map);
+        }
+    }, Qt::QueuedConnection);
+    connect(m_audioProcessor, &AudioProcessor::rawFrameReady, this,
+        [this](const QByteArray &payload, quint32 seconds, quint32 micros) {
+            // AudioProcessor may finish queued work after a disconnect. Its old
+            // results must not start a new localization/heatmap session.
+            if (m_client.state() == DeviceState::Connected) {
+                m_liveLocalizationPage->submitAdjustedAudioFrame(payload, seconds, micros);
+            }
+            if (m_audioRecorder.state() == RecordingState::Recording
+                && m_activeRecordingInputSource == RecordingInputSource::Array && m_activeRecordingRaw) {
+                m_audioRecorder.enqueueFrame(payload);
+            }
+        }, Qt::QueuedConnection);
+    connect(m_liveLocalizationPage, &LiveLocalizationPage::plDirectionsChanged, this,
+        [this](const QVector<SoundSourceDirection> &directions) {
+            m_videoLabel->clearLocationMarker();
+            for (const auto &direction : directions) {
+                const auto projected = projectDirection(direction, m_liveLocalizationPage->cameraView());
+                if (!projected.valid || !projected.inFront) { continue; }
+                const QPointF point = projected.inView ? projected.normalizedPoint : projected.edgePoint;
+                m_videoLabel->setLocationMarker(point, QStringLiteral("PL 声源%1").arg(direction.sourceId + 1));
+                break;
+            }
+        });
+    connect(m_liveLocalizationPage, &LiveLocalizationPage::plStatusChanged, this, [this](const QString &status) {
+        m_plLocationStatsLabel->setText(status);
+        m_logger.info(QStringLiteral("pl-location"), status);
+    });
     connect(m_audioProcessor, &AudioProcessor::levelChanged, this, &MainWindow::updateAudioLevel, Qt::QueuedConnection);
     connect(m_audioProcessor, &AudioProcessor::arrayFrameDecoded, this, [this](const DecodedAudioFrame &frame) {
         showArrayFrame(frame);
@@ -898,11 +973,10 @@ void MainWindow::connectSignals()
                 }
                 if (m_audioRecorder.state() == RecordingState::Recording
                     && m_activeRecordingInputSource
-                           == RecordingInputSource::Array) {
+                           == RecordingInputSource::Array && !m_activeRecordingRaw) {
                     m_audioRecorder.enqueueFrame(payload, m_gainConfiguration);
                 }
-                m_liveLocalizationPage->submitAdjustedAudioFrame(
-                    payload, timestampSeconds, timestampMicros);
+
             },
             Qt::QueuedConnection);
     connect(m_audioProcessor, &AudioProcessor::audioWarning, &m_logger, [this](const QString &message) {
@@ -926,6 +1000,10 @@ void MainWindow::connectSignals()
         dispatchNextVideoFrame();
     }, Qt::QueuedConnection);
     connect(&m_logger, &Logger::messageLogged, this, &MainWindow::appendLog);
+    connect(m_noiseReductionPage, &NoiseReductionPage::persistentPlDiagnostic,
+            &m_logger, [this](const QString &message) {
+        m_logger.warning(QStringLiteral("pl-denoise"), message);
+    });
     connect(&m_logger, &Logger::messageLogged, this, [this](LogLevel level, const QString &, const QString &message, const QString &) {
         if (level != LogLevel::Info) {
             appendAlert(level, message);
@@ -1075,6 +1153,13 @@ void MainWindow::sendNoiseReductionControl(const ControlValues &values)
         return;
     }
 
+    if (static_cast<quint16>(values.channelValue(0)) == 0x4e44
+        && isPlNoiseInputMode(m_noiseReductionPage->currentSettings().inputMode)) {
+        m_noiseReductionPage->setControlSendResult(true,
+            QStringLiteral("PL配置分页已写入网络，等待DNS1确认"));
+        return; // A paged transaction must not become a legacy six-angle undo command.
+    }
+
     QVector<qint16> sentValues;
     sentValues.reserve(ControlValues::ChannelCount);
     for (int index = 0; index < ControlValues::ChannelCount; ++index) {
@@ -1117,7 +1202,13 @@ void MainWindow::markControlDirty()
 
 void MainWindow::updateConnectionState(DeviceState state)
 {
+    const quint64 epoch = ++m_plSpatialEpoch;
+    QMetaObject::invokeMethod(m_audioProcessor, [processor = m_audioProcessor, epoch]
+    {
+        processor->resetSpatialMaps(epoch);
+    }, Qt::QueuedConnection);
     m_stateLabel->setText(QStringLiteral("状态: %1").arg(deviceStateName(state)));
+    if (state != DeviceState::Connected) { m_liveLocalizationPage->clearPlLocation(); }
     m_connectButton->setText(state == DeviceState::Connected || state == DeviceState::Connecting || state == DeviceState::Reconnecting
                                  ? QStringLiteral("断开")
                                  : QStringLiteral("连接"));
@@ -1162,6 +1253,9 @@ void MainWindow::startRecording()
                        == RecordingInputSource::NoiseReductionStages
                    && settings.noiseReductionStages.isEmpty()) {
             message = QStringLiteral("错误: 请至少选择一个降噪数据流阶段");
+        } else if (settings.inputSource == RecordingInputSource::NoiseReductionStages
+            && m_noiseReductionPage->currentSettings().inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile) {
+            message = QStringLiteral("错误: PL 全链仅可录制兼容固定参数下的自动增益控制（最终输出）；中间阶段未上传");
         } else {
             message = QStringLiteral("错误: 录制目录或文件名无效");
         }
@@ -1179,6 +1273,7 @@ void MainWindow::startRecording()
                        : QVector<NoiseReductionDataFlowStage> {});
     if (m_audioRecorder.startRecording(settings)) {
         m_activeRecordingInputSource = settings.inputSource;
+        m_activeRecordingRaw = m_recordRawPcmCheck->isChecked();
     } else if (noiseRecording) {
         m_noiseReductionPage->setRecordingRequired(false, {});
     }
@@ -1469,6 +1564,24 @@ void MainWindow::updateAudioSettingsFromUi()
 
 void MainWindow::updateDebugFrame(const HostFrame &frame)
 {
+    // Keep a single implicitly shared preview; continuous audio delivery must
+    // not serialize payloads, edit documents or allocate animations per frame.
+    m_pendingDebugFrame = frame;
+    m_hasPendingDebugFrame = true;
+    setProperty("debugFramesReceived", QVariant::fromValue(++m_debugFramesReceived));
+}
+
+void MainWindow::renderPendingDebugFrame()
+{
+    if (!m_hasPendingDebugFrame || m_mainTabs->currentWidget() != m_debugPage
+        || !m_debugPage->isVisible()
+        || (m_lastDebugRender.isValid() && m_lastDebugRender.elapsed() < 50)) {
+        return;
+    }
+    const HostFrame frame = std::move(m_pendingDebugFrame);
+    m_hasPendingDebugFrame = false;
+    m_lastDebugRender.start();
+    setProperty("debugFramesRendered", QVariant::fromValue(++m_debugFramesRendered));
     const quint16 rawType = frame.rawType != 0 ? frame.rawType : static_cast<quint16>(frame.type);
     QByteArray raw;
     appendU16(raw, ProtocolCodec::HostHeader);
@@ -1579,8 +1692,13 @@ void MainWindow::setControlsEnabled(bool enabled)
 
 void MainWindow::enqueueAudioFrame(const HostFrame &frame)
 {
-    m_noiseReductionPage->submitRawAudioFrame(
+    m_noiseReductionPage->submitPlSidebandFrame(frame.payload, frame.timestampSeconds, frame.timestampMicros);
+    // Noise processing keeps its independent stream, outside the display queue.
+    // Normalize only at the device boundary; gain/beamformer buffers remain signed32.
+    const auto raw = AudioLocationSidebandDecoder::decode(
         frame.payload, frame.timestampSeconds, frame.timestampMicros);
+    m_noiseReductionPage->submitRawAudioFrame(
+        raw.valid ? raw.pcmPayload : frame.payload, frame.timestampSeconds, frame.timestampMicros);
     if (m_audioFrameQueue.push(frame)) {
         ++m_audioDroppedFrames;
     }
@@ -2050,8 +2168,8 @@ RecordingSettings MainWindow::recordingSettingsFromUi() const
         m_recordingFileLayoutCombo->currentData().toInt());
     if (settings.inputSource == RecordingInputSource::Array) {
         settings.channels = selectedRecordingChannels();
-        settings.gainApplied = true;
-        settings.initialGainConfiguration = m_gainConfiguration;
+        settings.gainApplied = !m_recordRawPcmCheck->isChecked();
+        settings.initialGainConfiguration = settings.gainApplied ? m_gainConfiguration : GainConfiguration {};
     } else {
         settings.noiseReductionStages = selectedNoiseRecordingStages();
     }
@@ -2061,6 +2179,10 @@ RecordingSettings MainWindow::recordingSettingsFromUi() const
 bool MainWindow::recordingConfigurationIsValid() const
 {
     const RecordingSettings settings = recordingSettingsFromUi();
+    if (settings.inputSource == RecordingInputSource::NoiseReductionStages && m_noiseReductionPage != nullptr
+        && m_noiseReductionPage->currentSettings().inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile
+        && (settings.noiseReductionStages != QVector<NoiseReductionDataFlowStage>{NoiseReductionDataFlowStage::AutomaticGainControl}
+            || !plFullDenoiseProfileError(m_noiseReductionPage->currentSettings()).isEmpty())) return false;
     const QFileInfo directoryInfo(settings.outputDirectory);
     const bool baseNameIsValid = !settings.baseName.trimmed().isEmpty()
         && QFileInfo(settings.baseName).fileName() == settings.baseName;
@@ -2087,6 +2209,7 @@ void MainWindow::setRecordingConfigurationEnabled(bool enabled)
     for (QCheckBox *button : m_recordingNoiseStageButtons) {
         button->setEnabled(enabled);
     }
+    m_recordRawPcmCheck->setEnabled(enabled);
     m_recordingSourceModeCombo->setEnabled(enabled);
     m_recordingSourceStack->setEnabled(enabled);
     m_recordingFileLayoutCombo->setEnabled(enabled);
@@ -2117,6 +2240,11 @@ void MainWindow::updateRecordingStartEnabled(const QString &message)
         ? true
         : recordingState == RecordingState::Stopping ? false : canStart;
     QString statusMessage = message;
+    if (m_noiseReductionPage->currentSettings().inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile
+        && recordingSettingsFromUi().inputSource == RecordingInputSource::NoiseReductionStages
+        && selectedNoiseRecordingStages() != QVector<NoiseReductionDataFlowStage>{NoiseReductionDataFlowStage::AutomaticGainControl}) {
+        statusMessage = QStringLiteral("PL 全链只上传最终 AGC 输出；请仅选择自动增益控制阶段录制，中间阶段未上传。");
+    }
     if (statusMessage.isEmpty() && !m_lastRecordingError.isEmpty()) {
         statusMessage = QStringLiteral("录制错误：%1")
                             .arg(m_lastRecordingError);
@@ -2185,19 +2313,23 @@ void MainWindow::updateDebugSegments(const HostFrame &frame)
 void MainWindow::flashDebugSegments()
 {
     for (QLabel *segment : m_debugSegmentLabels) {
-        auto *effect = new QGraphicsOpacityEffect(segment);
-        segment->setGraphicsEffect(effect);
-        auto *animation = new QPropertyAnimation(effect, "opacity", effect);
-        animation->setDuration(260);
-        animation->setStartValue(0.45);
-        animation->setEndValue(1.0);
-        animation->setEasingCurve(QEasingCurve::OutCubic);
-        connect(animation, &QPropertyAnimation::finished, segment, [segment, effect]() {
-            if (segment->graphicsEffect() == effect) {
-                segment->setGraphicsEffect(nullptr);
-            }
-        });
-        animation->start(QAbstractAnimation::DeleteWhenStopped);
+        auto *effect = qobject_cast<QGraphicsOpacityEffect *>(segment->graphicsEffect());
+        if (effect == nullptr) {
+            effect = new QGraphicsOpacityEffect(segment);
+            segment->setGraphicsEffect(effect);
+        }
+        auto *animation = effect->findChild<QPropertyAnimation *>(QStringLiteral("debugOpacityAnimation"));
+        if (animation == nullptr) {
+            animation = new QPropertyAnimation(effect, "opacity", effect);
+            animation->setObjectName(QStringLiteral("debugOpacityAnimation"));
+            animation->setDuration(260);
+            animation->setStartValue(0.45);
+            animation->setEndValue(1.0);
+            animation->setEasingCurve(QEasingCurve::OutCubic);
+        }
+        if (animation->state() != QAbstractAnimation::Running) {
+            animation->start();
+        }
     }
 }
 

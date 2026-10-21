@@ -21,7 +21,23 @@ enum class NoiseReductionMode {
 enum class NoiseReductionInputMode {
     FpgaBeamformedChannels,
     Raw48SoftwareBeamforming,
+    PlThreeBeamOriginalDenoising,
+    PlFixedWienerOriginalPostProcessing,
+    PlFullDenoisingFixedProfile,
 };
+
+inline bool isPlNoiseInputMode(NoiseReductionInputMode mode)
+{
+    return mode == NoiseReductionInputMode::PlThreeBeamOriginalDenoising
+        || mode == NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing
+        || mode == NoiseReductionInputMode::PlFullDenoisingFixedProfile;
+}
+
+inline bool isPlMonoNoiseInputMode(NoiseReductionInputMode mode)
+{
+    return mode == NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing
+        || mode == NoiseReductionInputMode::PlFullDenoisingFixedProfile;
+}
 
 enum class NoiseSignalSource {
     FirstElement,
@@ -170,6 +186,7 @@ struct NoiseReductionPlotFrame {
 QString noiseSignalSourceName(NoiseSignalSource source);
 QString noiseReductionDataFlowStageName(NoiseReductionDataFlowStage stage);
 QString noiseReductionDataFlowStageKey(NoiseReductionDataFlowStage stage);
+QString plFullDenoiseProfileError(const NoiseReductionSettings &settings);
 QVector<NoisePostProcessingNode> normalizedPostProcessingOrder(
     const QVector<NoisePostProcessingNode> &order);
 

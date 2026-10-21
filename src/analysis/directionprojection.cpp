@@ -17,6 +17,14 @@ bool finite(double value)
     return std::isfinite(value);
 }
 
+double distortedAngle(double theta, const CameraLensCalibration &lens)
+{
+    const double squared = theta * theta;
+    const auto &k = lens.coefficients;
+    return theta * (1.0 + squared * (k[0] + squared
+        * (k[1] + squared * (k[2] + squared * k[3]))));
+}
+
 QPointF edgeIntersection(const QPointF &point)
 {
     const double dx = point.x() - 0.5;
@@ -56,6 +64,36 @@ bool angularCameraIsValid(const CameraViewSettings &camera)
 
 } // namespace
 
+bool CameraLensCalibration::isValid() const
+{
+    if (!finite(fx) || !finite(fy) || fx <= 0.0 || fy <= 0.0
+        || fx > 10.0 || fy > 10.0
+        || !finite(cx) || !finite(cy) || cx < 0.0 || cx > 1.0
+        || cy < 0.0 || cy > 1.0
+        || referenceWidth <= 0 || referenceHeight <= 0
+        || referenceWidth > 65535 || referenceHeight > 65535)
+    {
+        return false;
+    }
+    // A conservative analytic lower bound on d(theta_d)/d(theta).
+    // Reject folded mappings throughout the forward hemisphere, including
+    // polynomials whose finite coefficients would otherwise look acceptable.
+    double lowerDerivative = 1.0;
+    const double limitSquared = (M_PI / 2.0) * (M_PI / 2.0);
+    double power = limitSquared;
+    for (int index = 0; index < 4; ++index)
+    {
+        const double k = coefficients[index];
+        if (!finite(k) || std::abs(k) > 100.0)
+        {
+            return false;
+        }
+        lowerDerivative += std::min(0.0, (2 * index + 3) * k * power);
+        power *= limitSquared;
+    }
+    return lowerDerivative > 1.0e-6;
+}
+
 bool CameraViewSettings::isValid() const
 {
     return finite(centerAzimuthDegrees)
@@ -67,7 +105,8 @@ bool CameraViewSettings::isValid() const
         && finite(verticalFovDegrees)
         && verticalFovDegrees > 1.0 && verticalFovDegrees <= 179.0
         && finite(rollDegrees)
-        && rollDegrees >= -180.0 && rollDegrees <= 180.0;
+        && rollDegrees >= -180.0 && rollDegrees <= 180.0
+        && (!lens.enabled || lens.isValid());
 }
 
 ProjectionResult projectDirection(const SoundSourceDirection &direction,
@@ -111,8 +150,17 @@ ProjectionResult projectDirection(const SoundSourceDirection &direction,
         * std::tan(qDegreesToRadians(camera.horizontalFovDegrees) / 2.0);
     const double verticalScale = 2.0
         * std::tan(qDegreesToRadians(camera.verticalFovDegrees) / 2.0);
-    const QPointF point(0.5 + xc / (zc * horizontalScale),
-                        0.5 - yc / (zc * verticalScale));
+    QPointF point(0.5 + xc / (zc * horizontalScale),
+                  0.5 - yc / (zc * verticalScale));
+    if (camera.lens.enabled)
+    {
+        const double radius = std::hypot(xc, yc);
+        const double scale = radius > 1.0e-12
+            ? distortedAngle(std::atan2(radius, zc), camera.lens) / radius
+            : 1.0 / zc;
+        point = {camera.lens.cx + camera.lens.fx * xc * scale,
+                 camera.lens.cy - camera.lens.fy * yc * scale};
+    }
     result.normalizedPoint = point;
     constexpr double EdgeTolerance = 1.0e-6;
     result.inView = point.x() >= -EdgeTolerance && point.x() <= 1.0 + EdgeTolerance
@@ -149,6 +197,37 @@ ScanDirection unprojectVideoPoint(const QPointF &normalizedPoint,
     const float sine = static_cast<float>(std::sin(roll));
     const QVector3D rolledRight = right * cosine + up * sine;
     const QVector3D rolledUp = up * cosine - right * sine;
+    if (camera.lens.enabled)
+    {
+        const double x = (normalizedPoint.x() - camera.lens.cx) / camera.lens.fx;
+        const double y = (camera.lens.cy - normalizedPoint.y()) / camera.lens.fy;
+        const double radius = std::hypot(x, y);
+        double low = 0.0;
+        double high = M_PI / 2.0 - 1.0e-9;
+        if (!finite(radius) || radius >= distortedAngle(high, camera.lens))
+        {
+            return {invalid, invalid};
+        }
+        for (int iteration = 0; iteration < 48; ++iteration)
+        {
+            const double middle = (low + high) / 2.0;
+            if (distortedAngle(middle, camera.lens) < radius)
+            {
+                low = middle;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        const double theta = (low + high) / 2.0;
+        const double radialScale = radius > 1.0e-12 ? std::sin(theta) / radius : 1.0;
+        const QVector3D ray = (forward * static_cast<float>(std::cos(theta))
+            + rolledRight * static_cast<float>(x * radialScale)
+            + rolledUp * static_cast<float>(y * radialScale)).normalized();
+        const auto angles = anglesFromDirection(ray);
+        return {angles.azimuthDegrees, angles.elevationDegrees};
+    }
     const double horizontalScale = 2.0
         * std::tan(qDegreesToRadians(camera.horizontalFovDegrees) / 2.0);
     const double verticalScale = 2.0
@@ -166,6 +245,10 @@ ProjectionResult projectDirectionAngular(
     const SoundSourceDirection &direction,
     const CameraViewSettings &camera)
 {
+    if (camera.lens.enabled)
+    {
+        return projectDirection(direction, camera);
+    }
     ProjectionResult result;
     if (!angularCameraIsValid(camera)
         || !finite(direction.azimuthDegrees)
@@ -234,6 +317,10 @@ ScanDirection unprojectVideoPointAngular(
     const QPointF &normalizedPoint,
     const CameraViewSettings &camera)
 {
+    if (camera.lens.enabled)
+    {
+        return unprojectVideoPoint(normalizedPoint, camera);
+    }
     const double invalid =
         std::numeric_limits<double>::quiet_NaN();
     if (!angularCameraIsValid(camera)

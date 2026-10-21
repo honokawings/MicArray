@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "native_exit_code": 0,
+  "executable_sha256": "028897a6e262f97777433173c869993a7fe074833f62b619a8e17ec5eedbb47e",
+  "external_Qt_MinGW_PATH": false,
+  "required_package_plugins": [
+    "platforms/qwindows.dll",
+    "styles/qmodernwindowsstyle.dll"
+  ],
+  "scope": "Portable launch and actual package plugin loading only; no device/audio-quality acceptance."
+}

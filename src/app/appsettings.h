@@ -60,8 +60,10 @@ struct AudioAnalysisSettings {
 
 struct LiveLocalizationSettings {
     bool enabled = true;
+    QString localizationSource = QStringLiteral("pl");
     QString locatorId = QStringLiteral("gcc-phat-tdoa");
     QString displayMode = QStringLiteral("marker");
+    QString plDisplayMode = QStringLiteral("plheatmap");
     SpatialResolutionMode spatialResolutionMode =
         SpatialResolutionMode::RealtimeEnhanced;
     double heatmapOpacity = 0.45;

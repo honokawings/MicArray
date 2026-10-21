@@ -83,3 +83,19 @@ CMakeLists.txt.user*
 /build*/
 /dist/
 /.qtcreator/
+
+# PL builds, local runtime settings and field recordings
+/.codex-*/
+/.Xil/
+**/.Xil/
+*.jou
+*.wdb
+*.vcd
+*.dcp
+*.bit
+*.ltx
+*.zip
+/settings/
+/recordings/
+/tests/private-golden/
+**/__pycache__/

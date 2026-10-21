@@ -1,10 +1,13 @@
 #pragma once
 
 #include "analysis/livelocalizationworker.h"
+#include "analysis/pllocalizationcontroller.h"
+#include "analysis/plspatialprojector.h"
 #include "app/appsettings.h"
 
 #include <QImage>
 #include <QThread>
+#include <QTimer>
 #include <QWidget>
 
 class QCheckBox;
@@ -28,6 +31,10 @@ public:
     ~LiveLocalizationPage() override;
 
     void setActive(bool active);
+    void setPlLocation(const PlLocationResult &location);
+    void clearPlLocation();
+    void setPlSpatialMap(const PlSpatialMap &map);
+    CameraViewSettings cameraView() const { return m_settings.camera; }
     void setVideoFrame(const QImage &image,
                        quint32 timestampSeconds,
                        quint32 timestampMicros);
@@ -38,8 +45,14 @@ public:
                                 QString *errorMessage = nullptr) const;
     bool loadCalibrationProfile(const QString &filePath,
                                 QString *errorMessage = nullptr);
+    bool loadLensCalibration(const QString &filePath,
+                             QString *errorMessage = nullptr);
+    bool saveRawVideoFrame(const QString &filePath,
+                           QString *errorMessage = nullptr) const;
 
 signals:
+    void plDirectionsChanged(const QVector<SoundSourceDirection> &directions);
+    void plStatusChanged(const QString &status);
     void configureWorkerRequested(const LiveLocalizationSettings &settings);
     void workerActiveRequested(bool active);
     void spatialGridRequested(const SpatialResponseGrid &grid, quint64 generation);
@@ -55,6 +68,12 @@ protected:
 private:
     static constexpr int MaxPendingAudioFrames = 32;
 
+    bool hostProcessingActive() const;
+    bool plFusionSelected() const;
+    bool plHeatmapSelected() const;
+    bool softwareResponseSelected() const;
+    void clearReferenceHeatmap();
+    void updateLocalizationSource();
     void buildUi();
     void connectUi();
     void restoreSettings();
@@ -76,9 +95,17 @@ private:
     void refreshCalibrationDetails();
     void updateCalibrationTableHeight();
 
+private slots:
+    void acceptHostLocalizationResult(const LiveLocalizationResult &result);
+    void acceptSpatialResponse(const LiveSpatialResponse &response);
+
+private:
+
     AppSettings *m_settingsStore = nullptr;
     LiveLocalizationSettings m_settings;
     CameraViewSettings m_savedCamera;
+    PlLocalizationController m_plController;
+    PlSpatialProjector m_plProjector;
     QThread m_workerThread;
     LiveLocalizationWorker *m_worker = nullptr;
     LiveLocalizationView *m_view = nullptr;
@@ -87,11 +114,17 @@ private:
     QPointF m_pendingCalibrationPoint;
     quint64 m_calibrationRequestId = 0;
     quint64 m_gridGeneration = 0;
+    quint16 m_plMapFrameBarrier = 0;
+    bool m_hasPlMapBarrier = false;
     int m_pendingAudioFrames = 0;
+    QTimer m_heatmapExpiryTimer;
     bool m_active = false;
     bool m_calibrating = false;
 
     QCheckBox *m_enabledCheck = nullptr;
+    QComboBox *m_sourceCombo = nullptr;
+    QLabel *m_plResultLabel = nullptr;
+    QLabel *m_referenceHeatmapLabel = nullptr;
     QComboBox *m_locatorCombo = nullptr;
     QComboBox *m_displayModeCombo = nullptr;
     QComboBox *m_spatialResolutionModeCombo = nullptr;
@@ -109,6 +142,11 @@ private:
     QDoubleSpinBox *m_horizontalFovSpin = nullptr;
     QDoubleSpinBox *m_verticalFovSpin = nullptr;
     QDoubleSpinBox *m_rollSpin = nullptr;
+    QCheckBox *m_lensEnabledCheck = nullptr;
+    QLabel *m_videoGeometryLabel = nullptr;
+    QLabel *m_lensStatusLabel = nullptr;
+    QPushButton *m_importLensButton = nullptr;
+    QPushButton *m_saveRawFrameButton = nullptr;
     QPushButton *m_startCalibrationButton = nullptr;
     QPushButton *m_cancelCalibrationButton = nullptr;
     QPushButton *m_undoCalibrationButton = nullptr;

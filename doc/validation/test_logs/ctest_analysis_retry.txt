@@ -1,0 +1,13 @@
+Internal ctest changing into directory: <build>
+Test project <build>
+    Start 6: test_analysis
+1/1 Test #6: test_analysis ....................***Failed    8.33 sec
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   8.34 sec
+
+The following tests FAILED:
+	  6 - test_analysis (Failed)
+Errors while running CTest

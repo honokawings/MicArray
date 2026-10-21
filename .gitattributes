@@ -1,0 +1,2 @@
+# Preserve frozen FPGA RTL, ROM and IP configuration bytes across checkouts.
+firmware/** -text

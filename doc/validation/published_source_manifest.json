@@ -1,0 +1,2509 @@
+{
+  "schema_version": 1,
+  "scope": "SHA256 of committed Git blob bytes before commit. Checkout line-ending settings may change host text-file bytes.",
+  "excluded": [
+    "doc/validation/published_source_manifest.json"
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 95,
+      "sha256": "dd0986957a7a187a97079fa3fa936ab90f40e145998627a0961c541c33421f67"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 1072,
+      "sha256": "0cfff84fc1cfc8d8569c42f9869df41b7e3c9639e184ad2196d0e93c80c29163"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 2820,
+      "sha256": "be6f75c2cc9780ef5c2fb56fd176bd8841f67a72ba65fa21e29671543ec14968"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "bytes": 14261,
+      "sha256": "1729f0bcf3f208d5003d5ab7236c1a60d11246306fb3a3bef1548701e7ae4207"
+    },
+    {
+      "path": "README.md",
+      "bytes": 8129,
+      "sha256": "c0f2207c210a3e80f3d33855b58c8973e11eab4be584e68bf4f9f96f7ebafea5"
+    },
+    {
+      "path": "doc/PL_DENOISE_MODE.md",
+      "bytes": 5178,
+      "sha256": "a41b9c157f89a1b327f2be6a35c807f540a4b2b051c871338cc0e6efa057f7ad"
+    },
+    {
+      "path": "doc/PL_FIXED_WIENER_MODE.md",
+      "bytes": 5891,
+      "sha256": "cdd45ddcfe9783932561113d8128bc7b9938971292633ab6f3339e7705be2202"
+    },
+    {
+      "path": "doc/PL_FULL_DEMO_CANDIDATE.md",
+      "bytes": 4170,
+      "sha256": "105dcbcd30f6ce8448bb1e0ab692c119a0426a72e4c426315a1ed7a4e399fe87"
+    },
+    {
+      "path": "doc/QtDesignDescription.md",
+      "bytes": 14766,
+      "sha256": "b2e58cc795f777c91244cf537c3534d6243eec2c49fa3162714480e8f92c931f"
+    },
+    {
+      "path": "doc/Readme.md",
+      "bytes": 95598,
+      "sha256": "ef84937f21ffe7dbe9c9c2342063eaaa3942b6e5e03b0d6fcaa4bfa03838e990"
+    },
+    {
+      "path": "doc/neural-srp-peak-v1-training-report.json",
+      "bytes": 8268,
+      "sha256": "e179b22d3d4d15389aa25b1205f11751073e6bffda3d0e26ee624df1cacb41a5"
+    },
+    {
+      "path": "doc/validation/README.md",
+      "bytes": 2677,
+      "sha256": "ccd6b03aa6d59050aaad0449565ad809c4d6631fb94c87df80e88fa3e10ed310"
+    },
+    {
+      "path": "doc/validation/frozen_r2_validation.json",
+      "bytes": 27857,
+      "sha256": "30eacb19556afcb751fabe1b6f9afd2e644b61a3996e9ceab43f33f83b87366c"
+    },
+    {
+      "path": "doc/validation/iteration_bounds.json",
+      "bytes": 3636,
+      "sha256": "cd0ae7f584011068380dbefa63aaf83967e462fe6c8d632b60fa316ad27c8a14"
+    },
+    {
+      "path": "doc/validation/physical_summary.json",
+      "bytes": 1296,
+      "sha256": "9a5ce06185b328c0d877d2ddbade99796ee5a4846311dcd9f22097e8cf0052fd"
+    },
+    {
+      "path": "doc/validation/portable_smoke.json",
+      "bytes": 382,
+      "sha256": "46ab2d80c00782d919cb70a08d06c616c0ea57d257ac0687c76d7f6f69ee83d0"
+    },
+    {
+      "path": "doc/validation/publication_tests.json",
+      "bytes": 1697,
+      "sha256": "7ced6a93dfe54ead91cffab557911d72909b9c2dc88acfa2187bf2a3755cddb9"
+    },
+    {
+      "path": "doc/validation/release_manifest.json",
+      "bytes": 6773,
+      "sha256": "ee8728c8931893dc88b1022362245f74f5b21e8e5cb40851e7554574cca9e57d"
+    },
+    {
+      "path": "doc/validation/routed_reports/bus_skew.rpt",
+      "bytes": 618548,
+      "sha256": "b9dde9c67613cc13fbf259bd3764dcb709bb07ad9da8b7cacd25ad82f16d4d70"
+    },
+    {
+      "path": "doc/validation/routed_reports/drc.rpt",
+      "bytes": 1393492,
+      "sha256": "a54df2a3bdb11ab1703f9e5c1f282321e84d10fdaa768cb38b6a3d75fe2feaed"
+    },
+    {
+      "path": "doc/validation/routed_reports/timing_summary.rpt",
+      "bytes": 765985,
+      "sha256": "a64fb620deed2bc9ae123cc7c0732763f795e32cdbee60785e9c5e3577ca7541"
+    },
+    {
+      "path": "doc/validation/routed_reports/utilization.rpt",
+      "bytes": 13440,
+      "sha256": "d578e910202acc484c1ec7e57c4a79ade31a1587785be988ab5826f3be7e2474"
+    },
+    {
+      "path": "doc/validation/source_provenance.json",
+      "bytes": 79534,
+      "sha256": "125b7ab6060278df0c04c704b2600d89aa846301d3171a18c39b19ed408907ec"
+    },
+    {
+      "path": "doc/validation/supported_numeric_domain.json",
+      "bytes": 4408,
+      "sha256": "d914755dfb4294df1bfa51bcac04526fedfc8881c1ec5c9d9d585d1b5a740895"
+    },
+    {
+      "path": "doc/validation/test_logs/ctest_analysis_retry.txt",
+      "bytes": 331,
+      "sha256": "613a8f7f659fef2bcbf01afa01244400d55c755a7bed6828e79c8ce33b989633"
+    },
+    {
+      "path": "doc/validation/test_logs/ctest_full.txt",
+      "bytes": 1888,
+      "sha256": "e2f361426f2d6cf693fbc44a1619c87f5b9e525605572501c43ac02c8e2f71ca"
+    },
+    {
+      "path": "doc/validation/test_logs/ctest_public.txt",
+      "bytes": 443,
+      "sha256": "e9c5e511875dad01421a923745232f9d45b60d1c06a88de73d6496693f7f4773"
+    },
+    {
+      "path": "doc/validation/test_logs/mock_test.txt",
+      "bytes": 17,
+      "sha256": "d557c5b8a87676e45bca4cbaecde8ab1c77d74f125850c78d9f1a25ceb5dfcc4"
+    },
+    {
+      "path": "doc/validation/test_logs/python_tests.txt",
+      "bytes": 7314,
+      "sha256": "d50914b80e30b2430148a2e46fd75ba0993755e99cce6076b033df75c25ff3f8"
+    },
+    {
+      "path": "doc/validation/test_logs/test_analysis-results.txt",
+      "bytes": 5853,
+      "sha256": "548c4a00b024a4b998c4efb3bc0fa9287507548316f875d995a0acebeada7752"
+    },
+    {
+      "path": "doc/validation/test_logs/test_stream_contract-results.txt",
+      "bytes": 6556,
+      "sha256": "c67724f9e10ec0ff3ee3cf886bd138eafd485995d0083588fcd6bd34d9fec67f"
+    },
+    {
+      "path": "doc/validation/test_logs/test_stream_mainwindow-results.txt",
+      "bytes": 2017,
+      "sha256": "3937e93e06eb4e83d12475edeb41a37ff4eb63b011fae96641e28f101dfaca70"
+    },
+    {
+      "path": "doc/validation/test_logs/test_stream_wallclock-results.txt",
+      "bytes": 8400,
+      "sha256": "682e4e400677043aa2a83fb3122a45c7db8025fad310d484f08effaf25ff008f"
+    },
+    {
+      "path": "doc/validation/vendor_float_conversion_semantics.json",
+      "bytes": 6563,
+      "sha256": "8cb60e7fd99f8ec25db7668ccbb635f68865a5a66daf3962e9199bd61884a75d"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-13-audio-recording-and-debug-preview.md",
+      "bytes": 18109,
+      "sha256": "371921102ec28b90a43de0c84b8c8a5fae64e3c9eeab8e47f88dfa2d4eef1eb7"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-21-video-tail-channel-gain.md",
+      "bytes": 16765,
+      "sha256": "614d7633bbb4ddac628e304c38eaff95922d7d6746bc94c4b62c9d1d46d4c678"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-configurable-live-heatmap-grid.md",
+      "bytes": 2977,
+      "sha256": "7311cafb89b08f59609d4ced796d4eef3276195c1f201683aa9c35d307dcd7af"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-cpu-srp-phat-heatmap-optimization.md",
+      "bytes": 5375,
+      "sha256": "31469574c4bd090b69906950790a86289f8979928a7c27fd92009c87db5a0822"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-offline-audio-analysis-localization.md",
+      "bytes": 37301,
+      "sha256": "76dc39d2cbe3faf0a9ba7160b94f1f624e7a98d5b282f2b203b4b16f6cb87e4e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-realtime-source-localization-video-calibration.md",
+      "bytes": 21147,
+      "sha256": "db8ec0ee5d3b49642c2fb1f4eb81b6d8ef00875e41403bb13af2204caf889685"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-refined-four-point-calibration-profile.md",
+      "bytes": 4681,
+      "sha256": "dac088fbf784ebb0d7ee192d91438a08148acd5da51ad3da3fb12bff4f7c319c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-dashboard-ui-fixes.md",
+      "bytes": 5683,
+      "sha256": "c8a4a6ba045e2732d13455346ec8761bbdaa596b3584e8ff7c4ef34bdeace9c9"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-independent-presentation-window.md",
+      "bytes": 4145,
+      "sha256": "7fcbfaf4d6874cd7129bcc607d625899df0a5db3ea8beacfd12da640ec796022"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-presentation-fullscreen-dark-theme.md",
+      "bytes": 10815,
+      "sha256": "47215ba8b0a21f984e0590a3bbe6b6e1e5eb502c2d566d86c8af8a1ec28d691a"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-continuous-noise-direction.md",
+      "bytes": 11244,
+      "sha256": "e5588595077b095b76ac84bc157704882e0027fed991bb5e6b5f209d315d912f"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-noise-reduction-page.md",
+      "bytes": 19262,
+      "sha256": "585032b569823b77d38f6b7265512d7bcbe90ae9b18c0b553d1bceed8395bace"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-contextual-presentation-routing.md",
+      "bytes": 3633,
+      "sha256": "befdb64423dd03012eac8bbfad46e599b34a446b3473dbabd43ca3ed59ab0d3c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-horizontal-processing-node-chain.md",
+      "bytes": 5635,
+      "sha256": "7ba482d1b3c57be70c47f2bbd80ebe68097167963a8e41e2d7a1f24722c854d6"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-noise-marker-angular-projection-fix.md",
+      "bytes": 8583,
+      "sha256": "a3abb4ae0e27b8446c7d0a95a602fae65bb35b47f95a6de39bd2c2005639090c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-noise-reduction-pipeline.md",
+      "bytes": 17277,
+      "sha256": "2204e30cddaecebf78731b516c681aee639ee52541aa7549e41ab781fa0cb84c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-noise-reduction-processing-options.md",
+      "bytes": 11649,
+      "sha256": "7a5480f8c5d89cb880bafbfd01e6f078c378cca12f47f5b08a7b9bef0f913064"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-live-localization-tabs-and-heatmap-focus.md",
+      "bytes": 7430,
+      "sha256": "ec899060e27414b30f0525e571b91819d65d78b05e5ba95b77b5a5c11446d87b"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-neural-srp-peak-refinement.md",
+      "bytes": 24918,
+      "sha256": "35c34263ca557c0aaf1dff0bcec5030e62b9ebcc933be6c0bdaa7890cb2b650a"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-single-source-super-resolution-spatial-localization.md",
+      "bytes": 34736,
+      "sha256": "2c7ed24e24b9ff3b32377610096684a652fb2ec6f2c24cc02ba2590ebd98e3f9"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-trusted-heatmap-and-neural-halo-fix.md",
+      "bytes": 5262,
+      "sha256": "2da297b17c306c337035fe553c5ddeed7d49089e17f0828f7eb0ec045950cb87"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-trusted-source-threshold-fix.md",
+      "bytes": 8654,
+      "sha256": "5939be594b78a7f8d982775c3216829506fa5fc9b4c3d4089d6f7da69bba63aa"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-02-noise-monitor-buffer-and-multisource-recording.md",
+      "bytes": 14107,
+      "sha256": "a25f2d0aabf368fe2c4f20eef7b99cdf294249ff0e04f8d1f6ac69732850bdfb"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-02-raw-48-channel-software-beamforming.md",
+      "bytes": 14272,
+      "sha256": "7400f5ac441eed3130ed8233bc44f4df0af462e762296baa00b97b8b80a6d41e"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-13-audio-recording-and-debug-preview-design.md",
+      "bytes": 5756,
+      "sha256": "c0caf2e135fb48ea8a029a29c79ed3e828334d2a6f7e475ab81a09e854804885"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-20-video-tail-channel-gain-design.md",
+      "bytes": 10414,
+      "sha256": "e0a32d0222a91ccf3b24681675c8ae3cb9f4da448702ad01cead5a4acad4c883"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-configurable-live-heatmap-grid-design.md",
+      "bytes": 1447,
+      "sha256": "66da860080076296b3d5010c00077c445c4131d547d7ce5e0c4dd484512cd6b8"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-cpu-srp-phat-heatmap-optimization-design.md",
+      "bytes": 4899,
+      "sha256": "4225a69d3abecb76e4b6155dfef3874f246fe0a9903b16d03103154daf00df0e"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-offline-audio-analysis-localization-design.md",
+      "bytes": 17170,
+      "sha256": "b700fcdf59ad786d60b6a892e4f0b94c742d98cb63bfbcb809aa94e1579e00e0"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-realtime-source-localization-video-calibration-design.md",
+      "bytes": 16954,
+      "sha256": "d1649837b06baba2dc1b0e0ee522e9c8605bc195d6ed1a024a53de5c52fb9f4a"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-refined-four-point-calibration-profile-design.md",
+      "bytes": 5430,
+      "sha256": "230bb8ef564ca0a07f6b4389efad08877fa3773f53a7992ee4e781c9fbda1640"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-26-dashboard-ui-fixes-design.md",
+      "bytes": 2392,
+      "sha256": "0455cb185011ec0a315cea0745ec22b0bfa9baeaaa27e4198f65e3006699ab4d"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-26-independent-presentation-window-design.md",
+      "bytes": 2589,
+      "sha256": "ec25842fe0e3f96c06bef1e0988fa230c4ad2dc5e3f75bbeabd3824f0c6753cf"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-26-presentation-fullscreen-dark-theme-design.md",
+      "bytes": 3875,
+      "sha256": "64141f5cf5d73c1d0b1e44b54c219665ae101a295ebff5c8011e0efb37358560"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-28-continuous-noise-direction-design.md",
+      "bytes": 3914,
+      "sha256": "2ea79cbe805a5f4f89cc2ca70421d766ec79a2482230905e4af744b7e4569dd9"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-28-noise-reduction-page-design.md",
+      "bytes": 18987,
+      "sha256": "58eae12818ea8128f40ed2b0ae56f6380a07d0d8c539e78c3d89df11dc1726b7"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-contextual-presentation-routing-design.md",
+      "bytes": 1555,
+      "sha256": "d2bd0e229e712e1ff878af63b459b388bc06571a5b6d4cab9b5912179fdca4e9"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-horizontal-processing-node-chain-design.md",
+      "bytes": 2221,
+      "sha256": "8ec06030862429fe461687cdb9fcb6a6ad58467d6d01bd2988f1ec89c695b086"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-noise-marker-angular-projection-fix-design.md",
+      "bytes": 3840,
+      "sha256": "c248c62a20775f79285e1ef434204e27f8f034222cb382f1388c7afc5b2d776a"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-noise-reduction-pipeline-design.md",
+      "bytes": 5232,
+      "sha256": "ee1cda6fb502405497d70c730418d86845a939739223deaabda1fed4c7e4d3d0"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-noise-reduction-processing-options-design.md",
+      "bytes": 3894,
+      "sha256": "28e3fba9a32734c57f49117b895f537e3c29b019c52ab2d70dc388301e673b6f"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-live-localization-tabs-and-heatmap-focus-design.md",
+      "bytes": 3618,
+      "sha256": "7182d68e0e337aab42da642db01bee053d76ec885b7c9b90408ffad5e1763902"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-neural-srp-peak-refinement-design.md",
+      "bytes": 13049,
+      "sha256": "3c453b65ee60de674128e087c42b23b6d9d09a1a1eaeb53fd197f9512e08f43d"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-single-source-super-resolution-spatial-localization-design.md",
+      "bytes": 19442,
+      "sha256": "87864a18b5fa2d1ba5a252cf1821dd2d1bd4e0fc200445ff0b0e411c91dbccc9"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-trusted-heatmap-and-neural-halo-fix-design.md",
+      "bytes": 3484,
+      "sha256": "594378580af6ecdce0c02af23236fcad15642351ab16dd28993a05117e8cc944"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-trusted-source-threshold-fix-design.md",
+      "bytes": 5391,
+      "sha256": "4f4b41b3112cf27b3f3dee675617446d1bc5abe87f7783655151fd6fcc4b988f"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-02-noise-monitor-buffer-and-multisource-recording-design.md",
+      "bytes": 8610,
+      "sha256": "ad20ba0d81f1ee828ab1ffb24417ba603bd385aa1de685b21f21feff7d352787"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-02-raw-48-channel-software-beamforming-design.md",
+      "bytes": 7407,
+      "sha256": "c7a571e0bd7148518d593dc4ed3dfd32c539c0d7d679ad609c0c03cce1ee5b9a"
+    },
+    {
+      "path": "firmware/README.md",
+      "bytes": 3373,
+      "sha256": "e8843408a11d85a4bad165343f439a6ebd02c0a4a40689c158753db799283779"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/constrs_1/new/top.xdc",
+      "bytes": 12622,
+      "sha256": "45f0ae4e3321525d0a6902cdb0f5a0e795349b0a3c983cf5b6d651fddc2ab6c1"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/design_1_ooc.xdc",
+      "bytes": 626,
+      "sha256": "192d2825e4b523f09624fb2f526e9384dbb047b2797442d558f3d47fea0cacd6"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0/design_1_auto_cc_0_clocks.xdc",
+      "bytes": 1689,
+      "sha256": "b8679a2a9d760119b6d56d5607554d9c93cc29f7dc8126969750c8b1921730f0"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0/design_1_auto_cc_0_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0_1/design_1_auto_cc_0_clocks.xdc",
+      "bytes": 3414,
+      "sha256": "d064d8a5a835470a2df8211a37bf8e1e1f6f4271fa3b7574b9175534c7980a9b"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0_1/design_1_auto_cc_0_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1/design_1_auto_cc_1_clocks.xdc",
+      "bytes": 1689,
+      "sha256": "b8e316e490910a96e858e415d3af6a705d936127b051891eac65682e4317d611"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1/design_1_auto_cc_1_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1_1/design_1_auto_cc_1_clocks.xdc",
+      "bytes": 3414,
+      "sha256": "96c8389d89e41fdf0833477f1f0fe1157dde62660488cbde4bbc169a4d91f32b"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1_1/design_1_auto_cc_1_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2/design_1_auto_cc_2_clocks.xdc",
+      "bytes": 1689,
+      "sha256": "86d3277b2f4edf06a532c64c9dd15fdb093eb8c08ea38a51743e4ecb71b55792"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2/design_1_auto_cc_2_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2_1/design_1_auto_cc_2_clocks.xdc",
+      "bytes": 3414,
+      "sha256": "86d3576e8cd4a9f650fac60be18e3e99d7ddf8a268b252419e5a217acb83b34d"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2_1/design_1_auto_cc_2_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0/design_1_auto_ds_0_clocks.xdc",
+      "bytes": 547,
+      "sha256": "5a8de9407ccceb984c59ca15beb83dda9528fa2139ec87b2667c5ba25bce70ce"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0/design_1_auto_ds_0_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0_1/design_1_auto_ds_0_clocks.xdc",
+      "bytes": 547,
+      "sha256": "5a8de9407ccceb984c59ca15beb83dda9528fa2139ec87b2667c5ba25bce70ce"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0_1/design_1_auto_ds_0_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1/design_1_auto_ds_1_clocks.xdc",
+      "bytes": 547,
+      "sha256": "898fcef2f07eb410b1a0f8b6694fd1c8a0b8e5f92356a6f8753321ae1f446c42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1/design_1_auto_ds_1_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1_1/design_1_auto_ds_1_clocks.xdc",
+      "bytes": 547,
+      "sha256": "898fcef2f07eb410b1a0f8b6694fd1c8a0b8e5f92356a6f8753321ae1f446c42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1_1/design_1_auto_ds_1_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2/design_1_auto_ds_2_clocks.xdc",
+      "bytes": 547,
+      "sha256": "bc2f93466eea7f7716f6ba2c08d65bcfc8badc526fe92032f622c0c89b836480"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2/design_1_auto_ds_2_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2_1/design_1_auto_ds_2_clocks.xdc",
+      "bytes": 547,
+      "sha256": "bc2f93466eea7f7716f6ba2c08d65bcfc8badc526fe92032f622c0c89b836480"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2_1/design_1_auto_ds_2_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3/design_1_auto_ds_3_clocks.xdc",
+      "bytes": 547,
+      "sha256": "9fd7f55da1f9c232d8bf79917932d86115d7ff3df43d1f20362903f4c2a576eb"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3/design_1_auto_ds_3_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3_1/design_1_auto_ds_3_clocks.xdc",
+      "bytes": 547,
+      "sha256": "9fd7f55da1f9c232d8bf79917932d86115d7ff3df43d1f20362903f4c2a576eb"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3_1/design_1_auto_ds_3_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4/design_1_auto_ds_4_clocks.xdc",
+      "bytes": 547,
+      "sha256": "2a5372b4e7099958c3e639cb9b413f5dc94b554f3a686e31337ed1665ba42816"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4/design_1_auto_ds_4_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4_1/design_1_auto_ds_4_clocks.xdc",
+      "bytes": 547,
+      "sha256": "2a5372b4e7099958c3e639cb9b413f5dc94b554f3a686e31337ed1665ba42816"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4_1/design_1_auto_ds_4_ooc.xdc",
+      "bytes": 2458,
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_5/design_1_auto_ds_5_clocks.xdc",
+      "bytes": 547,
+      "sha256": "5fcce408600a6470f92fe51d9152eb22ee6f4896d8ea45ccef74d5a380004e76"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_5/design_1_auto_ds_5_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_0/design_1_auto_pc_0_ooc.xdc",
+      "bytes": 2386,
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_0_1/design_1_auto_pc_0_ooc.xdc",
+      "bytes": 2386,
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_1/design_1_auto_pc_1_ooc.xdc",
+      "bytes": 2386,
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_2/design_1_auto_pc_2_ooc.xdc",
+      "bytes": 2386,
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_3/design_1_auto_pc_3_ooc.xdc",
+      "bytes": 2386,
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_4/design_1_auto_pc_4_ooc.xdc",
+      "bytes": 2446,
+      "sha256": "548174ae3341f6b85a45aac6e2df745549522977deb2ea53a0bad3eac3e9ee17"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_5/design_1_auto_pc_5_ooc.xdc",
+      "bytes": 2331,
+      "sha256": "dc2caa49c4c29148689907a978fb9274acbff535b5849927a4530e2d813971a0"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_us_0/design_1_auto_us_0_clocks.xdc",
+      "bytes": 547,
+      "sha256": "c8fd8d09b65265a034bdc52a432f3b3ab04ed93c75be4265f1ae49f55cf306c4"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_us_0/design_1_auto_us_0_ooc.xdc",
+      "bytes": 2391,
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_0_0/design_1_axi_dma_0_0.xdc",
+      "bytes": 3567,
+      "sha256": "247df5cd0d4aa3c7ef97ffc5bfcaeb2aae18a1f8649068a0e3355b33ae56d336"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_0_0/design_1_axi_dma_0_0_clocks.xdc",
+      "bytes": 2206,
+      "sha256": "f66c61dedfbd528bf7d5a2a35c60d48b5c072ad1f015c255e5fb932d63c5b51a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_1_0/design_1_axi_dma_1_0.xdc",
+      "bytes": 3567,
+      "sha256": "c60a17475850fef4f0e32651c67df67e31405e6681633b13738e73cdc7668489"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_1_0/design_1_axi_dma_1_0_clocks.xdc",
+      "bytes": 2206,
+      "sha256": "c5348ab31febdb5147ba72c011edbd5f784fc5cc92ad796f117c7bbaee05c95a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_pcie_0_0/design_1_axi_pcie_0_0/source/axi_pcie_X0Y0.xdc",
+      "bytes": 15671,
+      "sha256": "08ec63deec9b843af4aa37e6a90660701e8d380b4e016e6a694e033e71b35e02"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_pcie_0_0/synth/design_1_axi_pcie_0_0_late.xdc",
+      "bytes": 2694,
+      "sha256": "b1417398b9e57b10506eed6d2e2f28b447fd18320a52df888a299adbbec48baf"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_pcie_0_0/synth/design_1_axi_pcie_0_0_ooc.xdc",
+      "bytes": 2969,
+      "sha256": "9bb48e6a2d90c253ba3ba7479e93fb05ad1faeb81c88afb663143f6397fab6ce"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_blk_mem_gen_0_0/design_1_blk_mem_gen_0_0_ooc.xdc",
+      "bytes": 2786,
+      "sha256": "5830a19f4e6425965985f9abd279d17183291269166022f2f20ec8144a83160e"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_clk_wiz_0_0/design_1_clk_wiz_0_0.xdc",
+      "bytes": 2726,
+      "sha256": "5e819a390b2c3040e12395eff60ad723c13466f156d6b2dc896d0ad94bb9eb9e"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_clk_wiz_0_0/design_1_clk_wiz_0_0_board.xdc",
+      "bytes": 60,
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_clk_wiz_0_0/design_1_clk_wiz_0_0_ooc.xdc",
+      "bytes": 2497,
+      "sha256": "14db101f986db810a80a700c319fb6c480ca7c6afc96b3a553d3eefbf4a7f81a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_0_0/design_1_proc_sys_reset_0_0.xdc",
+      "bytes": 2262,
+      "sha256": "bd4702fc996675aa06ed2570050d1002eb2af23c95d25778dbfddc5aeba55dfc"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_0_0/design_1_proc_sys_reset_0_0_board.xdc",
+      "bytes": 60,
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_1_0/design_1_proc_sys_reset_1_0.xdc",
+      "bytes": 2262,
+      "sha256": "a3ca2cf53d7b140300d50dba4dd1c977720859aab3c9ca3a5369fa290d0bdf6b"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_1_0/design_1_proc_sys_reset_1_0_board.xdc",
+      "bytes": 60,
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_1_0/design_1_proc_sys_reset_1_0_ooc.xdc",
+      "bytes": 2470,
+      "sha256": "a5d374fa3ea45aef52e0eb06ff7fbae08726eb61853cd8f6944b59cd9e5017a5"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_2_0/design_1_proc_sys_reset_2_0.xdc",
+      "bytes": 2262,
+      "sha256": "095ae4ce36f98c107ae04a8c3a88ce59d9592bf8f506045fd8ee9b1ecd0ede4a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_2_0/design_1_proc_sys_reset_2_0_board.xdc",
+      "bytes": 60,
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_2_0/design_1_proc_sys_reset_2_0_ooc.xdc",
+      "bytes": 2470,
+      "sha256": "a5d374fa3ea45aef52e0eb06ff7fbae08726eb61853cd8f6944b59cd9e5017a5"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_processing_system7_0_0/design_1_processing_system7_0_0.xdc",
+      "bytes": 36361,
+      "sha256": "f52875aeb8001797381347cc808a4445474ac593b7af3b49f0b88fa9e1263669"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_util_ds_buf_0_0/design_1_util_ds_buf_0_0_board.xdc",
+      "bytes": 60,
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_util_ds_buf_0_0/design_1_util_ds_buf_0_0_ooc.xdc",
+      "bytes": 773,
+      "sha256": "1f751361dabdd47984139e4735b2f6f79bfad7ae3aec7f2a1624dc0ab941e0ab"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_19.1_suc_test22/project_1.srcs/sources_1/new/fpga_self_reset.v",
+      "bytes": 1518,
+      "sha256": "b6d4d407ea3ea1db49b84121f5c8b3533926df6c3c4d94c098ea32f9b467e780"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_19.1_suc_test22/project_1.srcs/sources_1/new/top.v",
+      "bytes": 9846,
+      "sha256": "a24efc48b1de91825d29e69d2c4648eefa7fe09d81ae7da3da84a1b9d9a7f51f"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_radar/ICS43432_48CH_SERIAL/ICS43432_48CH_SERIAL.srcs/sources_1/new/ICS43432_48CH_SERIAL.v",
+      "bytes": 4245,
+      "sha256": "8daf8d991594af4dc276ab8ea6f40c2ae5535f296257955bd70ad42a06ec4c00"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_radar/Mic_Frame_Packer/Mic_Frame_Packer.srcs/sources_1/new/Mic_Frame_Packer.v",
+      "bytes": 4887,
+      "sha256": "308b57a470740e239c5a9932a90aa3cc6eba830bcb4bba4d8cae33e1690d7db0"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/ip/clk_pl_mmcm/clk_pl_mmcm.xdc",
+      "bytes": 2717,
+      "sha256": "b2e335f89e606cf2d7cd808011541fdd0ed77b3d8d0b4d58879e926c5032a151"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/ip/clk_pl_mmcm/clk_pl_mmcm_board.xdc",
+      "bytes": 60,
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/ip/clk_pl_mmcm/clk_pl_mmcm_ooc.xdc",
+      "bytes": 2488,
+      "sha256": "201f8673a2f459a3aaf21b168c23b35453b64e785a7de39daaad4a7e7dcdd0d3"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/Audio4ch_To_MicStream_48ch.v",
+      "bytes": 6462,
+      "sha256": "753305424d7b0b12824242afb096af48671a8519847e5dab49b296788c706ab9"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/bram_ctrl8_regs.v",
+      "bytes": 4730,
+      "sha256": "74cbef9757aee8f4ef57c85a4ce583daeef7b22c12f52a38047fb9bd02277af6"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/bram_ctrl_reader.v",
+      "bytes": 4718,
+      "sha256": "56843277fec24e9afe38b742352213ea09dae799bcea860c35c764b5d4e41840"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/top.v",
+      "bytes": 6430,
+      "sha256": "3001d3d1cb9f3665515f8fb14471078e900b47ee2278068748478deed97828cc"
+    },
+    {
+      "path": "firmware/hls/filters/build_hls.tcl",
+      "bytes": 1147,
+      "sha256": "8f6d6a6b2e1e46a10b6531370527e92b9bf7ecdf8c5fc21322460db9d4224880"
+    },
+    {
+      "path": "firmware/hls/filters/cosim_export_hls.tcl",
+      "bytes": 2111,
+      "sha256": "9f324b4327e9423bb79d15c6d93228ea196408bc9b498b96a33743bfbca1c895"
+    },
+    {
+      "path": "firmware/hls/filters/post_sample64.cpp",
+      "bytes": 4496,
+      "sha256": "d29b5e9c6cdfaecc75684a5fb866f13b083d7fce06adf49f5ced25eb7b8f96cb"
+    },
+    {
+      "path": "firmware/hls/filters/post_sample64.h",
+      "bytes": 539,
+      "sha256": "7b9a08df671bffda68af7999a37ed48a6362c3a79d0e18acbd16c58832d33ff7"
+    },
+    {
+      "path": "firmware/hls/filters/post_sample64_tb.cpp",
+      "bytes": 4131,
+      "sha256": "bfe64286f49472bd6561f762f28ad7fb7035ba74feafcc6be9e0e1908a490db5"
+    },
+    {
+      "path": "firmware/hls/logmmse/build_hop.tcl",
+      "bytes": 670,
+      "sha256": "f435e4fa4a2cb91541be8027352823a980d555363b70fe7c2d5ad028697c3396"
+    },
+    {
+      "path": "firmware/hls/logmmse/build_math_ooc.tcl",
+      "bytes": 1515,
+      "sha256": "110aa71366d1fe9ab6f722fb33be3e9e18de5b82fd54c94e8021c5862c0bc454"
+    },
+    {
+      "path": "firmware/hls/logmmse/hann2048_double.h",
+      "bytes": 43394,
+      "sha256": "b2650eb5abc1c3008bb2bf4804b1f98245e468cf63202663b16ef02d35bf5533"
+    },
+    {
+      "path": "firmware/hls/logmmse/logmmse_hop.cpp",
+      "bytes": 12066,
+      "sha256": "501d1d2a6e68aff299b6e80f773dbae86ca3e68315f173623f20267f2eb121c9"
+    },
+    {
+      "path": "firmware/hls/logmmse/logmmse_scalar_template.h",
+      "bytes": 2769,
+      "sha256": "6021995ba77ee25fad48fdc9e71aa2bb2d9c2f4e56b073e0968720a6e07ea06b"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/AESL_FPSim_pkg.v",
+      "bytes": 42725,
+      "sha256": "f4fc3a341b2544d7f5fcc77fc5781b6dd7e1385b317d3d4c561940aef13d4cf5"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64.v",
+      "bytes": 47206,
+      "sha256": "682e180dff190862b8d4a0d8b80d2486cb7262deb6bfa83eb236f8237e312252"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dadddsub_5_full_dsp_64_ip.tcl",
+      "bytes": 2535,
+      "sha256": "aaf974eab4f1d543f606d03931f08c58df6ff03e5e8825acdc52eff0c1635f0a"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dcmp_0_no_dsp_64_ip.tcl",
+      "bytes": 2497,
+      "sha256": "da8b332bf1eaceacda406446ea6d74e771da3ba8c3e06cabeeec0cd0c53897c6"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_ddiv_29_no_dsp_64_ip.tcl",
+      "bytes": 2503,
+      "sha256": "e5c3c77345a667388146eed07b18b0384133ecffae127312f04980ce2ce3e8c3"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dmul_4_max_dsp_64_ip.tcl",
+      "bytes": 2505,
+      "sha256": "79c8a3d09cb851063ddc313dfee9e948d8432ab809815d25aac290ef08448ae0"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dsqrt_28_no_dsp_64_ip.tcl",
+      "bytes": 2513,
+      "sha256": "68be9327a73cd73a3a39d3e498d449e96f8dce502bb8602b5172c2d7d0f4c92a"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_fpext_0_no_dsp_32_ip.tcl",
+      "bytes": 2510,
+      "sha256": "16b7bd0613f7e049c2b25e5bf9c0bc60685067998966c487d80f75c5531262d9"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_fptrunc_0_no_dsp_64_ip.tcl",
+      "bytes": 2520,
+      "sha256": "c8515ff8cd4f074f9958d693f4b335047f2b31aa580f7144c5eda40ce4234f33"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dadddsub_64ns_64ns_64_7_full_dsp_1.v",
+      "bytes": 2500,
+      "sha256": "97847ab35d4df319fdb9d96daf1b6fcd60546a80f7ad70f6c8bba1ce7bd781f9"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dcmp_64ns_64ns_1_2_no_dsp_1.v",
+      "bytes": 3063,
+      "sha256": "647084d16e5c28298bb83bdab3cdb9839eb7041720927051276561211ed8a878"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ddiv_64ns_64ns_64_31_no_dsp_1.v",
+      "bytes": 2127,
+      "sha256": "5c55ca968f8733dfac280b905b69bfbe9138f30361b51c4877a24b0d54445cf3"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dmul_64ns_64ns_64_6_max_dsp_1.v",
+      "bytes": 2126,
+      "sha256": "9938aefcc2aab00b5b888e32ac155e07db6823aaf86d9406d3c2e1f5da90db2e"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dsqrt_64ns_64ns_64_30_no_dsp_1.v",
+      "bytes": 1875,
+      "sha256": "2dbb1f44f354963f97ce55d62e977a261c16639d7a2e0ed417b8b2faa3473f39"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_fpext_32ns_64_2_no_dsp_1.v",
+      "bytes": 1627,
+      "sha256": "b763d9ad2a3df6e32826db0932887d236f028b454ada5339b03296ec3a6cb036"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_fptrunc_64ns_32_2_no_dsp_1.v",
+      "bytes": 1633,
+      "sha256": "6ca1ace0c9490588b25c92676ab744a67ef70e40f1966ebfe5804ff472afe3a1"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/AESL_FPSim_pkg.v",
+      "bytes": 42725,
+      "sha256": "f4fc3a341b2544d7f5fcc77fc5781b6dd7e1385b317d3d4c561940aef13d4cf5"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64.v",
+      "bytes": 27473,
+      "sha256": "ea626740e6e4ca4cb9764dc0acabed2bb51cdd544d1d6d9c8b954ebee705110d"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dadd_5_full_dsp_64_ip.tcl",
+      "bytes": 2539,
+      "sha256": "015b3708149c897d6a45c9db6187f291334c126a4fc5e4adc77c1f7c6cbf9b12"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dadddsub_5_full_dsp_64_ip.tcl",
+      "bytes": 2560,
+      "sha256": "f78c3ed5457a16f86e5a76c5beaaa3bb0f47d1752c178cc2f2880853283c2e3b"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dcmp_0_no_dsp_64_ip.tcl",
+      "bytes": 2522,
+      "sha256": "b6827bea325d75e85b5a4389b65e1dadd2c43aaf4805a0f9515391367580452f"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dmul_4_max_dsp_64_ip.tcl",
+      "bytes": 2530,
+      "sha256": "84bf6f1bd6ce9f339ba93d7e81b7e1a8a5d0a821c6848b5c7862d3e32a3b01a8"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dsub_5_full_dsp_64_ip.tcl",
+      "bytes": 2544,
+      "sha256": "78413ba48cd22909bed9ac61bfb6d6e624d6e05b2dec5d10c9b876ce5775580d"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_fpext_0_no_dsp_32_ip.tcl",
+      "bytes": 2535,
+      "sha256": "2beca1df444dbcabab2b9b88900a5b272ffdbbd76e611f4f82d9984b9ed65393"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_fptrunc_0_no_dsp_64_ip.tcl",
+      "bytes": 2545,
+      "sha256": "76b1d6bc6f8fc1268cfaa624c238ee6ae031403d266c6c8e1b5db00fbbe13b3b"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dadd_64ns_64ns_64_7_full_dsp_1.v",
+      "bytes": 2144,
+      "sha256": "da75bb5862cab52c07d89ceca18542d270ed08ce9dcb45f3f5292349215cfb7d"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dadddsub_64ns_64ns_64_7_full_dsp_1.v",
+      "bytes": 2515,
+      "sha256": "a2fe94e219de7ccddf17d2b04616f76afca4691cbb27162df7df553ea5acb8e8"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dcmp_64ns_64ns_1_2_no_dsp_1.v",
+      "bytes": 3079,
+      "sha256": "afefa770624e55585135660b17edeb56535db57a8615257370c4772c98d558e7"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dmul_64ns_64ns_64_6_max_dsp_1.v",
+      "bytes": 2141,
+      "sha256": "a046cd38093324e15bf3a2ecdadbdf645509cfd93a737d29059cbea9b93f7dfd"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dsub_64ns_64ns_64_7_full_dsp_1.v",
+      "bytes": 2144,
+      "sha256": "3d00b4ff12619002140abf23ec81ff914da666732fbc784f558e6e619d5d3e63"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_fpext_32ns_64_2_no_dsp_1.v",
+      "bytes": 1642,
+      "sha256": "686f9173a490e38310348d1333b214100cff6851a37a9298eb7ee9d07b984c68"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_fptrunc_64ns_32_2_no_dsp_1.v",
+      "bytes": 1648,
+      "sha256": "138874481f98c322eef2dd1f08af8b1d6368598bc25a24ccd8133d7932b6671e"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/AESL_FPSim_pkg.v",
+      "bytes": 42725,
+      "sha256": "f4fc3a341b2544d7f5fcc77fc5781b6dd7e1385b317d3d4c561940aef13d4cf5"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop.v",
+      "bytes": 245776,
+      "sha256": "3eb154b38ad21370dbb6c50cc66b38ebd5ee30741e05a0595e996e1522bc2846"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_HANN.v",
+      "bytes": 1200,
+      "sha256": "4f89517bbc36ea77a65d27ef4bbe8401467848e46be29d7c443cbb0462bf60c6"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_HANN_rom.dat",
+      "bytes": 34817,
+      "sha256": "1bdca9999cc456055dc2e70354b53b771e80ce0b3622234674a2d80553629c75"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dadd_3_full_dsp_64_ip.tcl",
+      "bytes": 2504,
+      "sha256": "869dc26ac640b65e53a73e7d22eff914e9cef6dc594aa646dc3b834797a30edb"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dadddsub_3_full_dsp_64_ip.tcl",
+      "bytes": 2525,
+      "sha256": "36c5a2344f712e494f867c4808c7378c6816e0887c0e8cc4e624d8edb7b816e4"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dcmp_0_no_dsp_64_ip.tcl",
+      "bytes": 2487,
+      "sha256": "0ac814b32bb72fffeea3807d821543d508349c4c2447c115f40b105ad0718986"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_ddiv_29_no_dsp_64_ip.tcl",
+      "bytes": 2493,
+      "sha256": "8c8bd2a8e7b3959b4ed15d3d28fe93d26d8a313406e74f0806278bef7624cd02"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dexp_11_full_dsp_64_ip.tcl",
+      "bytes": 2510,
+      "sha256": "8d27f4dc15f976e984b6a4e04ec050472b6395ce2c3cdfabaaf882fcb58a737d"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dlog_19_full_dsp_64_ip.tcl",
+      "bytes": 2508,
+      "sha256": "7c99a2830412ee4a3336489d9aa6fb1a17742a9820da8e1241000a4590f92430"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dmul_3_max_dsp_64_ip.tcl",
+      "bytes": 2495,
+      "sha256": "1ddf6283b86de7e0d0c2b15b40d9776f4c5291cb93a66f080fc31144d6b97092"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dsub_3_full_dsp_64_ip.tcl",
+      "bytes": 2509,
+      "sha256": "f17ef6e2cdf1d18e89255767e9a49bdf23f18f8c685b99e7ceab54ed6013179e"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_fpext_0_no_dsp_32_ip.tcl",
+      "bytes": 2500,
+      "sha256": "c2789c4b110c1dd0981ead422010606372513d56544c09e2b5d801d7b5b10818"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_fptrunc_0_no_dsp_64_ip.tcl",
+      "bytes": 2510,
+      "sha256": "eb1b8b2f981f33d331e3fdff1d28f22bc96fbc8be41fa1a6d5c6e3581b76a2b9"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_sitodp_2_no_dsp_32_ip.tcl",
+      "bytes": 2504,
+      "sha256": "a682a5e390c5614395a9c41b99374957f491ddba6c82a5ebb2efad291fc027c2"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_apply_lane_0_s.v",
+      "bytes": 11175,
+      "sha256": "1718e1b6451b727d1c7ad16f824a2f07daf45a5d4fcf6386d8e7c1f8034b310a"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_apply_lane_1_s.v",
+      "bytes": 11175,
+      "sha256": "dea3002678155e01d5025ed70a536ab41dee734908dfba9c814cb2ad6f6e0d3c"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_apply_three.v",
+      "bytes": 12563,
+      "sha256": "5bc247b313c0a4dccce61e71fb8f25da86554bc1f7bda67cd3995b7fec2081ed"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dadd_64ns_64ns_64_5_full_dsp_1.v",
+      "bytes": 2124,
+      "sha256": "628116ca96d6fe3d6f1489edc85831842e77b527a233cd1bbc0501ad9314ec48"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dadddsub_64ns_64ns_64_5_full_dsp_1.v",
+      "bytes": 2495,
+      "sha256": "141a0c55ef15553e0ecaec4e8f2a695e0a984a39611b4888fbd566828d30b0a6"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dcmp_64ns_64ns_1_2_no_dsp_1.v",
+      "bytes": 3058,
+      "sha256": "43e7e082d04f503a093c0296a43b926f28892f3fcf914ed0678ad6305120decf"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ddiv_64ns_64ns_64_31_no_dsp_1.v",
+      "bytes": 2122,
+      "sha256": "e559c1cdc60f1289c3cacd97f75569a3d62f6e590dde9d370bac2cc2d4c3e1be"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dexp_64ns_64ns_64_13_full_dsp_1.v",
+      "bytes": 1873,
+      "sha256": "61608365139c6e2bec85bf2a19f32435ae47bc5ceab77785f23ade4df4815e00"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dlog_64ns_64ns_64_21_full_dsp_1.v",
+      "bytes": 1873,
+      "sha256": "d95884f9e6d77bfc16b7e8974672b7b4c96ab1effefe65deceaf342f0ed0b146"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dmul_64ns_64ns_64_5_max_dsp_1.v",
+      "bytes": 2121,
+      "sha256": "0acd1e7fc1d416a4eda74ee60bb58f28c3a8aac58d871dca1e95f0ac6d4d335f"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dsub_64ns_64ns_64_5_full_dsp_1.v",
+      "bytes": 2124,
+      "sha256": "91794ed5d151f7665aa73e39803f854c42b321b9c34bc221fc165f630135b8a7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine.v",
+      "bytes": 20751,
+      "sha256": "f68544a121fc54e31db1b70d7cd03b4f4f33721ccb2557f1582b474876ca448a"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_Block_split26_proc23.v",
+      "bytes": 3298,
+      "sha256": "6d91f7cc42e3424d93cab35eb59351a75ed1becf432045c17469a296936dc24f"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_Block_split2_proc22.v",
+      "bytes": 4429,
+      "sha256": "123bea88f3a3e2acc2526e85751c4538c563de2ca2e4e72949a005c7e23159cd"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_entry28.v",
+      "bytes": 5365,
+      "sha256": "9dabcfd0ca1d66fe12904faa108c3a04458bfaaba2f855243666c23ce35f473d"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_entry3.v",
+      "bytes": 4469,
+      "sha256": "8b23046e968156d9d6ae63ff6df172e162647a254882be6091c92a9fadf889e7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_output_V.v",
+      "bytes": 1304,
+      "sha256": "7b5eee6976aac4a1301fa01f619960c51af35c13e9fcdd3dc44cdefa5e7f04b8"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_syn_fft_params_s.v",
+      "bytes": 3560,
+      "sha256": "64cc83f9295d45dda582334ed75800a63880cc8658d2e00b5cbb78580185141e"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_syn_fft_params_s_core_ip.tcl",
+      "bytes": 1364,
+      "sha256": "38c033345d5ebc7a8cdeca209eaea3b7c82ed75876661b79d62c68656609bae9"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w1_d2_S.v",
+      "bytes": 2999,
+      "sha256": "9cb9983e20de08858be9fb845a8d26427edc2b245a8150f007e0eec76cc36fc4"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w64_d16_S.v",
+      "bytes": 3011,
+      "sha256": "139005e84f504df393b8baf444c30c7c3e08bc0b7c2bb4bffbb619fe8ebc6086"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w8_d2_S.v",
+      "bytes": 2999,
+      "sha256": "9739d7bb001a06b0a5cd79c1d8f45abdb421a47ce43165cd0ea6e775345e0a9b"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w96_d16_A.v",
+      "bytes": 3690,
+      "sha256": "0c127037cfa8e4434ca8e680b228d8d5fa673f08bcb2a7903fac10e0a9d13684"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fpext_32ns_64_2_no_dsp_1.v",
+      "bytes": 1623,
+      "sha256": "9abe02f5c6b6c331661b05d9ae32cefd016fa0b6b6b4d38d7469c9d43b372e36"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fptrunc_64ns_32_2_no_dsp_1.v",
+      "bytes": 1629,
+      "sha256": "6106d3817cd33bd8d71aad8b2ea3a3f3b7b44cc575b20f95e171daa1205cca53"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_load_fft.v",
+      "bytes": 9010,
+      "sha256": "bc92016e83cea7196af6f981b42459775fbdb4d909e70300177573d09fdb65ab"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_mul_6ns_6ns_12_1_1.v",
+      "bytes": 959,
+      "sha256": "683f3350fb29b5b6fef4b79264043bca5bd01fcc92cdd7668b8dff650858501b"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_noise_0.v",
+      "bytes": 1353,
+      "sha256": "ae920208a718fccd1207371f329173c8837bc41fc7515009205e1dc74dc26e5a"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_noise_0_ram.dat",
+      "bytes": 8722,
+      "sha256": "34269c505f3903450b2464edfbedfce7f265df0dfb5ad968543e66fb91520544"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_pending.v",
+      "bytes": 1355,
+      "sha256": "63381c885bcf4f5e047239ec0513f3e1fa3b88848cdee3e61fa89311f2a226d4"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_pending_ram.dat",
+      "bytes": 9217,
+      "sha256": "54913e62b922185c6670f1e86cec47e90a31ff71ef307b38f572f1b81b490671"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_power_0.v",
+      "bytes": 1282,
+      "sha256": "46cfc857920b6a6c7fd7740977a09194b27bbbd24cad641693a38053990fc069"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_reduced_real.v",
+      "bytes": 1304,
+      "sha256": "c6c43ce829d07052d708720507bc3fa8482bd530b0926a650edfce6bb23d3ad7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ring.v",
+      "bytes": 1340,
+      "sha256": "904bf14633410d410f90ff965d7cef764d620153ebdebc9b18a489d4abd59012"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ring_ram.dat",
+      "bytes": 18433,
+      "sha256": "e1113e2921f3378796f70f1e423b229bbcb551331e375540c142f69865ff1999"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_scalar_bin_0_s.v",
+      "bytes": 126605,
+      "sha256": "abab6ff5661fe8d7bde1ddaca7c63a094ca4811db2956deec469ecf7f43e0935"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_scalar_bin_1_s.v",
+      "bytes": 126592,
+      "sha256": "f23ba27343860988a2d0fe789178ee91cfe74c86501e3961f66e48375a11b967"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_sitodp_32ns_64_4_no_dsp_1.v",
+      "bytes": 1804,
+      "sha256": "ef16f7c5cda96b33638003ef1c247a60f51d120c2b3365b8f05441bcf43ce641"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_engine_Block_split26_proc23_U0.v",
+      "bytes": 3127,
+      "sha256": "26f53154f9a57029918eeb4069a31f208368512e0fdfd72b269b8e62d9591aa4"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_engine_Block_split2_proc22_U0.v",
+      "bytes": 3123,
+      "sha256": "f27587554e99980e0b6df7065468ee349ac2fff3c99ea364e853e5ae3c871687"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_engine_entry28_U0.v",
+      "bytes": 3075,
+      "sha256": "018dd0df2f77dfd662aefb2c7e062f14739cd05c3916bc18ec83039f4e354ad9"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_syn_fft_params_U0.v",
+      "bytes": 3075,
+      "sha256": "93281075e2caebefa4f3d1ed02955b68a5ab513e9dd5b3cf0d5a8ffcd4f8eff1"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_unload_fft_U0.v",
+      "bytes": 3043,
+      "sha256": "78acd8b9e00c238a24c22de54de66e9e5e5f4c91355399f11f0a8ae92a5dfa31"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_tail.v",
+      "bytes": 1340,
+      "sha256": "18eda8bb050e7dbfb2a8aaca07ead14a6353924f013ebba4c5962967d4d44078"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_tail_ram.dat",
+      "bytes": 17409,
+      "sha256": "b8280c9138b2fca82fb306a6c7ac19c35619c36b25fa10f3b468996b7633cb9c"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_unload_fft.v",
+      "bytes": 8809,
+      "sha256": "233571628adf417f6273301fa87be499b23979c8b4c502c878b274c9ac10c4cc"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_windowed.v",
+      "bytes": 1288,
+      "sha256": "f06a0a10dfcd6bafa3373eba207a924d8527b21f9671aac5978e550a6c167ffc"
+    },
+    {
+      "path": "firmware/netlist_interfaces/agc_stub.v",
+      "bytes": 1880,
+      "sha256": "ff0ee21e4b3a04af8c31569cadb4f7f19f06c27198cb31831971fee3126d0b6e"
+    },
+    {
+      "path": "firmware/netlist_interfaces/bandpass_stub.v",
+      "bytes": 1923,
+      "sha256": "16723576d225d8e2a0cdb0167df30ee8a9d7215798c30c402f579849c146e62b"
+    },
+    {
+      "path": "firmware/netlist_interfaces/denoise_fft1024_stub.v",
+      "bytes": 2617,
+      "sha256": "8cdc0a3746af500a465c1033aceed9c574dd8e383531986f9c2b309d2284e7aa"
+    },
+    {
+      "path": "firmware/netlist_interfaces/denoise_post_profile_v3.v",
+      "bytes": 7683,
+      "sha256": "049b0d90ee5ad626fec729f47a47dc4038d375428773e90c789e7d3822b8d4b9"
+    },
+    {
+      "path": "firmware/netlist_interfaces/logmmse_stub.v",
+      "bytes": 1976,
+      "sha256": "3a4c0f23b634aef90ebc0794e81a1d1bc521cd547c4250d8d089219dad9a7b84"
+    },
+    {
+      "path": "firmware/netlist_interfaces/srp_phat_locator_3src_stub.vh",
+      "bytes": 1676,
+      "sha256": "dd6ae65a0a9fa8ebcb86f98cb842cfec086fcaad96968523fb51a471598e7235"
+    },
+    {
+      "path": "firmware/profile/canonical_profile.json",
+      "bytes": 169924,
+      "sha256": "be904723869b335a93a8879da993e8004979fdd4972d917f79705e297270d80b"
+    },
+    {
+      "path": "firmware/profile/profile_manifest.json",
+      "bytes": 1226,
+      "sha256": "379c0651e2d9e0d4dfd083e2b413b085f086d983262e91647bdd0ba9119ff683"
+    },
+    {
+      "path": "firmware/rtl/Audio4ch_To_MicStream_48ch.v",
+      "bytes": 6462,
+      "sha256": "753305424d7b0b12824242afb096af48671a8519847e5dab49b296788c706ab9"
+    },
+    {
+      "path": "firmware/rtl/audio_multisource_sideband.v",
+      "bytes": 10168,
+      "sha256": "42da76143acc2810fba8d421996ae97eee6031331d51ba58bbb3056f2e46a777"
+    },
+    {
+      "path": "firmware/rtl/audio_spatial_sideband.v",
+      "bytes": 4436,
+      "sha256": "b2b3ec92334edbf7b0db87e35ce4b7a0ea1b9e68d7d25e2184ae2dd5e6ca09e7"
+    },
+    {
+      "path": "firmware/rtl/denoise_audio_sideband.v",
+      "bytes": 6812,
+      "sha256": "03541c2b3e5b9cb66bdf1e9041081b79a1863319aeb2f924a07042140e04f942"
+    },
+    {
+      "path": "firmware/rtl/denoise_audio_sideband_v2.v",
+      "bytes": 9431,
+      "sha256": "2c170ad8d40b01641feb95996305b85a6d2afe20b4b4a0544a8fa6dcfb861b05"
+    },
+    {
+      "path": "firmware/rtl/denoise_audio_sideband_v3.v",
+      "bytes": 9699,
+      "sha256": "ddcdb9676b37ced892a2ff4490663dcd9ec246c334f496146e660a60d431457a"
+    },
+    {
+      "path": "firmware/rtl/denoise_beam3.v",
+      "bytes": 15056,
+      "sha256": "a43482713c89822bf0608fc633e64117b5bb2b952daf1fe7bd0414a17247c2c4"
+    },
+    {
+      "path": "firmware/rtl/denoise_control_mailbox.v",
+      "bytes": 5306,
+      "sha256": "a06f780234940747f982c29eb0fbb8dcacac24624951a3fa99e6be5eff05d68d"
+    },
+    {
+      "path": "firmware/rtl/denoise_control_mailbox_v2.v",
+      "bytes": 6601,
+      "sha256": "99da3247f4b69ea26f6c9aa4d00d62ed358cd7249808a53328e0e929011e76b2"
+    },
+    {
+      "path": "firmware/rtl/denoise_control_mailbox_v3.v",
+      "bytes": 6706,
+      "sha256": "6dcdba61d9d1423ba9f0ab961ef647e4e112ef66bde6dc658372d9c688fa3820"
+    },
+    {
+      "path": "firmware/rtl/denoise_fixed_to_float.v",
+      "bytes": 2616,
+      "sha256": "3b6d8ef2504d798c60cc3503e9fed7f973ea14ad6ff6cde86d65eccf559eda49"
+    },
+    {
+      "path": "firmware/rtl/denoise_post_profile_v3.v",
+      "bytes": 7683,
+      "sha256": "049b0d90ee5ad626fec729f47a47dc4038d375428773e90c789e7d3822b8d4b9"
+    },
+    {
+      "path": "firmware/rtl/denoise_sqrt_hann_q30.mem",
+      "bytes": 9216,
+      "sha256": "c8fd0534f7ee73c8c5dcd59c89627128c3546f281d6830d55ade075b20491e1d"
+    },
+    {
+      "path": "firmware/rtl/localization_capture48.v",
+      "bytes": 1821,
+      "sha256": "64aef2c918f146460906f467058df3665783cfaaa2079c5e9487788f05f0ab29"
+    },
+    {
+      "path": "firmware/rtl/multisource_audio_pipeline.v",
+      "bytes": 14528,
+      "sha256": "4513a0683f7f0e1a5780646825549d2e5683ba0354d9c768b30faf68ebd91071"
+    },
+    {
+      "path": "firmware/rtl/robust_channel_capture.v",
+      "bytes": 2477,
+      "sha256": "80063c62bbb631bfab5e068ae827b8a921b90f4512c75762c1413c17e791bba2"
+    },
+    {
+      "path": "firmware/rtl/robust_complex_ratio.v",
+      "bytes": 1224,
+      "sha256": "53d63afe048f355a72ae1940535bbdaebef28c2c46004aa98a81d9d2959c3bdd"
+    },
+    {
+      "path": "firmware/rtl/robust_confidence.v",
+      "bytes": 12234,
+      "sha256": "e0152f68d884a9dd6a177443d18aafe99f87399a2ac9626254a0ea367cca8d89"
+    },
+    {
+      "path": "firmware/rtl/robust_direction_vector.v",
+      "bytes": 2464,
+      "sha256": "60cea2cea74cf3779ccf8ec303e1e72abb8774d955f99aa8a19acdbf5980d1e8"
+    },
+    {
+      "path": "firmware/rtl/robust_fraction_divider.v",
+      "bytes": 1124,
+      "sha256": "eb2770647cbaee6f11f8b5a7d7dbf5c96cd70efb5942a186acd33f60cae038ab"
+    },
+    {
+      "path": "firmware/rtl/robust_gcc_builder.v",
+      "bytes": 9696,
+      "sha256": "04bf075e633c581de41fd384ddebd45347ee4849dbcb2b788a11db373697f228"
+    },
+    {
+      "path": "firmware/rtl/robust_integer_divider.v",
+      "bytes": 896,
+      "sha256": "26eededeb886eee65879b0a79b8c34f0c963f5cd6d950e8a702ea4385f6e9eb2"
+    },
+    {
+      "path": "firmware/rtl/robust_isqrt.v",
+      "bytes": 1099,
+      "sha256": "9de2eae2a82badc49673dec31221b632617b230491010d1ed82131f1c93ad5f8"
+    },
+    {
+      "path": "firmware/rtl/robust_local_peak_refiner.v",
+      "bytes": 3951,
+      "sha256": "4edc00e5665467d3e9bdbbfc6b4d789c8c01d4680c7f84d3828a8f562901d322"
+    },
+    {
+      "path": "firmware/rtl/robust_neural_mlp.v",
+      "bytes": 5370,
+      "sha256": "205c969cec489587a13561e5d9ab3f2ab4925fb70268701fa7c0d653ce645391"
+    },
+    {
+      "path": "firmware/rtl/robust_neural_peak.v",
+      "bytes": 13688,
+      "sha256": "7df4354e9667b451b4d9c2c8ad5f72523e8509d9624a617ae9cac7aec7c49c37"
+    },
+    {
+      "path": "firmware/rtl/robust_peak_search.v",
+      "bytes": 3870,
+      "sha256": "ef8bf47d819def7dcc8e46cdd802932de3ebb615cfaf9507ca7efbf1b4215ac6"
+    },
+    {
+      "path": "firmware/rtl/robust_phase_memory.v",
+      "bytes": 2242,
+      "sha256": "ad7ff9e2b01ee0422dbae864e89499d02504836f510c0c17913edbba2d376144"
+    },
+    {
+      "path": "firmware/rtl/robust_sdp_ram.v",
+      "bytes": 581,
+      "sha256": "2f04c0bb1cec91af20089ac93fe54d3b616529b3b7db2eebfb2a7efe8cfc75ab"
+    },
+    {
+      "path": "firmware/rtl/robust_spatial_peaks.v",
+      "bytes": 9446,
+      "sha256": "371636dd0347fdb844eff7948bb9ce2a245720ca4739a57f678efa309798ffa7"
+    },
+    {
+      "path": "firmware/rtl/robust_spectral_frontend.v",
+      "bytes": 10534,
+      "sha256": "5d8351ad432ddbefe9b4cded3fb87a8b947a533ebdf00058ba32ba14ed692816"
+    },
+    {
+      "path": "firmware/rtl/robust_srp_score.v",
+      "bytes": 3623,
+      "sha256": "1ae2a53be628c279b84cd1b24920986f12d6471d87d5d4e6dfbbd8df6f174600"
+    },
+    {
+      "path": "firmware/rtl/robust_tanh.v",
+      "bytes": 1175,
+      "sha256": "d1b9eb5c6449ee1bc2522842bd90a215b7f5404c4939968273fc8171c8447146"
+    },
+    {
+      "path": "firmware/rtl/rom/band_q15.mem",
+      "bytes": 3435,
+      "sha256": "5671760c19f1b4c3b290add351e36321d7516c46292adc06980ff7b7e40d0a3a"
+    },
+    {
+      "path": "firmware/rtl/rom/channel_xy.mem",
+      "bytes": 192,
+      "sha256": "36677337fc7e0dacebcc6ebd3ef5c8ff44d76c1cb1ab3354dd545234a9a7f75b"
+    },
+    {
+      "path": "firmware/rtl/rom/coherence_q15.mem",
+      "bytes": 5125,
+      "sha256": "dbb94b3850db1da4df31c0818395d14e214ed3429e1d3dd1f7627375a37fc0bb"
+    },
+    {
+      "path": "firmware/rtl/rom/cubic4_q18.mem",
+      "bytes": 28700,
+      "sha256": "929c8f4927c5591fc87aa7bc71c2dcda90c860931ff3b33f29d4103463922fa5"
+    },
+    {
+      "path": "firmware/rtl/rom/direction_vectors.mem",
+      "bytes": 288,
+      "sha256": "a2ef3b5396ec72fb456e5abdef86c13ab4b0cb65bf96d2f1ff3ce3d7b2407221"
+    },
+    {
+      "path": "firmware/rtl/rom/estimator_channel_xy.mem",
+      "bytes": 192,
+      "sha256": "ca66884d3e77c4047ab967bf162826a0b797d043972b163c91a4d777d71bea71"
+    },
+    {
+      "path": "firmware/rtl/rom/group_recip_q24.mem",
+      "bytes": 664,
+      "sha256": "87490f1e95c5fcdeaddb273a8fe92f02ae211c4af119e211692cc1738b5c22f9"
+    },
+    {
+      "path": "firmware/rtl/rom/groups.mem",
+      "bytes": 656,
+      "sha256": "f738aa88885737e69f7675ea259eb74f1553e7beefb7876def7350f95e768a96"
+    },
+    {
+      "path": "firmware/rtl/rom/hann2048.mem",
+      "bytes": 12288,
+      "sha256": "81fb836674f8916080c9cd3864c89451e5d2b9fde911a6bf5db996b111b070c0"
+    },
+    {
+      "path": "firmware/rtl/rom/log2_mantissa_q12.mem",
+      "bytes": 5120,
+      "sha256": "49a9aa5888ddfd757249a4c6bd01cd79be147646051fa35ab7d86cf7e843e60f"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_biases_q20.mem",
+      "bytes": 702,
+      "sha256": "2f2359b52b92021b9cb86bd01c221f72f4547642ceff64c1e5a84d4b2a745a3d"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_golden_input_q24.mem",
+      "bytes": 837,
+      "sha256": "3c2e88f06f9c62420f4446bb9107d78f0d87f29b69db98561735809fd28bca98"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_golden_output_q16.mem",
+      "bytes": 54,
+      "sha256": "35ec8986a3f16b60a52131992f807c486bfcf5fe9516783544661b7aaccaee24"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_inverse_scales_q12.mem",
+      "bytes": 837,
+      "sha256": "d3c05146a5e69624d7db2aca3243b6d5c85f2c3a614c11838ffab554d7a76acf"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_means_q24.mem",
+      "bytes": 837,
+      "sha256": "30f86da15de6297da4b8b061cc9f833e2ef4d382a731134c93e540f236c8f14a"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_tanh_q16.mem",
+      "bytes": 49158,
+      "sha256": "0ba432fab8faea3dcdd3b9d11c40d99f9bc7b080d8ac4d46b44fa1f76e2cac19"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_weights_q20.mem",
+      "bytes": 51840,
+      "sha256": "94a7c375e013a69ac46a36b98ba7e2f40782ad9d858c2fc8b0f2514d01cb6c85"
+    },
+    {
+      "path": "firmware/rtl/rom/pairs.mem",
+      "bytes": 4512,
+      "sha256": "b42ba6545419f566a0de68eb5ef32d113d953cdac0e0cf0b62946a55fc896c85"
+    },
+    {
+      "path": "firmware/rtl/rom/phase_sin_q15.mem",
+      "bytes": 20480,
+      "sha256": "29cd6a25da10702e009f00f0a20a006281b1e5765fba43f1ff8c0d2084a83f74"
+    },
+    {
+      "path": "firmware/rtl/rom/ratio_vectors.mem",
+      "bytes": 9472,
+      "sha256": "8b524df431c262bd10402ac52bd786aa5262b57ee6d615cedfa07071b3a895f9"
+    },
+    {
+      "path": "firmware/rtl/rom/root5_q15.mem",
+      "bytes": 5125,
+      "sha256": "664b8a2c25d30c2dc17ba32a8b1bbeb520d0a60a2ff00549e078be0ff14e3f95"
+    },
+    {
+      "path": "firmware/rtl/rom/sin_degree_1_16_q23.mem",
+      "bytes": 11528,
+      "sha256": "2056024a19b63e7b47684d4b766c665a52cbbbe5cce6464101f9253c296f0495"
+    },
+    {
+      "path": "firmware/rtl/rom/sinc8_q18.mem",
+      "bytes": 57400,
+      "sha256": "999057851bb44b74d87b5bbfe9b957ecdb288a6c7b67862fab5a19fe7c41d0b0"
+    },
+    {
+      "path": "firmware/rtl/rom/sqrt_vectors.mem",
+      "bytes": 6400,
+      "sha256": "8d0100a8feff09739d4f4dcfa24fde3fc8ae0862e6dfa9187bb27c094dab9a3f"
+    },
+    {
+      "path": "firmware/rtl/srp_phat_locator_3src.v",
+      "bytes": 18339,
+      "sha256": "e2d90e28ecb51e07740ffe575c99595c84144898068521835a1c8e8fe080ea9b"
+    },
+    {
+      "path": "firmware/rtl/wiener1024_fixed.v",
+      "bytes": 17026,
+      "sha256": "c1046f364f8384a3be4c3614c94a30179f66feeedac56e5c47cff2b276f3b9fc"
+    },
+    {
+      "path": "firmware/scripts/restore_routed.tcl",
+      "bytes": 1135,
+      "sha256": "f8c3798e7be00d5d1b16e76e92f0a82737b3bf390de6c969ea16c1e4995dcc03"
+    },
+    {
+      "path": "main.cpp",
+      "bytes": 2080,
+      "sha256": "cf3da77567706959b26d6cd33554cbd7e69a9bba7d35cf945945b829ec2294d9"
+    },
+    {
+      "path": "refer/TCP_audio+video.vi",
+      "bytes": 49926,
+      "sha256": "091889f144a1438d01ca31be3704330785b2eb01434a04d38ad4653d130e0a92"
+    },
+    {
+      "path": "refer/音频矩阵通信协议.md",
+      "bytes": 6047,
+      "sha256": "8fde70d48ba5f325b1cb74178694c0f94ac3c262890ed633faa4b473fd0a0df6"
+    },
+    {
+      "path": "scripts/Readme.md",
+      "bytes": 598,
+      "sha256": "21b804428956123b1ba656d70196974fb6c87863e7c60e65777033fdd8732f0c"
+    },
+    {
+      "path": "scripts/package-release.ps1",
+      "bytes": 4942,
+      "sha256": "9b61e7cdb27722e8db5e49722a406e4b8e83283d1a20c2cb1ee397ec897129d7"
+    },
+    {
+      "path": "scripts/verify-release.py",
+      "bytes": 1121,
+      "sha256": "5183b97d3c5c7ccb35ca7e0eac4f763cd6a50d72c81dd381d840371bb35775c5"
+    },
+    {
+      "path": "src/analysis/arraygeometry.cpp",
+      "bytes": 1645,
+      "sha256": "3f7cfb14726b8a69e073db9cfdbd54b7e94b05857adb1ed17e840982619d3f91"
+    },
+    {
+      "path": "src/analysis/arraygeometry.h",
+      "bytes": 331,
+      "sha256": "8ae14309cb6931597f55f07c890442e8579fa49924b58a28fc99211be920819a"
+    },
+    {
+      "path": "src/analysis/audioanalysisworker.cpp",
+      "bytes": 15152,
+      "sha256": "57fed20a094dab3bc24ff006da9492987be83963d8f418c5a80a4e22ab90624b"
+    },
+    {
+      "path": "src/analysis/audioanalysisworker.h",
+      "bytes": 2408,
+      "sha256": "45b48401f092288467d8662dda16ee6546754bbfe1e7813b603a0d3c7b3a0092"
+    },
+    {
+      "path": "src/analysis/calibrationprofile.cpp",
+      "bytes": 16504,
+      "sha256": "4ad88e0c3e43fed52b7bbd8fa6e00b573489921ae805f516fbccc1db11ca4536"
+    },
+    {
+      "path": "src/analysis/calibrationprofile.h",
+      "bytes": 1189,
+      "sha256": "c3c269b5ab7421a48e730c15cdf4e9c17466e53b9afdf5c90cb6f2422f807888"
+    },
+    {
+      "path": "src/analysis/cameraviewcalibrator.cpp",
+      "bytes": 11292,
+      "sha256": "7aad1ada33e6cd9192145f310300f36b7c046ab7166f9e7b4299498ebceb3839"
+    },
+    {
+      "path": "src/analysis/cameraviewcalibrator.h",
+      "bytes": 501,
+      "sha256": "8db0306b28960bdfa47454b9485163811029ed74a752d8edd5517ed7ebc31f98"
+    },
+    {
+      "path": "src/analysis/directionprojection.cpp",
+      "bytes": 14264,
+      "sha256": "528e486ed8cb91bd15de0c5231f9df76ba7bcb059c2065403faff286f56f635c"
+    },
+    {
+      "path": "src/analysis/directionprojection.h",
+      "bytes": 819,
+      "sha256": "39c4a29509846dd40490f69ef36af1e2fa0bcb008de3a0c75733ac43dceccaa7"
+    },
+    {
+      "path": "src/analysis/gccphatlocator.cpp",
+      "bytes": 6487,
+      "sha256": "019097ebed7f349e1a9368c7e16643ed147a27a47db1ab36215bf571b0767eb3"
+    },
+    {
+      "path": "src/analysis/gccphatlocator.h",
+      "bytes": 1432,
+      "sha256": "562e9192df7ab0a3b3d9962f11b32fff477f37c17e34f19d848b10b5e40c5b50"
+    },
+    {
+      "path": "src/analysis/isoundsourcelocator.h",
+      "bytes": 460,
+      "sha256": "9d3ad0b845e0fc2e2a3fe805fc46cedf131ec9315147efcde8568f737ea69987"
+    },
+    {
+      "path": "src/analysis/ispatialresponseprovider.h",
+      "bytes": 436,
+      "sha256": "c5b13ef011dce4dac77db4f189f0dce17df53afec81a317e2806951c06a30509"
+    },
+    {
+      "path": "src/analysis/livelocalizationworker.cpp",
+      "bytes": 14260,
+      "sha256": "efbdd23b8f179d003e6ff63e95272a7ec67db4df7f67f21b0a29232253a6a213"
+    },
+    {
+      "path": "src/analysis/livelocalizationworker.h",
+      "bytes": 2153,
+      "sha256": "31f0258b011af00ceda011fc1e8b96cefb94ac0862c513786049cae50ab351f8"
+    },
+    {
+      "path": "src/analysis/localizationtypes.h",
+      "bytes": 4661,
+      "sha256": "bf54cb12f2ce04f86e13cb7132fb62da7fbc44140b4caebedcede082121fc8e9"
+    },
+    {
+      "path": "src/analysis/multisourcedirectiontracker.cpp",
+      "bytes": 12990,
+      "sha256": "5503dafe3cfb08b090ea2d0abf8275e24156ea8468dc7d562b7d180218b59aac"
+    },
+    {
+      "path": "src/analysis/multisourcedirectiontracker.h",
+      "bytes": 2039,
+      "sha256": "337608b88e540448f1e2be8fd989b690b7c7d1abb55bca331901a89f3ff24aef"
+    },
+    {
+      "path": "src/analysis/neuralmodeldata.h",
+      "bytes": 95633,
+      "sha256": "7a3eb3f928e72eb13e118089275acb0ee9e1ba142de9452f1c5765dae364c716"
+    },
+    {
+      "path": "src/analysis/neuralsrppeakrefiner.cpp",
+      "bytes": 7073,
+      "sha256": "c79348e09e566f8797d204219f01797c30ba9168505e8af1079d13ec95bb6ee2"
+    },
+    {
+      "path": "src/analysis/neuralsrppeakrefiner.h",
+      "bytes": 744,
+      "sha256": "7953076c96f919316bd94b48d1a7585e6e5598787470971e49d55b5d6c7764d3"
+    },
+    {
+      "path": "src/analysis/pllocalizationcontroller.cpp",
+      "bytes": 7514,
+      "sha256": "3a3c70021c760a31baa16de21ff95bf0d0fb9d5f4696be756254684923288889"
+    },
+    {
+      "path": "src/analysis/pllocalizationcontroller.h",
+      "bytes": 1869,
+      "sha256": "d5f169b0df21a0f4fdcd477a55007b2d287bc29cff7a385eb692f0044e8f5ec2"
+    },
+    {
+      "path": "src/analysis/plspatialprojector.cpp",
+      "bytes": 2805,
+      "sha256": "b84b2aabb840b18b3a4c6368e0ff576642b0d00e6c0109a9e2c0cf4958036334"
+    },
+    {
+      "path": "src/analysis/plspatialprojector.h",
+      "bytes": 541,
+      "sha256": "6d0043dee3ea03115d8b0470313de7512831081a2823910ef3713f4dcbdb0604"
+    },
+    {
+      "path": "src/analysis/radix2fft.cpp",
+      "bytes": 1695,
+      "sha256": "ce78527c0d271bf04f2960fd2689f7bea702d87f1c6f6176ed4a17ec5413a620"
+    },
+    {
+      "path": "src/analysis/radix2fft.h",
+      "bytes": 210,
+      "sha256": "f073e20e03a1bfa5403ceee5896177529833d141d96c94c0074d4dd3ed0bb028"
+    },
+    {
+      "path": "src/analysis/robustsrpphatscorer.cpp",
+      "bytes": 63123,
+      "sha256": "1b28ba4a2acfef980d2ac8a689e99acb4c837c1b947377e07fe22800d2950e5d"
+    },
+    {
+      "path": "src/analysis/robustsrpphatscorer.h",
+      "bytes": 4055,
+      "sha256": "bd82e8955f4e9435b1a7fe5526b6afe2c1188749ed3b7a43f3c5290ea52a7e42"
+    },
+    {
+      "path": "src/analysis/soundsourcelocatorregistry.cpp",
+      "bytes": 2717,
+      "sha256": "52fde1aa89435c1c13baaf640f6dab65de8fbbefd506e577245b2f8675fa23b2"
+    },
+    {
+      "path": "src/analysis/soundsourcelocatorregistry.h",
+      "bytes": 721,
+      "sha256": "d5289646252ff195f1aab4d4fc2874b99cd9b6f5315d078f7ac3293704b38dd8"
+    },
+    {
+      "path": "src/analysis/wavefilereader.cpp",
+      "bytes": 13186,
+      "sha256": "eab437340ce195b6cc4b390eb483ef4df4e159edde3b621be8a766e563a6c72c"
+    },
+    {
+      "path": "src/analysis/wavefilereader.h",
+      "bytes": 1667,
+      "sha256": "8ba4e3e67dac0dcd2416cb460b5a8082ae2093b7fe552b8976dca4167291e9f1"
+    },
+    {
+      "path": "src/app/appsettings.cpp",
+      "bytes": 81149,
+      "sha256": "cda118efb946d2477847201dda0deef7406ac2c4087d81a8498b5e782def58d9"
+    },
+    {
+      "path": "src/app/appsettings.h",
+      "bytes": 4819,
+      "sha256": "d7516489b759ae4db5f454527250feea3080883041bbc0e83efbd992a8a7c8c7"
+    },
+    {
+      "path": "src/app/logger.cpp",
+      "bytes": 3586,
+      "sha256": "11e6f7f7958c2fcd5b2a3bb5e02c7eb542256879c8985e7423f9e6bc3c7aed24"
+    },
+    {
+      "path": "src/app/logger.h",
+      "bytes": 1227,
+      "sha256": "0f40b8d23aca270a08c784a3e2e3adf52d4fbf371655713ca8deab0452c55b30"
+    },
+    {
+      "path": "src/control/controlvalues.cpp",
+      "bytes": 496,
+      "sha256": "d8643ec79ae818ed600eb9f7f681067349b2d7e7ff711ea4866aca9fd26fd20a"
+    },
+    {
+      "path": "src/control/controlvalues.h",
+      "bytes": 498,
+      "sha256": "bbac3f23e69c48d74bfaccddcfae4b72ba8dd909f9595904099a956947b5f785"
+    },
+    {
+      "path": "src/control/directioncontrolmapper.cpp",
+      "bytes": 5251,
+      "sha256": "7f904c51c528022e11de8954abafb459bbfb27cf0454402692c6f4eee00b62d5"
+    },
+    {
+      "path": "src/control/directioncontrolmapper.h",
+      "bytes": 1062,
+      "sha256": "3cba199e4adae337d88fdb0921fbfdd70771c5aeb31b2b84a28b6de41c24256c"
+    },
+    {
+      "path": "src/control/pldenoisesession.cpp",
+      "bytes": 10988,
+      "sha256": "9276d822d6d07c2404c37abe1e6f6393deda2cd1fb88c0849ae11d893d162757"
+    },
+    {
+      "path": "src/control/pldenoisesession.h",
+      "bytes": 2072,
+      "sha256": "d7d348eb3b2ebdebc2bdc7b3422bb552a1a1b1e1e53b643840025d314dc6537a"
+    },
+    {
+      "path": "src/device/deviceclient.cpp",
+      "bytes": 7754,
+      "sha256": "0a066f825a21781ae88593993c5f67b84676ccf7d857b3e1de3bfc7b88618fc1"
+    },
+    {
+      "path": "src/device/deviceclient.h",
+      "bytes": 3431,
+      "sha256": "0367c630419f97b0ec3661b986d6572e169207fe0c17940da813eb972622ea5c"
+    },
+    {
+      "path": "src/device/networkworker.cpp",
+      "bytes": 8815,
+      "sha256": "0e391d27edc4be9cb3dbf91a7a90b8abef42cb82ef5e6d4b69093d48d3c0945f"
+    },
+    {
+      "path": "src/device/networkworker.h",
+      "bytes": 2750,
+      "sha256": "80e37089405c9895de33e465a21d0a7ef0c9da25685a2107e0a9166165c94c60"
+    },
+    {
+      "path": "src/diagnostics/alertcoalescer.cpp",
+      "bytes": 670,
+      "sha256": "56ffb49d0543e739a338725dd3770b2e5787d58e1baf37d0fdf93b04d338c1db"
+    },
+    {
+      "path": "src/diagnostics/alertcoalescer.h",
+      "bytes": 510,
+      "sha256": "3f1892458716521aa026410a02301d2072ae8a85b971e2096b8e6709e7c5a911"
+    },
+    {
+      "path": "src/diagnostics/diagnosticexporter.cpp",
+      "bytes": 4852,
+      "sha256": "0b4c067b42128a6b6ee25aa0a12c21b8192f675e35fbed4b8544dc6a3a7f19b2"
+    },
+    {
+      "path": "src/diagnostics/diagnosticexporter.h",
+      "bytes": 865,
+      "sha256": "a6b55cd01c7d945f0b662adb8b138ec7084caf92fb569496512e02f5f1baecdd"
+    },
+    {
+      "path": "src/media/audioframedecoder.cpp",
+      "bytes": 4350,
+      "sha256": "b35f0b1931f4f8ac0457782b4d26a2dc064a7a7aca96e579e397ab737d43673b"
+    },
+    {
+      "path": "src/media/audioframedecoder.h",
+      "bytes": 1826,
+      "sha256": "8b61024d88e19510b1a69a63130fded41d02c6d10bd244f205dc33f145ad2b64"
+    },
+    {
+      "path": "src/media/audiolocationsideband.cpp",
+      "bytes": 12975,
+      "sha256": "bdb3762e893c8e601bf70b4bbff8016d6606e15513b6e0ef3cc536753486fdbb"
+    },
+    {
+      "path": "src/media/audiolocationsideband.h",
+      "bytes": 1693,
+      "sha256": "0feb73c8c17b2fdf3edf25117fa865283cea180524236927ab47dc1ab6c06ac7"
+    },
+    {
+      "path": "src/media/audiomonitorbuffer.cpp",
+      "bytes": 2525,
+      "sha256": "62cd36497b758d08b1ff2b69d8abf45434fc68f751bbe2092c339dee8891921c"
+    },
+    {
+      "path": "src/media/audiomonitorbuffer.h",
+      "bytes": 681,
+      "sha256": "24742ffcf1764d78377bcf1c0e1f0ec9ed788c696b10640ba988c0cf992debd2"
+    },
+    {
+      "path": "src/media/audioprocessor.cpp",
+      "bytes": 6518,
+      "sha256": "a0b6bc65269e00f34ba18289d7e402a0bec7a10f91e6ade9e005c79b737bb6ee"
+    },
+    {
+      "path": "src/media/audioprocessor.h",
+      "bytes": 2596,
+      "sha256": "8ead32fd0ac4bd89419a162f71f9c45d50aaf0272c5b7d773cf71377b351be4c"
+    },
+    {
+      "path": "src/media/audiorecorder.cpp",
+      "bytes": 32777,
+      "sha256": "5e04f8749017ef3d9dbd50514e8b4be5e2afacabf523a0e3fd53fe2f8ed071c9"
+    },
+    {
+      "path": "src/media/audiorecorder.h",
+      "bytes": 3538,
+      "sha256": "847658742dd14d951027a67d6d3f53b4304e6738e02d6e27ba9bda5342c4c5fa"
+    },
+    {
+      "path": "src/media/automaticgaincontrol.cpp",
+      "bytes": 3160,
+      "sha256": "2a64432ef64501bce58e2dba07d99d0ed04475af35bceddca4b8756df4653f10"
+    },
+    {
+      "path": "src/media/automaticgaincontrol.h",
+      "bytes": 722,
+      "sha256": "1582164c9f5b03d0b40b60e4d36cf9a81ad435a2e3df38e896c55c1b7141acbe"
+    },
+    {
+      "path": "src/media/bandpassfilter.cpp",
+      "bytes": 3066,
+      "sha256": "bb323a3e210b970f9f0043e5afd6edd966e68f97a772b10b8f1c3bb704494897"
+    },
+    {
+      "path": "src/media/bandpassfilter.h",
+      "bytes": 1033,
+      "sha256": "216f59c35177191439b8047693c7cd615102c85a9a4ca8ae7ea641d4175728ae"
+    },
+    {
+      "path": "src/media/channelgainprocessor.cpp",
+      "bytes": 10065,
+      "sha256": "be0f6581bba484daeed7c9b392b65a39e25a8b5c5db736afcbdf3cdb223affb4"
+    },
+    {
+      "path": "src/media/channelgainprocessor.h",
+      "bytes": 2200,
+      "sha256": "49984ef24d70337a493e73731e809cbae9348119157d7b849f9ece7e1fec2060"
+    },
+    {
+      "path": "src/media/fractionaldelaybeamformer.cpp",
+      "bytes": 7004,
+      "sha256": "ec9726fe4755b4d0f77b51c79f6ab120400a498d8ad28b19cad6b69c8e436ada"
+    },
+    {
+      "path": "src/media/fractionaldelaybeamformer.h",
+      "bytes": 1539,
+      "sha256": "dc40bbabc6dc268914e862c4e3707ca1be5166933e84f89920c51a966114c354"
+    },
+    {
+      "path": "src/media/gainprofilestore.cpp",
+      "bytes": 9401,
+      "sha256": "dafbe08b538d2fcb6800d729c36b3b762a36e28fcdb73477ef0e0df82089a78d"
+    },
+    {
+      "path": "src/media/gainprofilestore.h",
+      "bytes": 572,
+      "sha256": "d391b95c28a5c0a6a6fece84274eacc9e965f00ec88959a687ed51d8284b5ccd"
+    },
+    {
+      "path": "src/media/logmmseprocessor.cpp",
+      "bytes": 8234,
+      "sha256": "42a5533f53a1e17f0a36625217979fea6cf44a286c983fbd5b11c630175e075d"
+    },
+    {
+      "path": "src/media/logmmseprocessor.h",
+      "bytes": 891,
+      "sha256": "bbd039312f9b46304301d79336c0eaed693795d640452fd708c1ace4198753cf"
+    },
+    {
+      "path": "src/media/mediaframequeue.cpp",
+      "bytes": 623,
+      "sha256": "f579618d626942ba8902bd6f7e207c2ed2aa3662ad80d9cabe0b864a955868b3"
+    },
+    {
+      "path": "src/media/mediaframequeue.h",
+      "bytes": 591,
+      "sha256": "9329d07d05a6f947762e3cd010f68482d59d2bc91e282ce2f5f562c8340da24a"
+    },
+    {
+      "path": "src/media/multichannelwavwriter.cpp",
+      "bytes": 27890,
+      "sha256": "4d72045b3317c4b6259b31b08488d58f1ae59a317386d42f1125dd0b8eec29f9"
+    },
+    {
+      "path": "src/media/multichannelwavwriter.h",
+      "bytes": 3522,
+      "sha256": "b9d1bfb5660b69b7ac677a78cec87bd4de3b38a823c2bc288e4a049123fa86eb"
+    },
+    {
+      "path": "src/media/noisereductionframedecoder.cpp",
+      "bytes": 1434,
+      "sha256": "e5ce006dcffa18c7438420e652606d9625571acc5c9d8321ab457c0a8413fba7"
+    },
+    {
+      "path": "src/media/noisereductionframedecoder.h",
+      "bytes": 381,
+      "sha256": "1588d1c7481a0fa2df362a4e2a05bfea1c362388c48d2e4dc1d4a6a98d98e52f"
+    },
+    {
+      "path": "src/media/noisereductionmailbox.cpp",
+      "bytes": 7046,
+      "sha256": "9d72b95f59cf0f4fb54f1263227104c6793648e40d3e64416c253a0c9a80f254"
+    },
+    {
+      "path": "src/media/noisereductionmailbox.h",
+      "bytes": 2586,
+      "sha256": "863672a3dea0782aa40e3299d3bdd01ff47f2868568d510cf7a177c423e4f0ba"
+    },
+    {
+      "path": "src/media/noisereductiontypes.cpp",
+      "bytes": 4236,
+      "sha256": "81916ca24f3c913bba8144bb6c114e0b64919b17778593e89de25b5030635942"
+    },
+    {
+      "path": "src/media/noisereductiontypes.h",
+      "bytes": 6058,
+      "sha256": "3f12c8bd9f1d8322bbbed2fad7c6a3c5a1fef4a55e41dab49ff5028f0a6d8167"
+    },
+    {
+      "path": "src/media/noisereductionworker.cpp",
+      "bytes": 33880,
+      "sha256": "93bb078f962ec82f7951f218c8c7e67795d20f703d92a03866760e7a0d0a0c0c"
+    },
+    {
+      "path": "src/media/noisereductionworker.h",
+      "bytes": 5675,
+      "sha256": "9c27c4cb944991b1b8e26cbd01453d16b70b354bcd7c9e632eb9f3a6b72297eb"
+    },
+    {
+      "path": "src/media/pldenoisetransport.cpp",
+      "bytes": 14923,
+      "sha256": "8e9a4b7f2764ae71391f79f2e6a52c704dabe219001aac3c16acdcfd433f30a4"
+    },
+    {
+      "path": "src/media/pldenoisetransport.h",
+      "bytes": 3866,
+      "sha256": "0bfcd2ecf67b4896646cfdff9ac6879ca64194d964e1af4eab88425463d042ea"
+    },
+    {
+      "path": "src/media/plspatialmap.cpp",
+      "bytes": 5028,
+      "sha256": "20af7abccd9e9898f147d28e4e440a5bd1f3052393d7394afe49c70cd46e4e2f"
+    },
+    {
+      "path": "src/media/plspatialmap.h",
+      "bytes": 1009,
+      "sha256": "101aa7ad601f1309ee1533134e7b7c0907bf01af1d9868a75b188ed56af77808"
+    },
+    {
+      "path": "src/media/videodecoder.cpp",
+      "bytes": 866,
+      "sha256": "4325713edad82390c5fdeb9ba5c04e3fc336305591aeca2be9ec27d89200f557"
+    },
+    {
+      "path": "src/media/videodecoder.h",
+      "bytes": 915,
+      "sha256": "c26cc62aae8f23186cac2f753d6158bbccb8499a4f54ae9b39ebf25447f80099"
+    },
+    {
+      "path": "src/media/wienernoisereducer.cpp",
+      "bytes": 10050,
+      "sha256": "77e6964b65177e99c2d5c593f08c1245a7b4970afcc2b64d2858f3dd485b9474"
+    },
+    {
+      "path": "src/media/wienernoisereducer.h",
+      "bytes": 2465,
+      "sha256": "cc4ddfc179fa0a60cfd86bf970a37bd5c2591efc0d7f9fcac81767b61ee48d42"
+    },
+    {
+      "path": "src/monitoring/healthmonitor.cpp",
+      "bytes": 2896,
+      "sha256": "fe2a921bb79e147ebecb2fca0b4f545b2fcb327f2297cc796f86a2d13accaf83"
+    },
+    {
+      "path": "src/monitoring/healthmonitor.h",
+      "bytes": 1372,
+      "sha256": "92eb8f829dc45d4b8ed1b91eed8c7584993fe14a303d957b17853c89712f3a78"
+    },
+    {
+      "path": "src/protocol/protocolcodec.cpp",
+      "bytes": 9208,
+      "sha256": "7063af12d9185794b445c2e6d3ab042877d060c59050f6a8162e514d1a7405dd"
+    },
+    {
+      "path": "src/protocol/protocolcodec.h",
+      "bytes": 2151,
+      "sha256": "050e785f3a38db16c895babd06d7259a538771b24ee917e070e27071817f7038"
+    },
+    {
+      "path": "src/protocol/protocolworker.cpp",
+      "bytes": 2564,
+      "sha256": "d541678dc8983f2f975532e106239ff7eb70e4ddfd235518dbdcf2d5f2333f7f"
+    },
+    {
+      "path": "src/protocol/protocolworker.h",
+      "bytes": 1177,
+      "sha256": "7b523c946a087f5e45fff609e7122098d58fcd0bef64a61a1215528aaf5db9e2"
+    },
+    {
+      "path": "src/ui/arrayheatmapwidget.cpp",
+      "bytes": 10564,
+      "sha256": "67ff087b216eb0ea394bf116fa62cc24a2972b6fe9335ee024e7018a1f7d0f58"
+    },
+    {
+      "path": "src/ui/arrayheatmapwidget.h",
+      "bytes": 1432,
+      "sha256": "ce075b9f3605efb3c75561288d86df4a84bdc4fde3a06a8c93ba3896349f574b"
+    },
+    {
+      "path": "src/ui/audioanalysispage.cpp",
+      "bytes": 22424,
+      "sha256": "e792a7e52806fdcb9bbcd1b9fb93fe2ef5a4a73405f8e93127f769d17badab3c"
+    },
+    {
+      "path": "src/ui/audioanalysispage.h",
+      "bytes": 2900,
+      "sha256": "c1075f037e1b45d52cadbe4ad2d04a5abb6f5e7a11915ea39b46dfd4e8e7a970"
+    },
+    {
+      "path": "src/ui/audiowaveformwidget.cpp",
+      "bytes": 3656,
+      "sha256": "0c84c68a672d719b78d8e745c7a19b82fbdf483d16a80e52e026994f439844b2"
+    },
+    {
+      "path": "src/ui/audiowaveformwidget.h",
+      "bytes": 732,
+      "sha256": "173f7a3c8aa50ce220a53d05dddcd4635dfe5851a32b5448a42d0040649dc18e"
+    },
+    {
+      "path": "src/ui/directionphotowidget.cpp",
+      "bytes": 5312,
+      "sha256": "07d6f36bb540aec630616b0befbac185ea79d2cff6a4bd8cb6b314076ab80a43"
+    },
+    {
+      "path": "src/ui/directionphotowidget.h",
+      "bytes": 945,
+      "sha256": "ac182b32d41540530653397f9a39141231a7dda00499fc880a7fb8a11eecd261"
+    },
+    {
+      "path": "src/ui/displayformat.cpp",
+      "bytes": 1695,
+      "sha256": "14102685de2b084300e20a48290b2484f10f8f6e76146905b4d0900f3b2cc52c"
+    },
+    {
+      "path": "src/ui/displayformat.h",
+      "bytes": 186,
+      "sha256": "004583415108439ad68ecc6618c6f56f7143598f9548a0389e86ca426618dbf9"
+    },
+    {
+      "path": "src/ui/livelocalizationpage.cpp",
+      "bytes": 62526,
+      "sha256": "369925b215f41ee2a656a5935d8001c7b8493f2f4d84db51a13b50caf21d0170"
+    },
+    {
+      "path": "src/ui/livelocalizationpage.h",
+      "bytes": 6222,
+      "sha256": "388ddcd223776a5af1a19d575db04965dbe31ca2713280145a165a9b7c07210a"
+    },
+    {
+      "path": "src/ui/livelocalizationview.cpp",
+      "bytes": 18873,
+      "sha256": "81fb37ba5ef76182c90b3c7b735e0d50e5e51ccd2978bf67e5048476872d738a"
+    },
+    {
+      "path": "src/ui/livelocalizationview.h",
+      "bytes": 1974,
+      "sha256": "679074a83c40d6a1b509a1b2bd38ec73c25cd208b7a83bd7aab4d8a0cd975b6d"
+    },
+    {
+      "path": "src/ui/mainwindow.cpp",
+      "bytes": 108688,
+      "sha256": "18da750097dc1c62aec2b31c13c710709f77cf40626d9abc9695a067b7149963"
+    },
+    {
+      "path": "src/ui/mainwindow.h",
+      "bytes": 10696,
+      "sha256": "18028fe8bd6acc97a817d71252573edfb800a630244200a25ef2f35aa88ecef8"
+    },
+    {
+      "path": "src/ui/noisereductionpage.cpp",
+      "bytes": 91423,
+      "sha256": "7d9203dcb73e281ba7b811cc714ae1868005fab08fc1fa2f5405b988b77fca9c"
+    },
+    {
+      "path": "src/ui/noisereductionpage.h",
+      "bytes": 9801,
+      "sha256": "0ba57fc50882f71b9bb37aa75a76754a0814b6b9a659f1167dba0fb6dd172c82"
+    },
+    {
+      "path": "src/ui/noisereductionvideowidget.cpp",
+      "bytes": 8452,
+      "sha256": "93bac1096f7666136ee04c8b15c8d1afc7d456e54660d55c4091a77064d07fae"
+    },
+    {
+      "path": "src/ui/noisereductionvideowidget.h",
+      "bytes": 2855,
+      "sha256": "ac2f87d909268775727bf3865bc51118c4ac038e128aabd55537908f90b49e8f"
+    },
+    {
+      "path": "src/ui/powerspectrumwidget.cpp",
+      "bytes": 3674,
+      "sha256": "23806b8e03df3c6b0d5608f1be9de6ee31c2516f0d15b5dfa85c4221d0b4ff92"
+    },
+    {
+      "path": "src/ui/powerspectrumwidget.h",
+      "bytes": 728,
+      "sha256": "4e58c6114efeff2574f74fe5e786a7cea20cb330612e6e4283b77df322736d48"
+    },
+    {
+      "path": "src/ui/processingnodelistwidget.cpp",
+      "bytes": 7202,
+      "sha256": "487ea1890ca79d394e4adb9bb963cf531a7e7c8b4361f81c4b9202d5022c6acd"
+    },
+    {
+      "path": "src/ui/processingnodelistwidget.h",
+      "bytes": 1078,
+      "sha256": "5348d5888ee494a1c39472229d55e696fc3a6542d53be2161b4580d21d6df429"
+    },
+    {
+      "path": "src/ui/trendchartwidget.cpp",
+      "bytes": 2912,
+      "sha256": "7a640df6d75a1fe2478b33150b39e8a78169338209b179e1e2bbb69c98b6dd44"
+    },
+    {
+      "path": "src/ui/trendchartwidget.h",
+      "bytes": 672,
+      "sha256": "02c0d563cbd0bdf5d8b8200a2fe061cc55e8b02bfd6d2aae8e40e6441849fdfb"
+    },
+    {
+      "path": "src/ui/uitheme.cpp",
+      "bytes": 9216,
+      "sha256": "e3422a5cf520ecb6471ca470b47360d413949e9fef14886d20593c48c5aed2d5"
+    },
+    {
+      "path": "src/ui/uitheme.h",
+      "bytes": 375,
+      "sha256": "516721477a42f0ef2029e1ae6eda894083cf3864ba5d03756f372f6cdeeb5923"
+    },
+    {
+      "path": "src/ui/videopreviewwidget.cpp",
+      "bytes": 3433,
+      "sha256": "782771a770dd501795e98820f5a18dab7eb680dbd5cb2021f3f464ec9c32f51c"
+    },
+    {
+      "path": "src/ui/videopreviewwidget.h",
+      "bytes": 1113,
+      "sha256": "10bc397187e483fc93401d9e97e3d0ce3bd17b26e9428cf5cbadbcd0fad93b7c"
+    },
+    {
+      "path": "tests/analysis/test_audioanalysis.cpp",
+      "bytes": 109016,
+      "sha256": "e0f0fb56ca0679fa78465638d8c25fc768436c05f143cffa79f19115de09a3b6"
+    },
+    {
+      "path": "tests/analysis/test_cameralens.cpp",
+      "bytes": 11058,
+      "sha256": "6410d584f57392576e5004d79de9c67e7adea403a332d3cc1efff881b865d986"
+    },
+    {
+      "path": "tests/app/test_app.cpp",
+      "bytes": 52713,
+      "sha256": "b1a6cb8163294a5f31c104d6ad0f6d85112d1e012d01d30a81d056c459be1d53"
+    },
+    {
+      "path": "tests/device/test_deviceclient.cpp",
+      "bytes": 9328,
+      "sha256": "b34110b26f8daf7da2e2f3649b811c428f5faa9adc537ae2089a855803aa1901"
+    },
+    {
+      "path": "tests/fixtures/camera_lens_opencv.json",
+      "bytes": 1631,
+      "sha256": "8922bb73b1526e3f740d6e859a422426e223bc93ef4f41b7bf01c5ac45ae511f"
+    },
+    {
+      "path": "tests/fixtures/hmp_rtl_transport.mem",
+      "bytes": 86400,
+      "sha256": "a867277cd07adf4df57d44e7324cb4c1f580126bc54d84ecc30970b92b474137"
+    },
+    {
+      "path": "tests/fixtures/pl_triple_heatmap.mem",
+      "bytes": 4107,
+      "sha256": "9605b757d539e43758331131e8b6d15dcf90b9d0bd11a1d61e407fcb315dc968"
+    },
+    {
+      "path": "tests/media/test_media.cpp",
+      "bytes": 162657,
+      "sha256": "e89786237890885744d079080410efe94d77f0de15db5651a2331182fa63ff24"
+    },
+    {
+      "path": "tests/media/test_pldenoise.cpp",
+      "bytes": 33818,
+      "sha256": "05d2ddd7a59a8ba5201a8667e2cb76d105b8a5909d2fe42e5583ea49cccc6da2"
+    },
+    {
+      "path": "tests/media/test_plfull.cpp",
+      "bytes": 16531,
+      "sha256": "f7e6b66daa0a709d521010791fc82cbb43252778ae81c101a8db7f951c2808d6"
+    },
+    {
+      "path": "tests/media/test_plheatmap.cpp",
+      "bytes": 10875,
+      "sha256": "e3df9aa34f6ef543cf65195f25326e8df4840dea2756da3e6920bd5b1f662d98"
+    },
+    {
+      "path": "tests/media/test_plintegration.cpp",
+      "bytes": 35234,
+      "sha256": "defb8549e482aa8236040b8c225cb010cd87dbdeebc19dd05b72795785aec78e"
+    },
+    {
+      "path": "tests/media/test_plwiener.cpp",
+      "bytes": 14999,
+      "sha256": "3772256b156223b36c6b955020d74dec8b8a7e4b01865ec76d6ece815bd00df4"
+    },
+    {
+      "path": "tests/protocol/test_protocolcodec.cpp",
+      "bytes": 18044,
+      "sha256": "e07eebb9084296d1bd3dbd790c12336ae743bf6821bf1554990074f0f30dee1a"
+    },
+    {
+      "path": "tests/streaming/mainwindow_pressure/test_mainwindow_pressure.cpp",
+      "bytes": 7724,
+      "sha256": "12085a6b8aed52bfde369b2653ab8c495a0b9017657417d4e36f432bd8f460b4"
+    },
+    {
+      "path": "tests/streaming/test_helpers.h",
+      "bytes": 6080,
+      "sha256": "3d60ce4d00a9107b64419a906d96d896c6cc03fc1a9be95c82c80e53c1cb88dd"
+    },
+    {
+      "path": "tests/streaming/test_legacy_contract.cpp",
+      "bytes": 26068,
+      "sha256": "2afc351db6db8dd90fe8245d8404f693ac06d85ed0b03f16b7b7a34b0c066159"
+    },
+    {
+      "path": "tests/streaming/test_wallclock.cpp",
+      "bytes": 18948,
+      "sha256": "16f19b4673a37ef95e9af970e8ce4e200c08c43652dd2dd316ffa5714a8f730b"
+    },
+    {
+      "path": "tests/tools/test_mock_device_server.py",
+      "bytes": 29735,
+      "sha256": "937659f30d5bc16bef612f6239326dda50329821a933b008ddf86c6bc7dcc1da"
+    },
+    {
+      "path": "tests/ui/test_dashboard.cpp",
+      "bytes": 165476,
+      "sha256": "9f3a588c1f3ee84418bb72a47fc267be25bc6eaafb6b133492508ccfde701240"
+    },
+    {
+      "path": "tests/ui/test_pldenoise_ui.cpp",
+      "bytes": 19017,
+      "sha256": "f4080c04b2e6859d03d598aaf8fc4428d5a1abb6377785126381f30ab7e76120"
+    },
+    {
+      "path": "tools/assets/mock_video_1920x1080.jpg",
+      "bytes": 189249,
+      "sha256": "d2959bdb3864b0c5c7278fb33d7e765f2020cd47cdf26b4403f352b961cdc00c"
+    },
+    {
+      "path": "tools/evaluate_fixed_suffix.py",
+      "bytes": 3434,
+      "sha256": "d5f5ce038d0c791c68fd9d5b86c2fe190f83973ae6b0e1ff19722b0c952feaba"
+    },
+    {
+      "path": "tools/generate_mock_video_pattern.ps1",
+      "bytes": 5004,
+      "sha256": "d65ebc9f396f832c7a32571a766d43f297205a5f9a786522e62f03065631ad3a"
+    },
+    {
+      "path": "tools/mock_device_server.py",
+      "bytes": 28951,
+      "sha256": "fa2517dfeff8da6d84486bfa0ea3046ff7f4e8f77cf4e72b032375ff497f6b41"
+    },
+    {
+      "path": "tools/package_host_snapshot.py",
+      "bytes": 5859,
+      "sha256": "4952449c73feedcbf72ab06e86c16462c995d5cf8eb209dd635da03eafbf01ea"
+    },
+    {
+      "path": "tools/package_merged.py",
+      "bytes": 9923,
+      "sha256": "195f5b4fcc36fa1b36e57ded6e765aa17109ae8adaa3716644f8cc4a839d824e"
+    },
+    {
+      "path": "tools/pl_denoise_replay.cpp",
+      "bytes": 14679,
+      "sha256": "925cae8fd10cca5500ffa08aae26380c4baa13853a2fc924b77f01a1eea9acea"
+    },
+    {
+      "path": "tools/prepare_pl_heatmap.py",
+      "bytes": 8297,
+      "sha256": "5a3fc1466c8d42a222e76c2fa02afdbad6c5e89b3b3eed4b4bacd38dcfa0cd1e"
+    },
+    {
+      "path": "tools/train_neural_srp_peak.cpp",
+      "bytes": 87998,
+      "sha256": "2264bd046d093132772d4e297ae58a47c4a0515b93199e0432855bf23befe297"
+    },
+    {
+      "path": "ui-test-output.txt",
+      "bytes": 652,
+      "sha256": "51279b010c982cc5df672bbaccd3ad74ffe176d943788cc9fa6c744780342e75"
+    }
+  ]
+}

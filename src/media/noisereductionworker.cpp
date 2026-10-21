@@ -50,6 +50,9 @@ NoiseReductionWorker::NoiseReductionWorker(QObject *parent)
     : QObject(parent)
 {
     qRegisterMetaType<NoiseReductionSettings>("MicArray::NoiseReductionSettings");
+    qRegisterMetaType<PlBeamFrame>();
+    qRegisterMetaType<PlWienerFrame>();
+    qRegisterMetaType<PlFinalFrame>();
     qRegisterMetaType<NoiseReductionPlotFrame>(
         "MicArray::NoiseReductionPlotFrame");
     qRegisterMetaType<NoiseReductionRecordingFrame>(
@@ -117,6 +120,7 @@ QByteArray NoiseReductionWorker::pcm16WithGain(
 void NoiseReductionWorker::configure(
     const NoiseReductionSettings &settings, int sampleRate)
 {
+    m_fullProfileCompatible = plFullDenoiseProfileError(settings).isEmpty();
     const int sanitizedSampleRate =
         std::clamp(sampleRate, 8000, 192000);
     const int sanitizedMonitorBufferMilliseconds =
@@ -171,6 +175,8 @@ void NoiseReductionWorker::configure(
     if (sampleRateChanged || inputModeChanged || enabledChanged) {
         m_beamformer.reset();
         m_raw48InvalidWarningActive = false;
+        m_plAuthorized = false;
+        m_plHaveSequence = false;
     }
     if (algorithmChanged) {
         m_reducer.setAlgorithm(m_settings.algorithm);
@@ -234,6 +240,10 @@ void NoiseReductionWorker::configure(
         || postProcessingOrderChanged;
     if (processingChanged) {
         resetProcessing();
+        if (isPlMonoNoiseInputMode(m_settings.inputMode)) {
+            m_plAuthorized = false;
+            m_plHaveSequence = false;
+        }
     }
     if (processingChanged || monitorChanged || monitorEnabledChanged
         || monitorGainChanged || monitorBufferChanged) {
@@ -265,6 +275,9 @@ void NoiseReductionWorker::setRecordingStages(
     m_recordingStages = std::move(normalized);
     m_recordingStageSet = std::move(selected);
     clearRecordingBuffers();
+    if (m_settings.inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile && !m_recordingStages.isEmpty()
+        && m_recordingStages != QVector<NoiseReductionDataFlowStage>{NoiseReductionDataFlowStage::AutomaticGainControl})
+        emit warningRaised(QStringLiteral("PL 全链只上传最终 AGC 输出；请只选择自动增益控制阶段录制，其他中间阶段未上传。"));
 }
 
 void NoiseReductionWorker::setActive(bool active)
@@ -278,6 +291,8 @@ void NoiseReductionWorker::setActive(bool active)
         m_beamformer.reset();
         m_raw48InvalidWarningActive = false;
         resetProcessing();
+        m_plAuthorized = false;
+        m_plHaveSequence = false;
     }
 }
 
@@ -287,6 +302,22 @@ void NoiseReductionWorker::processRawFrame(
     quint32 timestampMicros)
 {
     if (m_shutdown || !m_active || !m_settings.enabled) {
+        emit frameConsumed();
+        return;
+    }
+
+    if (isPlNoiseInputMode(m_settings.inputMode)) {
+        // CH0 remains a raw reference only. CH1/2/3 are never interpreted as PL beams.
+        if (payload.size() == AudioFrameDecoder::FramePayloadBytes) {
+            NoiseReductionInputFrame reference;
+            for (int sample = 0; sample < AudioFrameDecoder::SamplesPerFrame; ++sample) {
+                const qint32 raw = qFromLittleEndian<qint32>(payload.constData() + sample * 192);
+                reference.channels[0].append(std::clamp(float(raw >> 8) / 32768.0f, -1.0f, 1.0f));
+            }
+            appendHistory(NoiseSignalSource::FirstElement, reference.channels[0]);
+            if (m_settings.monitorSource == NoiseSignalSource::FirstElement)
+                writeMonitorSamples(reference, {});
+        }
         emit frameConsumed();
         return;
     }
@@ -318,6 +349,63 @@ void NoiseReductionWorker::processRawFrame(
     if (raw48Input) {
         m_raw48InvalidWarningActive = false;
     }
+    processInputFrame(input, timestampSeconds, timestampMicros);
+}
+
+void NoiseReductionWorker::authorizePlConfiguration(quint16 configId, bool restartStream)
+{
+    if (restartStream || !m_plAuthorized) {
+        resetProcessing();
+        closeAudioOutput();
+        m_plHaveSequence = false;
+        m_plStreamConfig = configId;
+    }
+    m_plExpectedConfig = configId;
+    m_plAuthorized = true;
+}
+
+void NoiseReductionWorker::invalidatePlStream(const QString &reason)
+{
+    m_plAuthorized = false;
+    m_plHaveSequence = false;
+    resetProcessing();
+    closeAudioOutput();
+    emit warningRaised(reason);
+}
+
+void NoiseReductionWorker::processPlBeamFrame(const PlBeamFrame &frame)
+{
+    if (m_shutdown || !m_active || !m_settings.enabled
+        || m_settings.inputMode != NoiseReductionInputMode::PlThreeBeamOriginalDenoising) {
+        emit frameConsumed();
+        return;
+    }
+    const qsizetype count = frame.beams[0].size();
+    bool valid = m_plAuthorized && count > 0 && count <= AudioFrameDecoder::SamplesPerFrame;
+    valid = valid && (frame.configId == m_plExpectedConfig
+        || frame.configId == m_plStreamConfig);
+    valid = valid && (!m_plHaveSequence || frame.firstSampleIndex == m_plNextSample);
+    for (const auto &beam : frame.beams) {
+        valid = valid && beam.size() == count;
+        for (float sample : beam) valid = valid && std::isfinite(sample);
+    }
+    if (!valid) {
+        invalidatePlStream(QStringLiteral("PL 三路波束未授权、不同步或样本无效；停止处理，未回退软件模式"));
+        emit frameConsumed();
+        return;
+    }
+    m_plStreamConfig = frame.configId;
+    m_plNextSample = frame.firstSampleIndex + quint32(count);
+    m_plHaveSequence = true;
+    NoiseReductionInputFrame input;
+    input.valid = true;
+    for (int beam = 0; beam < 3; ++beam) input.channels[beam + 1] = frame.beams[beam];
+    processInputFrame(input, frame.timestampSeconds, frame.timestampMicros);
+}
+
+void NoiseReductionWorker::processInputFrame(const NoiseReductionInputFrame &input,
+                                            quint32 timestampSeconds, quint32 timestampMicros)
+{
     appendInputTimeline(
         timestampSeconds,
         timestampMicros,
@@ -331,6 +419,38 @@ void NoiseReductionWorker::processRawFrame(
         m_reducer.process(input.channels.at(1),
                           input.channels.at(2),
                           input.channels.at(3));
+    processSuppressionFrame(input, std::move(denoised), timestampSeconds, timestampMicros);
+}
+
+void NoiseReductionWorker::processPlWienerFrame(const PlWienerFrame &frame)
+{
+    if (m_shutdown || !m_active || !m_settings.enabled
+        || m_settings.inputMode != NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing) {
+        emit frameConsumed();
+        return;
+    }
+    bool valid = m_plAuthorized && m_settings.algorithm == NoiseReductionAlgorithm::FixedParameterWiener
+        && !frame.samples.isEmpty() && frame.samples.size() <= 200
+        && frame.streamId == m_plExpectedConfig
+        && ((!m_plHaveSequence && frame.firstSampleIndex == 0)
+            || (m_plHaveSequence && frame.firstSampleIndex == m_plNextSample));
+    for (float value : frame.samples) valid = valid && std::isfinite(value);
+    if (!valid) {
+        invalidatePlStream(QStringLiteral("PL 维纳流未授权、样本不连续或算法不支持；未重复执行维纳或隐藏回退"));
+        emit frameConsumed();
+        return;
+    }
+    m_plHaveSequence = true;
+    m_plStreamConfig = frame.streamId;
+    m_plNextSample = frame.firstSampleIndex + quint32(frame.samples.size());
+    appendInputTimeline(frame.timestampSeconds, frame.timestampMicros, frame.samples.size());
+    // AUW1 already is Wiener output. Exactly one copy of the original ordered post-processing follows.
+    processSuppressionFrame({}, frame.samples, frame.timestampSeconds, frame.timestampMicros);
+}
+
+void NoiseReductionWorker::processSuppressionFrame(const NoiseReductionInputFrame &input, QVector<float> denoised,
+                                                   quint32 timestampSeconds, quint32 timestampMicros)
+{
     const std::deque<SampleTimestampSegment> capturedTimeline =
         takeInputTimeline(denoised.size());
     std::array<QVector<float>, 4> capturedStages;
@@ -341,9 +461,26 @@ void NoiseReductionWorker::processRawFrame(
     }
     denoised = applyPostProcessing(
         std::move(denoised), &capturedStages);
+    if (m_diagnosticStageCapture && !denoised.isEmpty()) {
+        NoiseReductionRecordingFrame diagnostic;
+        diagnostic.sampleRate = m_sampleRate;
+        diagnostic.timestampSeconds = timestampSeconds;
+        diagnostic.timestampMicros = timestampMicros;
+        for (NoiseReductionDataFlowStage stage : m_recordingStages)
+            diagnostic.stages.append({stage, capturedStages.at(static_cast<size_t>(recordingStageIndex(stage)))});
+        emit diagnosticStageFrameReady(diagnostic);
+    }
     publishRecordingFrame(capturedStages, capturedTimeline);
+    finishOutputFrame(input, denoised, timestampSeconds, timestampMicros);
+}
+
+void NoiseReductionWorker::finishOutputFrame(const NoiseReductionInputFrame &input, const QVector<float> &denoised,
+                                           quint32 timestampSeconds, quint32 timestampMicros)
+{
     appendHistory(NoiseSignalSource::Denoised, denoised);
-    writeMonitorSamples(input, denoised);
+    if (!isPlNoiseInputMode(m_settings.inputMode)
+        || m_settings.monitorSource != NoiseSignalSource::FirstElement)
+        writeMonitorSamples(input, denoised);
 
     const qint64 timestamp =
         static_cast<qint64>(timestampSeconds) * 1000000
@@ -360,6 +497,46 @@ void NoiseReductionWorker::processRawFrame(
         emit plotFrameReady(frame);
     }
     emit frameConsumed();
+}
+
+void NoiseReductionWorker::processPlFinalFrame(const PlFinalFrame &frame)
+{
+    if (m_shutdown || !m_active || !m_settings.enabled
+        || m_settings.inputMode != NoiseReductionInputMode::PlFullDenoisingFixedProfile) {
+        emit frameConsumed();
+        return;
+    }
+    bool valid = m_plAuthorized && m_sampleRate == 48000 && m_fullProfileCompatible
+        && !frame.samples.isEmpty() && frame.samples.size() <= 200 && frame.streamId == m_plExpectedConfig
+        && ((!m_plHaveSequence && frame.firstSampleIndex == 0)
+            || (m_plHaveSequence && frame.firstSampleIndex == m_plNextSample));
+    for (float value : frame.samples) valid = valid && std::isfinite(value);
+    if (!valid) {
+        invalidatePlStream(QStringLiteral("PL 最终流未授权、样本不连续或演示参数不兼容；未在上位机重复降噪或回退"));
+        emit frameConsumed();
+        return;
+    }
+    m_plHaveSequence = true;
+    m_plStreamConfig = frame.streamId;
+    m_plNextSample = frame.firstSampleIndex + quint32(frame.samples.size());
+    appendInputTimeline(frame.timestampSeconds, frame.timestampMicros, frame.samples.size());
+    const auto timeline = takeInputTimeline(frame.samples.size());
+    std::array<QVector<float>, 4> captured;
+    // AUF1 is final AGC output. Do not label it as an unuploaded intermediate.
+    captured[static_cast<size_t>(recordingStageIndex(NoiseReductionDataFlowStage::AutomaticGainControl))] = frame.samples;
+    if (m_recordingStages.size() == 1 && m_recordingStages.first() == NoiseReductionDataFlowStage::AutomaticGainControl) {
+        publishRecordingFrame(captured, timeline);
+        if (m_diagnosticStageCapture) {
+            NoiseReductionRecordingFrame diagnostic;
+            diagnostic.sampleRate = m_sampleRate;
+            diagnostic.timestampSeconds = frame.timestampSeconds;
+            diagnostic.timestampMicros = frame.timestampMicros;
+            diagnostic.stages.append({NoiseReductionDataFlowStage::AutomaticGainControl, frame.samples});
+            emit diagnosticStageFrameReady(diagnostic);
+        }
+    }
+    // Display/record/playback only: no Wiener/BandPass/LogMMSE/AGC process call.
+    finishOutputFrame({}, frame.samples, frame.timestampSeconds, frame.timestampMicros);
 }
 
 void NoiseReductionWorker::shutdown()

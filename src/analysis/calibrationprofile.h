@@ -3,10 +3,16 @@
 #include "analysis/localizationtypes.h"
 
 #include <QDateTime>
+#include <QJsonObject>
 #include <QSize>
 #include <QString>
 
 namespace MicArray {
+
+QJsonObject cameraLensToJson(const CameraLensCalibration &lens);
+bool cameraLensFromJson(const QJsonObject &object,
+                        CameraLensCalibration *lens,
+                        QString *errorMessage = nullptr);
 
 struct VideoCalibrationProfile {
     CameraViewSettings camera;

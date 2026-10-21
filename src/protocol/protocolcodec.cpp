@@ -135,11 +135,15 @@ ParseResult ProtocolCodec::parseIncoming(QByteArrayView streamChunk)
     while (true) {
         const qsizetype headerIndex = m_buffer.indexOf(QByteArray::fromHex("7e7e"));
         if (headerIndex < 0) {
-            if (!m_buffer.isEmpty()) {
-                result.bytesDiscarded += m_buffer.size();
+            // TCP may split the two-byte synchronization marker. Retain only
+            // the possible final prefix; all preceding bytes are actual garbage.
+            const qsizetype prefixBytes = !m_buffer.isEmpty() && m_buffer.back() == char(0x7e) ? 1 : 0;
+            const qsizetype garbageBytes = m_buffer.size() - prefixBytes;
+            if (garbageBytes > 0) {
+                result.bytesDiscarded += garbageBytes;
                 result.errors.append({ParseErrorCode::GarbageDiscarded,
-                                      QStringLiteral("Discarded %1 bytes before frame header").arg(m_buffer.size())});
-                m_buffer.clear();
+                                      QStringLiteral("Discarded %1 bytes before frame header").arg(garbageBytes)});
+                m_buffer.remove(0, garbageBytes);
             }
             return finish();
         }

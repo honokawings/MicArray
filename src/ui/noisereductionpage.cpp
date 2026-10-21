@@ -2,6 +2,7 @@
 
 #include "analysis/directionprojection.h"
 #include "control/directioncontrolmapper.h"
+#include "media/audioframedecoder.h"
 #include "ui/audiowaveformwidget.h"
 #include "ui/noisereductionvideowidget.h"
 #include "ui/powerspectrumwidget.h"
@@ -17,15 +18,20 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMetaObject>
 #include <QPushButton>
+#include <QPointer>
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStandardItemModel>
 #include <QSet>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -45,6 +51,16 @@ void addNoiseSources(QComboBox *combo)
         combo->addItem(noiseSignalSourceName(source),
                        static_cast<int>(source));
     }
+}
+
+QString sourceName(NoiseSignalSource source, bool postOnly)
+{
+    if (postOnly && source != NoiseSignalSource::FirstElement && source != NoiseSignalSource::Denoised) {
+        const QString beam = source == NoiseSignalSource::EnhancedA ? QStringLiteral("A")
+            : (source == NoiseSignalSource::SuppressionB1 ? QStringLiteral("B1") : QStringLiteral("B2"));
+        return QStringLiteral("波束 %1（此模式不上传）").arg(beam);
+    }
+    return noiseSignalSourceName(source);
 }
 
 QDoubleSpinBox *angleSpin(
@@ -88,6 +104,10 @@ NoiseReductionPage::NoiseReductionPage(
     : QWidget(parent)
     , m_settingsStore(settings)
     , m_worker(new NoiseReductionWorker)
+    , m_mailbox(new NoiseReductionMailbox)
+    , m_plTransport(new PlDenoiseTransport(this))
+    , m_plSession(new PlDenoiseSession(this))
+    , m_plWatchdog(new QTimer(this))
 {
     setObjectName(QStringLiteral("noiseReductionPage"));
     qRegisterMetaType<ControlValues>("MicArray::ControlValues");
@@ -104,17 +124,129 @@ NoiseReductionPage::NoiseReductionPage(
     m_worker->moveToThread(&m_workerThread);
     connect(&m_workerThread, &QThread::finished,
             m_worker, &QObject::deleteLater);
-    connect(this, &NoiseReductionPage::configureWorkerRequested,
-            m_worker, &NoiseReductionWorker::configure, Qt::QueuedConnection);
-    connect(this, &NoiseReductionPage::workerActiveRequested,
-            m_worker, &NoiseReductionWorker::setActive, Qt::QueuedConnection);
-    connect(this, &NoiseReductionPage::rawAudioFrameRequested,
-            m_worker, &NoiseReductionWorker::processRawFrame,
-            Qt::QueuedConnection);
-    connect(m_worker, &NoiseReductionWorker::frameConsumed, this, [this] {
-        m_pendingAudioFrames = std::max(0, m_pendingAudioFrames - 1);
-        setProperty("pendingAudioFrames", m_pendingAudioFrames);
+    m_mailbox->moveToThread(&m_workerThread);
+    connect(&m_workerThread, &QThread::finished, m_mailbox, &QObject::deleteLater);
+    connect(this, &NoiseReductionPage::configureWorkerRequested, this,
+            [this](const NoiseReductionSettings &settings, int rate) {
+        enqueueWorkerControl([worker = m_worker, settings, rate] { worker->configure(settings, rate); });
     });
+    connect(this, &NoiseReductionPage::workerActiveRequested, this, [this](bool active) {
+        enqueueWorkerControl([worker = m_worker, active] { worker->setActive(active); });
+    });
+    connect(m_plSession, &PlDenoiseSession::commandReady, this, [this](const ControlValues &values) {
+        if (static_cast<quint16>(values.channelValue(2)) == 0x102) {
+            const auto transaction = static_cast<quint16>(values.channelValue(1));
+            if (transaction != m_diagnosticResetTransaction) {
+                m_diagnosticResetTransaction = transaction;
+                m_faultDiagnosticLatched = false;
+            }
+            clearQueuedAudioWork(QStringLiteral("explicit PL RESET"));
+            m_plTransport->reset();
+            enqueueWorkerControl([worker = m_worker]() {
+                worker->invalidatePlStream(QStringLiteral("PL DSP 重置，等待新 stream_id 确认"));
+            });
+        }
+        m_plTransport->setControlTransactionActive(true);
+        m_plTransport->setPendingConfiguration(static_cast<quint16>(values.channelValue(1)));
+        emit controlSendRequested(values);
+    });
+    connect(m_plTransport, &PlDenoiseTransport::statusReceived, this,
+            [this](const PlDenoiseStatus &status) {
+        m_plLastStatus.restart();
+        m_lastPlStatus = status;
+        setProperty("plDenoiseOverflow", status.overflowCount);
+        setProperty("plDenoiseInvalidControls", status.invalidControlCount);
+        setProperty("plDenoiseStreamId", status.streamId);
+        setProperty("plDenoiseWienerFrames", status.wienerFrames);
+        setProperty("plDenoiseProfileFingerprint", status.profileFingerprint);
+        m_plSession->acknowledge(status);
+    });
+    connect(m_plSession, &PlDenoiseSession::configurationApplied, this,
+            [this](quint16 config, bool restart) {
+        if (restart) m_faultDiagnosticLatched = false;
+        m_plTransport->setControlTransactionActive(false);
+        const quint16 stream = isPlMonoNoiseInputMode(m_settings.inputMode)
+            ? m_plTransport->latestStreamId() : config;
+        if (!restart) {
+            m_plTransport->flushBufferedBeforeConfiguration();
+            if (m_plTransport->faulted()) return;
+        }
+        // Authorization belongs to the same ordered mailbox as audio. A later
+        // direction ACK must not overtake earlier unsubmitted audio epochs.
+        if (!enqueueAuthorization(stream, restart)) return;
+        setProperty("plDenoiseConfigId", config);
+        m_plTransport->authorizeConfiguration(config, restart);
+        if (restart) m_plStarted.restart();
+        logPlDiagnostic(QStringLiteral("configuration-applied"));
+    });
+    connect(m_plSession, &PlDenoiseSession::statusChanged, this, [this](const QString &message) {
+        m_plStatusMessage = message;
+        refreshStatusLabel();
+    });
+    connect(m_plSession, &PlDenoiseSession::failed, m_plTransport, &PlDenoiseTransport::invalidate);
+    connect(m_plTransport, &PlDenoiseTransport::faultRaised, this, [this](const QString &message) {
+        ++m_plFaultCount;
+        if (!m_faultDiagnosticLatched) {
+            m_faultDiagnosticLatched = true;
+            logPlDiagnostic(QStringLiteral("first-fault"), message);
+        }
+        clearQueuedAudioWork(QStringLiteral("PL transport fault"));
+        // A latched fault cancels even pending configuration controls before
+        // inserting invalidation, so saturation cannot prevent stopping audio.
+        m_mailbox->clearPending(true);
+        m_plStatusMessage = message;
+        m_plSession->setAvailable(false, false);
+        enqueueWorkerControl([worker = m_worker, message]() {
+            worker->invalidatePlStream(message);
+        });
+        refreshStatusLabel();
+    });
+    connect(m_plTransport, &PlDenoiseTransport::frameReady, this, [this](const PlBeamFrame &frame) {
+        if (!workerShouldBeActive()) return;
+        PendingWork work;
+        work.kind = WorkKind::Beam;
+        work.samples = frame.beams[0].size();
+        work.beam = frame;
+        enqueuePlWork(std::move(work));
+    });
+    connect(m_plTransport, &PlDenoiseTransport::wienerFrameReady, this, [this](const PlWienerFrame &frame) {
+        if (!workerShouldBeActive()) return;
+        PendingWork work;
+        work.kind = WorkKind::Wiener;
+        work.samples = frame.samples.size();
+        work.wiener = frame;
+        enqueuePlWork(std::move(work));
+    });
+    connect(m_plTransport, &PlDenoiseTransport::staleStreamDiscarded, this, [this](quint16 stream) {
+        setProperty("plDenoiseRejectedPackets", m_plTransport->rejectedPackets());
+        m_plStatusMessage = QStringLiteral("已拒绝旧 stream_id %1；活动流 %2")
+            .arg(stream).arg(m_plTransport->latestStreamId());
+        refreshStatusLabel();
+    });
+    connect(m_plTransport, &PlDenoiseTransport::finalFrameReady, this, [this](const PlFinalFrame &frame) {
+        if (!workerShouldBeActive()) return;
+        PendingWork work;
+        work.kind = WorkKind::Final;
+        work.samples = frame.samples.size();
+        work.final = frame;
+        enqueuePlWork(std::move(work));
+    });
+    m_plWatchdog->setInterval(200);
+    connect(m_plWatchdog, &QTimer::timeout, this, [this]() {
+        if (!m_plSession->ready() || m_plTransport->faulted()) return;
+        const qint64 age = m_plTransport->lastAudioAgeMs();
+        if ((age >= 0 && age > 1000) || (age < 0 && m_plStarted.isValid() && m_plStarted.elapsed() > 1000))
+            m_plTransport->invalidate(QStringLiteral("超过 1 秒未收到连续 PL 音频流，未回退软件处理"));
+        else if (m_plLastStatus.isValid() && m_plLastStatus.elapsed() > 1000)
+            m_plTransport->invalidate(QStringLiteral("超过 1 秒未收到 DNS1 状态"));
+    });
+    m_plWatchdog->start();
+    // No frameConsumed -> GUI credit loop. The worker-owned mailbox releases
+    // capacity synchronously after each operation, before any GUI notification.
+    auto *mailboxTelemetry = new QTimer(this);
+    mailboxTelemetry->setInterval(200);
+    connect(mailboxTelemetry, &QTimer::timeout, this, [this] { updateMailboxProperties(); });
+    mailboxTelemetry->start();
     connect(m_worker, &NoiseReductionWorker::plotFrameReady,
             this, &NoiseReductionPage::showPlotFrame);
     connect(m_worker, &NoiseReductionWorker::recordingFrameReady,
@@ -122,6 +254,14 @@ NoiseReductionPage::NoiseReductionPage(
             Qt::QueuedConnection);
     connect(m_worker, &NoiseReductionWorker::warningRaised, this,
             [this](const QString &message) {
+                if (message == m_lastWorkerWarning) {
+                    ++m_workerWarningRepeats;
+                } else {
+                    m_lastWorkerWarning = message;
+                    m_workerWarningRepeats = 1;
+                    logPlDiagnostic(QStringLiteral("worker-warning"), message);
+                }
+                setProperty("workerWarningRepeats", QVariant::fromValue(m_workerWarningRepeats));
                 m_processingStatusMessage = message;
                 refreshStatusLabel();
             });
@@ -135,6 +275,185 @@ NoiseReductionPage::NoiseReductionPage(
     setProperty("pendingAudioFrames", 0);
     setProperty("droppedAudioFrames", qulonglong(0));
     setProperty("submittedAudioFrames", qulonglong(0));
+}
+
+void NoiseReductionPage::updateMailboxProperties()
+{
+    const auto state = m_mailbox->snapshot();
+    m_pendingAudioFrames = state.queuedAudioFrames + state.inFlight - state.controlInFlight;
+    m_plBufferedSamples = state.plBufferedSamples;
+    m_referenceBufferedSamples = state.referenceBufferedSamples;
+    m_plQueuedSamples = state.plQueuedSamples;
+    m_referenceQueuedSamples = state.referenceQueuedSamples;
+    m_plQueuePeakSamples = state.plPeakSamples;
+    m_referenceQueuePeakSamples = state.referencePeakSamples;
+    m_workGeneration = state.generation;
+    m_queuedAuthorizations = state.queuedAuthorizations;
+    m_inFlightAuthorizations = state.controlInFlight;
+    m_acceptedPlFrames = state.acceptedPlFrames;
+    m_completedPlFrames = state.completedPlFrames;
+    m_submittedAudioFrames = state.submittedAudioFrames;
+    setProperty("pendingAudioFrames", m_pendingAudioFrames);
+    setProperty("submittedAudioFrames", QVariant::fromValue(m_submittedAudioFrames));
+    setProperty("plQueuedSamples", m_plQueuedSamples);
+    setProperty("rawReferenceQueuedSamples", m_referenceQueuedSamples);
+    setProperty("plBufferedSamples", m_plBufferedSamples);
+    setProperty("rawReferenceBufferedSamples", m_referenceBufferedSamples);
+    setProperty("plQueuePeakSamples", m_plQueuePeakSamples);
+    setProperty("rawReferenceQueuePeakSamples", m_referenceQueuePeakSamples);
+    setProperty("plWorkGeneration", QVariant::fromValue(m_workGeneration));
+    setProperty("plInFlightFrames", state.plInFlight);
+    setProperty("workerControlInFlight", state.controlInFlight);
+    setProperty("workerTotalInFlight", state.inFlight);
+    setProperty("queuedAuthorizations", state.queuedAuthorizations);
+    setProperty("acceptedPlFrames", QVariant::fromValue(m_acceptedPlFrames));
+    setProperty("completedPlFrames", QVariant::fromValue(m_completedPlFrames));
+    setProperty("rawReferenceDroppedFrames", QVariant::fromValue(m_referenceDroppedFrames));
+    setProperty("workerProcessedPlSamples", QVariant::fromValue(state.processedPlSamples));
+    setProperty("workerProcessedTasks", QVariant::fromValue(state.processedTasks));
+    setProperty("workerLastProcessedSampleIndex", state.lastProcessedSampleIndex);
+    setProperty("workerQueueResidenceMaxUsec", state.queueResidenceMaxUsec);
+    setProperty("workerProcessMaxUsec", state.processMaxUsec);
+}
+
+void NoiseReductionPage::logPlDiagnostic(const QString &event, const QString &reason)
+{
+    updateMailboxProperties();
+    const auto state = m_mailbox->snapshot();
+    const QJsonObject data {
+        {QStringLiteral("worker_processed_pl_samples"), QString::number(state.processedPlSamples)},
+        {QStringLiteral("worker_processed_tasks"), QString::number(state.processedTasks)},
+        {QStringLiteral("worker_last_processed_index"), static_cast<qint64>(state.lastProcessedSampleIndex)},
+        {QStringLiteral("worker_queue_residence_max_us"), state.queueResidenceMaxUsec},
+        {QStringLiteral("worker_process_max_us"), state.processMaxUsec},
+        {QStringLiteral("worker_wake_failures"), QString::number(state.wakeFailures)},
+        {QStringLiteral("event"), event}, {QStringLiteral("reason"), reason},
+        {QStringLiteral("input_mode"), static_cast<int>(m_settings.inputMode)},
+        {QStringLiteral("generation"), QString::number(m_workGeneration)},
+        {QStringLiteral("cumulative_fault_count"), QString::number(m_plFaultCount)},
+        {QStringLiteral("reset_transaction"), m_diagnosticResetTransaction},
+        {QStringLiteral("build_id"), static_cast<qint64>(m_lastPlStatus.buildId)},
+        {QStringLiteral("stage"), m_lastPlStatus.stage},
+        {QStringLiteral("stream_id"), m_lastPlStatus.streamId},
+        {QStringLiteral("active_config_id"), m_lastPlStatus.activeConfigId},
+        {QStringLiteral("applied_config_id"), property("plDenoiseConfigId").toInt()},
+        {QStringLiteral("received_samples"), QString::number(m_plTransport->receivedSamples())},
+        {QStringLiteral("rejected_packets"), QString::number(m_plTransport->rejectedPackets())},
+        {QStringLiteral("dns_age_ms"), m_plLastStatus.isValid() ? m_plLastStatus.elapsed() : -1},
+        {QStringLiteral("audio_age_ms"), m_plTransport->lastAudioAgeMs()},
+        {QStringLiteral("overflow_count"), static_cast<qint64>(m_lastPlStatus.overflowCount)},
+        {QStringLiteral("invalid_control_count"), static_cast<qint64>(m_lastPlStatus.invalidControlCount)},
+        {QStringLiteral("pl_error_code"), m_lastPlStatus.errorCode},
+        {QStringLiteral("transport_faulted"), m_plTransport->faulted()},
+        {QStringLiteral("worker_in_flight"), m_pendingAudioFrames},
+        {QStringLiteral("worker_control_in_flight"), m_inFlightAuthorizations},
+        {QStringLiteral("pl_buffered_samples"), m_plBufferedSamples},
+        {QStringLiteral("pl_queued_samples"), m_plQueuedSamples},
+        {QStringLiteral("raw_buffered_samples"), m_referenceBufferedSamples},
+        {QStringLiteral("raw_queued_samples"), m_referenceQueuedSamples},
+        {QStringLiteral("pl_peak_samples"), m_plQueuePeakSamples},
+        {QStringLiteral("raw_peak_samples"), m_referenceQueuePeakSamples},
+        {QStringLiteral("raw_reference_dropped_frames"), QString::number(m_referenceDroppedFrames)},
+    };
+    emit persistentPlDiagnostic(QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact)));
+}
+
+void NoiseReductionPage::scheduleQueuePeakDiagnostic()
+{
+    if (m_queueDiagnosticScheduled) return;
+    m_queueDiagnosticScheduled = true;
+    QTimer::singleShot(200, this, [this] {
+        m_queueDiagnosticScheduled = false;
+        logPlDiagnostic(QStringLiteral("mailbox-high-water"));
+    });
+}
+
+void NoiseReductionPage::clearQueuedAudioWork(const QString &reason)
+{
+    const auto before = m_mailbox->snapshot();
+    m_mailbox->clearPending();
+    updateMailboxProperties();
+    if (before.queuedAudioFrames || before.queuedAuthorizations)
+        logPlDiagnostic(QStringLiteral("mailbox-epoch-cleared"), reason);
+}
+
+void NoiseReductionPage::enqueuePlWork(PendingWork work)
+{
+    if (m_plTransport->faulted()) return;
+    const auto kind = work.kind;
+    const auto first = kind == WorkKind::Beam ? work.beam.firstSampleIndex
+        : (kind == WorkKind::Wiener ? work.wiener.firstSampleIndex : work.final.firstSampleIndex);
+    const int samples = work.samples;
+    const PendingWork observed = work;
+    const bool accepted = m_mailbox->enqueue(NoiseReductionMailbox::Kind::Pl, samples,
+        [worker = m_worker, work = std::move(work)] {
+            if (work.kind == WorkKind::Beam) worker->processPlBeamFrame(work.beam);
+            else if (work.kind == WorkKind::Wiener) worker->processPlWienerFrame(work.wiener);
+            else worker->processPlFinalFrame(work.final);
+        }, first);
+    if (!accepted) {
+        ++m_droppedAudioFrames;
+        setProperty("droppedAudioFrames", QVariant::fromValue(m_droppedAudioFrames));
+        const auto state = m_mailbox->snapshot();
+        m_plTransport->invalidate(QStringLiteral("PL 连续音频共享邮箱超过两秒容量或任务无效：缓存 %1，新增 %2，上限 %3；未丢样本继续处理")
+            .arg(state.plBufferedSamples).arg(samples).arg(MaximumBufferedPlSamples));
+        return;
+    }
+    // Public request signals remain observation-only; the worker does not
+    // subscribe to them and no GUI completion is needed to continue draining.
+    if (kind == WorkKind::Beam) emit plBeamFrameRequested(observed.beam);
+    else if (kind == WorkKind::Wiener) emit plWienerFrameRequested(observed.wiener);
+    else emit plFinalFrameRequested(observed.final);
+    const auto state = m_mailbox->snapshot();
+    if (state.plPeakSamples > m_plQueuePeakSamples) scheduleQueuePeakDiagnostic();
+}
+
+void NoiseReductionPage::enqueueReferenceWork(PendingWork work)
+{
+    const PendingWork observed = work;
+    const bool accepted = m_mailbox->enqueue(NoiseReductionMailbox::Kind::Reference, work.samples,
+        [worker = m_worker, work = std::move(work)] {
+            worker->processRawFrame(work.raw, work.seconds, work.micros);
+        });
+    if (!accepted) {
+        ++m_referenceDroppedFrames;
+        ++m_droppedAudioFrames;
+        setProperty("droppedAudioFrames", QVariant::fromValue(m_droppedAudioFrames));
+        if ((m_referenceDroppedFrames & (m_referenceDroppedFrames - 1)) == 0)
+            logPlDiagnostic(QStringLiteral("raw-reference-overflow"), QStringLiteral("CH0 参考共享邮箱达到两秒上限；仅拒绝本参考帧，PL 连续流未被丢弃"));
+    } else emit rawAudioFrameRequested(observed.raw, observed.seconds, observed.micros);
+}
+
+bool NoiseReductionPage::enqueueWorkerControl(std::function<void()> operation, bool authorization)
+{
+    if (m_mailbox->enqueue(authorization ? NoiseReductionMailbox::Kind::Authorization
+                                      : NoiseReductionMailbox::Kind::Control,
+                           0, std::move(operation))) return true;
+    if (!m_plTransport->faulted())
+        m_plTransport->invalidate(QStringLiteral("工作线程控制邮箱超过 64 项有界容量或无法唤醒；停止处理，未混用配置"));
+    else logPlDiagnostic(QStringLiteral("worker-control-rejected"));
+    return false;
+}
+
+bool NoiseReductionPage::enqueueAuthorization(quint16 stream, bool restart)
+{
+    if (restart) clearQueuedAudioWork(QStringLiteral("new PL stream authorization"));
+    return enqueueWorkerControl([worker = m_worker, stream, restart] {
+        worker->authorizePlConfiguration(stream, restart);
+    }, true);
+}
+
+void NoiseReductionPage::submitWorkerWork(PendingWork work)
+{
+    const PendingWork observed = work;
+    const bool accepted = m_mailbox->enqueue(NoiseReductionMailbox::Kind::Software, work.samples,
+        [worker = m_worker, work = std::move(work)] {
+            worker->processRawFrame(work.raw, work.seconds, work.micros);
+        });
+    if (!accepted) {
+        ++m_droppedAudioFrames;
+        setProperty("droppedAudioFrames", QVariant::fromValue(m_droppedAudioFrames));
+    } else emit rawAudioFrameRequested(observed.raw, observed.seconds, observed.micros);
 }
 
 NoiseReductionPage::~NoiseReductionPage()
@@ -152,6 +471,7 @@ NoiseReductionPage::~NoiseReductionPage()
         m_settingsStore->saveNoiseReduction(m_settings);
     }
     if (m_workerThread.isRunning()) {
+        m_mailbox->close();
         QMetaObject::invokeMethod(
             m_worker, "shutdown", Qt::BlockingQueuedConnection);
         m_workerThread.quit();
@@ -202,12 +522,9 @@ void NoiseReductionPage::setRecordingRequired(
 
     m_recordingRequired = required;
     m_recordingStages = normalizedStages;
-    QMetaObject::invokeMethod(
-        m_worker,
-        [worker = m_worker, normalizedStages]() {
-            worker->setRecordingStages(normalizedStages);
-        },
-        Qt::QueuedConnection);
+    enqueueWorkerControl([worker = m_worker, normalizedStages]() {
+        worker->setRecordingStages(normalizedStages);
+    });
     updateWorkerActive();
 }
 
@@ -230,20 +547,32 @@ void NoiseReductionPage::setQuickRecordingState(
 
 void NoiseReductionPage::setConnected(bool connected)
 {
+    if (m_connected != connected) {
+        clearQueuedAudioWork(QStringLiteral("connection epoch changed"));
+        m_plTransport->reset();
+        m_plSession->setAvailable(false, false);
+        m_plStarted.invalidate();
+        m_plLastStatus.invalidate();
+    }
     m_connected = connected;
     refreshControlAvailability();
+    configurePlMode();
 }
 
 void NoiseReductionPage::setControlLocked(bool locked)
 {
     m_controlLocked = locked;
     refreshControlAvailability();
+    configurePlMode();
 }
 
 void NoiseReductionPage::setSampleRate(int sampleRate)
 {
-    m_sampleRate = std::clamp(sampleRate, 8000, 192000);
+    const int rate = std::clamp(sampleRate, 8000, 192000);
+    if (m_sampleRate != rate) clearQueuedAudioWork(QStringLiteral("sample rate changed"));
+    m_sampleRate = rate;
     emit configureWorkerRequested(m_settings, m_sampleRate);
+    configurePlMode();
 }
 
 void NoiseReductionPage::setVideoFrame(
@@ -262,25 +591,36 @@ void NoiseReductionPage::submitRawAudioFrame(
     if (!workerShouldBeActive()) {
         return;
     }
-    if (m_pendingAudioFrames >= MaximumPendingFrames) {
-        ++m_droppedAudioFrames;
-        setProperty("droppedAudioFrames",
-                    QVariant::fromValue(m_droppedAudioFrames));
+    PendingWork work;
+    work.kind = WorkKind::Raw;
+    work.raw = payload;
+    work.seconds = timestampSeconds;
+    work.micros = timestampMicros;
+    work.samples = AudioFrameDecoder::SamplesPerFrame;
+    work.generation = m_workGeneration;
+    if (isPlNoiseInputMode(m_settings.inputMode)) {
+        work.referenceOnly = true;
+        enqueueReferenceWork(std::move(work));
         return;
     }
-    ++m_pendingAudioFrames;
-    ++m_submittedAudioFrames;
-    setProperty("pendingAudioFrames", m_pendingAudioFrames);
-    setProperty("submittedAudioFrames",
-                QVariant::fromValue(m_submittedAudioFrames));
-    emit rawAudioFrameRequested(payload,
-                                timestampSeconds,
-                                timestampMicros);
+    submitWorkerWork(std::move(work));
+}
+
+void NoiseReductionPage::submitPlSidebandFrame(const QByteArray &payload,
+                                               quint32 seconds, quint32 micros)
+{
+    if (isPlNoiseInputMode(m_settings.inputMode)
+        && workerShouldBeActive())
+        m_plTransport->consume(payload, seconds, micros);
 }
 
 void NoiseReductionPage::setControlSendResult(
     bool success, const QString &message)
 {
+    if (isPlNoiseInputMode(m_settings.inputMode)) {
+        if (!success) m_plTransport->invalidate(message);
+        return; // Network write is not the DNS1 execution acknowledgement.
+    }
     m_processingStatusMessage =
         success ? QStringLiteral("方向控制已发送：%1").arg(message) : message;
     refreshStatusLabel();
@@ -656,13 +996,21 @@ void NoiseReductionPage::buildUi()
     m_inputModeCombo->setObjectName(
         QStringLiteral("noiseInputModeCombo"));
     m_inputModeCombo->addItem(
-        QStringLiteral("FPGA 波束形成通道（CH1/CH2/CH3）"),
+        QStringLiteral("旧设备兼容：预先波束形成的 CH1/CH2/CH3"),
         static_cast<int>(
             NoiseReductionInputMode::FpgaBeamformedChannels));
     m_inputModeCombo->addItem(
         QStringLiteral("48 通道软件波束形成（CH0–CH47）"),
         static_cast<int>(
             NoiseReductionInputMode::Raw48SoftwareBeamforming));
+    m_inputModeCombo->addItem(
+        QStringLiteral("PL 三路波束 + 上位机原降噪（AUD3/DNS1）"),
+        static_cast<int>(NoiseReductionInputMode::PlThreeBeamOriginalDenoising));
+    m_inputModeCombo->addItem(
+        QStringLiteral("PL 固定维纳 + 上位机原后处理（AUW1/DNS1）"),
+        static_cast<int>(NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing));
+    m_inputModeCombo->addItem(QStringLiteral("PL 全链降噪（固定演示参数）"),
+        static_cast<int>(NoiseReductionInputMode::PlFullDenoisingFixedProfile));
     m_reuseLocalizationCalibrationCheck = new QCheckBox(
         QStringLiteral("复用声源定位视频校准"),
         inputProcessingGroup);
@@ -670,8 +1018,12 @@ void NoiseReductionPage::buildUi()
         QStringLiteral("noiseReuseLocalizationCalibrationCheck"));
     auto *inputModeExplanation = new QLabel(
         QStringLiteral(
-            "该选项只改变本机处理；设备端必须已输出 48 通道原始阵元数据，"
-            "不会向 FPGA 发送模式切换命令。"),
+            "完整软件模式：48 通道原始阵元数据→软件三波束→原维纳/后处理，"
+            "不会向 FPGA 发送模式切换命令。"
+            "PL模式：ACK确认三波束→上位机原维纳/带通/LogMMSE/AGC；"
+            "固定维纳模式：PL三波束/固定维纳→上位机原后处理，仅支持固定参数维纳。"
+            "全链工程测试版：PL完成固定演示参数全部降噪，上位机仅显示/最终节点录制/监听；参数不符会明确拒绝。"
+            "要求配套bit，无有效对应音频流时等待/报错，不以原始CH1/2/3代替。"),
         inputProcessingGroup);
     inputModeExplanation->setObjectName(
         QStringLiteral("noiseInputModeExplanationLabel"));
@@ -679,7 +1031,7 @@ void NoiseReductionPage::buildUi()
     m_inputModeCombo->setToolTip(inputModeExplanation->text());
     m_reuseLocalizationCalibrationCheck->setToolTip(
         QStringLiteral(
-            "仅在 48 通道软件波束形成时复用声源定位页的最新视频校准。"));
+            "软件或PL三路波束模式可复用声源定位页的最新视频校准。"));
     inputProcessingLayout->addRow(QStringLiteral("输入模式"),
                                   m_inputModeCombo);
     inputProcessingLayout->addRow(
@@ -1058,7 +1410,11 @@ void NoiseReductionPage::connectUi()
                 });
     }
     connect(m_sendDirectionButton, &QPushButton::clicked,
-            this, &NoiseReductionPage::requestControlSend);
+            this, [this]() {
+        if (isPlNoiseInputMode(m_settings.inputMode))
+            configurePlMode(true);
+        else requestControlSend();
+    });
     connect(m_fullscreenButton, &QPushButton::clicked,
             this, [this] {
                 setPresentationMode(true);
@@ -1275,7 +1631,22 @@ NoiseReductionSettings NoiseReductionPage::settingsFromUi() const
 
 void NoiseReductionPage::applySettingsFromUi()
 {
+    const auto previous = m_settings;
     m_settings = settingsFromUi();
+    const bool processingBoundary = previous.inputMode != m_settings.inputMode
+        || previous.enabled != m_settings.enabled || previous.algorithm != m_settings.algorithm
+        || previous.mode != m_settings.mode
+        || previous.singleSuppressionCoefficient != m_settings.singleSuppressionCoefficient
+        || previous.dualB1SuppressionCoefficient != m_settings.dualB1SuppressionCoefficient
+        || previous.dualB2SuppressionCoefficient != m_settings.dualB2SuppressionCoefficient
+        || previous.bandPass != m_settings.bandPass || previous.logMmse != m_settings.logMmse
+        || previous.automaticGainControl != m_settings.automaticGainControl
+        || previous.postProcessingOrder != m_settings.postProcessingOrder;
+    if (processingBoundary) clearQueuedAudioWork(QStringLiteral("DSP settings or input mode boundary"));
+    if (previous.inputMode != m_settings.inputMode) {
+        m_plTransport->reset();
+        m_plSession->setAvailable(false, false);
+    }
     if (m_settingsStore != nullptr) {
         m_settingsStore->saveNoiseReduction(m_settings);
     }
@@ -1284,7 +1655,8 @@ void NoiseReductionPage::applySettingsFromUi()
     refreshDirectionViews();
     refreshControlAvailability();
     emit configureWorkerRequested(m_settings, m_sampleRate);
-    updateWorkerActive();
+    updateWorkerActive(false);
+    configurePlMode(processingBoundary);
     emit settingsChanged();
     if (!m_settings.enabled) {
         m_firstWaveform->clear();
@@ -1299,19 +1671,34 @@ bool NoiseReductionPage::workerShouldBeActive() const
     return (m_active || m_recordingRequired) && m_settings.enabled;
 }
 
-void NoiseReductionPage::updateWorkerActive()
+void NoiseReductionPage::updateWorkerActive(bool configurePl)
 {
     const bool active = workerShouldBeActive();
     if (m_workerActive == active) {
         return;
     }
     m_workerActive = active;
+    if (!active) clearQueuedAudioWork(QStringLiteral("worker became inactive"));
     emit workerActiveRequested(active);
+    if (configurePl) configurePlMode();
 }
 
 void NoiseReductionPage::refreshStatusLabel()
 {
     QString message = m_processingStatusMessage;
+    if (isPlNoiseInputMode(m_settings.inputMode)) {
+        message = (m_settings.inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile
+            ? QStringLiteral("工程测试版：PL=三波束→固定维纳→带通→LogMMSE→AGC；上位机不再降噪\n")
+            : (m_settings.inputMode == NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing
+            ? QStringLiteral("处理分工：PL=三波束+固定维纳；上位机=原后处理（不再次维纳）\n")
+            : QStringLiteral("处理分工：PL=A/B1/B2；上位机=原维纳及后处理\n")))
+            + m_plStatusMessage + QLatin1Char('\n') + message;
+        if (isPlMonoNoiseInputMode(m_settings.inputMode)) {
+            message += QStringLiteral("\n此模式仅上传单声道结果；对比/监听可选 CH0 原始参考或降噪输出，A/B1/B2 波束未上传。");
+            if (m_settings.inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile)
+                message += QStringLiteral("\n固定演示参数；指纹 b2c8f065。只可录制 AGC 最终输出，中间阶段未上传。实物首测待验收。");
+        }
+    }
     if (!m_recordingStatusMessage.isEmpty()) {
         if (!message.isEmpty()) {
             message += QLatin1Char('\n');
@@ -1323,6 +1710,18 @@ void NoiseReductionPage::refreshStatusLabel()
 
 void NoiseReductionPage::refreshProcessingAvailability()
 {
+    const bool postOnly = isPlMonoNoiseInputMode(m_settings.inputMode);
+    for (auto *combo : {m_monitorSourceCombo, m_firstPlotSourceCombo, m_secondPlotSourceCombo}) {
+        QSignalBlocker blocker(combo);
+        auto *model = qobject_cast<QStandardItemModel *>(combo->model());
+        for (int index = 0; index < combo->count(); ++index) {
+            const auto source = static_cast<NoiseSignalSource>(combo->itemData(index).toInt());
+            const bool available = !postOnly || source == NoiseSignalSource::FirstElement || source == NoiseSignalSource::Denoised;
+            combo->setItemText(index, sourceName(source, postOnly));
+            combo->setItemData(index, available ? QVariant() : QVariant(QStringLiteral("此模式仅上传单声道处理结果；不能用原始 CH1/2/3 代替三路波束。")), Qt::ToolTipRole);
+            if (model && model->item(index)) model->item(index)->setEnabled(available);
+        }
+    }
     const bool fixedAlgorithm =
         static_cast<NoiseReductionAlgorithm>(
             m_algorithmCombo->currentData().toInt())
@@ -1405,7 +1804,7 @@ void NoiseReductionPage::showNodeParameters(int nodeId)
 bool NoiseReductionPage::usesLocalizationCalibration() const
 {
     return m_settings.inputMode
-            == NoiseReductionInputMode::Raw48SoftwareBeamforming
+            != NoiseReductionInputMode::FpgaBeamformedChannels
         && m_settings.reuseLocalizationVideoCalibration;
 }
 
@@ -1461,6 +1860,13 @@ void NoiseReductionPage::refreshDirectionViews()
                 QString::number(DirectionControlMapper::elevationCode(
                     directions[index], m_settings.mapping)));
         }
+        if (isPlNoiseInputMode(m_settings.inputMode)) {
+            const auto slopes = PlDenoiseSession::directionSlopes(m_settings);
+            m_directionCodeLabels[index]->setText(QStringLiteral("Q26 %1").arg(slopes[index]));
+            m_directionCodeLabels[index]->setToolTip(QStringLiteral("连续角度对应的 Q26 方向斜率；不是旧版粗量化角度码"));
+        } else {
+            m_directionCodeLabels[index]->setToolTip(QString());
+        }
         m_directionSpins[index]->setValue(directions[index]);
     }
     const NoiseDirectionSelection selection =
@@ -1491,7 +1897,9 @@ void NoiseReductionPage::refreshControlAvailability()
     const bool raw48 = static_cast<NoiseReductionInputMode>(
                            m_inputModeCombo->currentData().toInt())
         == NoiseReductionInputMode::Raw48SoftwareBeamforming;
-    m_reuseLocalizationCalibrationCheck->setEnabled(raw48);
+    const bool plMode = isPlNoiseInputMode(static_cast<NoiseReductionInputMode>(m_inputModeCombo->currentData().toInt()));
+    m_reuseLocalizationCalibrationCheck->setEnabled(raw48 || plMode);
+    m_sendDirectionButton->setText(plMode ? QStringLiteral("重新同步PL方向") : QStringLiteral("发送方向控制"));
     m_sendDirectionButton->setEnabled(
         !raw48 && m_connected && !m_controlLocked);
     m_sendDirectionButton->setToolTip(
@@ -1575,6 +1983,10 @@ void NoiseReductionPage::handleDirectionDragPoint(
 
 void NoiseReductionPage::requestControlSend()
 {
+    if (isPlNoiseInputMode(m_settings.inputMode)) {
+        configurePlMode();
+        return;
+    }
     if (m_settings.inputMode
         == NoiseReductionInputMode::Raw48SoftwareBeamforming) {
         setControlSendResult(
@@ -1596,12 +2008,42 @@ void NoiseReductionPage::requestControlSend()
     emit controlSendRequested(currentControlValues());
 }
 
+void NoiseReductionPage::configurePlMode(bool force)
+{
+    const bool pl = isPlNoiseInputMode(m_settings.inputMode);
+    if (!pl) {
+        m_plSession->setAvailable(false, false);
+        return;
+    }
+    m_plTransport->setExpectedStage(m_settings.inputMode == NoiseReductionInputMode::PlFullDenoisingFixedProfile ? 3
+        : (m_settings.inputMode == NoiseReductionInputMode::PlFixedWienerOriginalPostProcessing ? 2 : 1));
+    const bool available = m_connected && !m_controlLocked && workerShouldBeActive();
+    if (!available) {
+        m_plSession->setAvailable(false, false);
+        m_plStatusMessage = !m_connected ? QStringLiteral("等待设备连接")
+            : (m_controlLocked ? QStringLiteral("控制已锁定，请解锁后同步PL方向") : QStringLiteral("PL 降噪未启用"));
+        refreshStatusLabel();
+        return;
+    }
+    if (force) {
+        clearQueuedAudioWork(QStringLiteral("forced PL configuration boundary"));
+        m_plTransport->reset();
+    }
+    const quint64 faultCountBeforeConfigure = m_plFaultCount;
+    m_plSession->configure(m_settings, m_sampleRate, force);
+    // A synchronous ACK can fail while configure() is emitting commands. Do
+    // not re-enable that same failed transaction and implicitly send RESET.
+    if (m_plFaultCount != faultCountBeforeConfigure) return;
+    m_plSession->setAvailable(true, true);
+}
+
 void NoiseReductionPage::showPlotFrame(
     const NoiseReductionPlotFrame &frame)
 {
     m_plotFrame = frame;
-    const QString firstName = noiseSignalSourceName(frame.first.source);
-    const QString secondName = noiseSignalSourceName(frame.second.source);
+    const bool postOnly = isPlMonoNoiseInputMode(m_settings.inputMode);
+    const QString firstName = sourceName(frame.first.source, postOnly);
+    const QString secondName = sourceName(frame.second.source, postOnly);
     m_firstWaveform->setTitle(
         QStringLiteral("%1 · 时域波形").arg(firstName));
     m_secondWaveform->setTitle(

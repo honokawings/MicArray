@@ -1,0 +1,179 @@
+{
+  "status": "TRUE_VENDOR_CONVERSION_SEMANTICS_CHARACTERIZED",
+  "characterization_passed": true,
+  "CPU_all_IEEE_equivalence_claim": false,
+  "scope": "The frozen production FPEXT32to64 and FPTRUNC64to32 wrappers and real compiled vendor FPO IP, private independent TB, no model substitution. Float32 subnormal inputs/results are flushed to signedzero; normal values and signedzero match CPU casts. exact_ldexp helper supported-domain proof remains valid, but it is not a claim that the entire vendor kernel implements all IEEE subnormal behavior.",
+  "normal_or_zero_cases_matching_CPU": 9,
+  "subnormal_cases_flushed_to_signedzero": 5,
+  "subnormal_magnitude_bound": 1.1754943508222875e-38,
+  "rows": [
+    {
+      "index": 0,
+      "float32_hex": "00000000",
+      "CPU_expected_float64_hex": "0000000000000000",
+      "vendor_actual_float64_hex": "0000000000000000",
+      "vendor_actual_float32_hex": "00000000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 1,
+      "float32_hex": "80000000",
+      "CPU_expected_float64_hex": "8000000000000000",
+      "vendor_actual_float64_hex": "8000000000000000",
+      "vendor_actual_float32_hex": "80000000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 2,
+      "float32_hex": "00000001",
+      "CPU_expected_float64_hex": "36a0000000000000",
+      "vendor_actual_float64_hex": "0000000000000000",
+      "vendor_actual_float32_hex": "00000000",
+      "float32_subnormal": true,
+      "matches_original_CPU_conversion": false
+    },
+    {
+      "index": 3,
+      "float32_hex": "80000001",
+      "CPU_expected_float64_hex": "b6a0000000000000",
+      "vendor_actual_float64_hex": "8000000000000000",
+      "vendor_actual_float32_hex": "80000000",
+      "float32_subnormal": true,
+      "matches_original_CPU_conversion": false
+    },
+    {
+      "index": 4,
+      "float32_hex": "00000002",
+      "CPU_expected_float64_hex": "36b0000000000000",
+      "vendor_actual_float64_hex": "0000000000000000",
+      "vendor_actual_float32_hex": "00000000",
+      "float32_subnormal": true,
+      "matches_original_CPU_conversion": false
+    },
+    {
+      "index": 5,
+      "float32_hex": "007fffff",
+      "CPU_expected_float64_hex": "380fffffc0000000",
+      "vendor_actual_float64_hex": "0000000000000000",
+      "vendor_actual_float32_hex": "00000000",
+      "float32_subnormal": true,
+      "matches_original_CPU_conversion": false
+    },
+    {
+      "index": 6,
+      "float32_hex": "807fffff",
+      "CPU_expected_float64_hex": "b80fffffc0000000",
+      "vendor_actual_float64_hex": "8000000000000000",
+      "vendor_actual_float32_hex": "80000000",
+      "float32_subnormal": true,
+      "matches_original_CPU_conversion": false
+    },
+    {
+      "index": 7,
+      "float32_hex": "00800000",
+      "CPU_expected_float64_hex": "3810000000000000",
+      "vendor_actual_float64_hex": "3810000000000000",
+      "vendor_actual_float32_hex": "00800000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 8,
+      "float32_hex": "80800000",
+      "CPU_expected_float64_hex": "b810000000000000",
+      "vendor_actual_float64_hex": "b810000000000000",
+      "vendor_actual_float32_hex": "80800000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 9,
+      "float32_hex": "01000000",
+      "CPU_expected_float64_hex": "3820000000000000",
+      "vendor_actual_float64_hex": "3820000000000000",
+      "vendor_actual_float32_hex": "01000000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 10,
+      "float32_hex": "3f000000",
+      "CPU_expected_float64_hex": "3fe0000000000000",
+      "vendor_actual_float64_hex": "3fe0000000000000",
+      "vendor_actual_float32_hex": "3f000000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 11,
+      "float32_hex": "bf000000",
+      "CPU_expected_float64_hex": "bfe0000000000000",
+      "vendor_actual_float64_hex": "bfe0000000000000",
+      "vendor_actual_float32_hex": "bf000000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 12,
+      "float32_hex": "3f800000",
+      "CPU_expected_float64_hex": "3ff0000000000000",
+      "vendor_actual_float64_hex": "3ff0000000000000",
+      "vendor_actual_float32_hex": "3f800000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    },
+    {
+      "index": 13,
+      "float32_hex": "bf800000",
+      "CPU_expected_float64_hex": "bff0000000000000",
+      "vendor_actual_float64_hex": "bff0000000000000",
+      "vendor_actual_float32_hex": "bf800000",
+      "float32_subnormal": false,
+      "matches_original_CPU_conversion": true
+    }
+  ],
+  "native_exit_code": 0,
+  "real_Error_or_Fatal_count": 0,
+  "files": {
+    "tb_conversion.sv": {
+      "path": "[archived-local-evidence]/tb_conversion.sv",
+      "sha256": "21053540c12b515bf902983c9a30c6a370b4e5a56258b9779ec3fca07cc896c3",
+      "bytes": 1716
+    },
+    "run.do": {
+      "path": "[archived-local-evidence]/run.do",
+      "sha256": "31d5300349dc61efd3fa9fd44c08e0cd45f3a5338befefd384ae50d685b23625",
+      "bytes": 517
+    },
+    "cases.json": {
+      "path": "[archived-local-evidence]/cases.json",
+      "sha256": "3f3b0395ec9c7b4cc737f153044e81ee1af73626bdb9df77dae0e97b297ce8cd",
+      "bytes": 1277
+    },
+    "console.log": {
+      "path": "[archived-local-evidence]/console.log",
+      "sha256": "eaf0baa17b4ff132d1f514ea882c2e510333052f659825f3df35b637db3f3095",
+      "bytes": 5524
+    },
+    "simulator.log": {
+      "path": "[archived-local-evidence]/simulator.log",
+      "sha256": "75f828bc2fa7a3ab18c1f42549fc1cea4dffe6b8285d69976e51562bf1472e94",
+      "bytes": 5492
+    },
+    "native_exit.txt": {
+      "path": "[archived-local-evidence]/native_exit.txt",
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      "bytes": 1
+    }
+  },
+  "retained_adapter_compile_failures": [
+    "compile_failure_console.log",
+    "compile_failure_simulator.log",
+    "compile_failure_2_console.log",
+    "compile_failure_2_simulator.log"
+  ],
+  "algorithm_or_production_RTL_changed": false,
+  "limitation": "No claim of arbitrary full-kernel float32 subnormal bit equivalence to the CPU Csim. Existing full real-recording Csim and all4 direct actual RTL evidence are reported independently."
+}

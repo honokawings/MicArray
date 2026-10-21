@@ -1,0 +1,111 @@
+{
+  "status": "PASS",
+  "samples": 1250000,
+  "finite_domain": [
+    1e-12,
+    1000
+  ],
+  "series_max_observed": 17,
+  "continued_fraction_max_observed": 54,
+  "new_caps": [
+    20,
+    55
+  ],
+  "reference_cap": 100,
+  "all_original_stops_before_new_caps": true,
+  "maximum_observed_cf_input": 1.0000000000000002,
+  "method": "Dense and random IEEE64 numerical validation, together with analytical positive-denominator and forward-rounding bounds; not a machine-checked formal proof. Every original early-break computation unchanged.",
+  "real_analysis": {
+    "series": "For 0<x<=1, alternating terms magnitude x^k/(k*k!) and |sum|/x >= 1-1/4. At k=18 the relative term is below double epsilon; cap20 adds margin.",
+    "continued_fraction": "D_n=b_n-n^2/D_(n-1); C_n=b_n-n^2/C_(n-1); delta_n-1=n^2*(C_(n-1)-D_(n-1))/(C_(n-1)*D_(n-1)*D_n). Equivalently [n^2/(C_(n-1)*D_n)]*(delta_(n-1)-1). For x>=1, positive C,D denominators increase with x, and delta_1-1 decreases, so the slowest exact-real change is at x=1. C_n,D_n >= x+n+1.",
+    "b_rounding": "Adding integer2 is exact within a binary binade; only binade crossings and initial x+1 round. Geometric sum of crossing ulps is bounded by2*u*bmax. Error propagation conservatively uses4*u*bmax.",
+    "floating_point_assumptions": [
+      "binary64 normal finite arithmetic with per-operation error<=one full ulp (conservative 2u)",
+      "no fused multiply-add or unsafe reassociation",
+      "positive denominator lower bounds verified; Tiny guards inactive in x>=1",
+      "near delta=1 subtraction is exact by Sterbenz lemma",
+      "vendor arithmetic and physical timing still require RTL validation"
+    ],
+    "floating_point_scope": "The numerical grid is engineering corroboration, not the proof. A sticky numeric_fault bit reports any unexpected exhaustion of either new cap."
+  },
+  "rounding_bound": {
+    "delta55_minus1_exact_at_x1": 7.37718203548254e-13,
+    "domain_intervals": [
+      {
+        "x_interval": [
+          1,
+          2
+        ],
+        "delta55_absolute_error_upper": 8.296669590296888e-14
+      },
+      {
+        "x_interval": [
+          2,
+          4
+        ],
+        "delta55_absolute_error_upper": 5.6496766043317716e-14
+      },
+      {
+        "x_interval": [
+          4,
+          8
+        ],
+        "delta55_absolute_error_upper": 3.532559829345265e-14
+      },
+      {
+        "x_interval": [
+          8,
+          16
+        ],
+        "delta55_absolute_error_upper": 2.1238298170363146e-14
+      },
+      {
+        "x_interval": [
+          16,
+          32
+        ],
+        "delta55_absolute_error_upper": 1.3008294405350891e-14
+      },
+      {
+        "x_interval": [
+          32,
+          64
+        ],
+        "delta55_absolute_error_upper": 8.614961014838809e-15
+      },
+      {
+        "x_interval": [
+          64,
+          128
+        ],
+        "delta55_absolute_error_upper": 6.4498658017590005e-15
+      },
+      {
+        "x_interval": [
+          128,
+          256
+        ],
+        "delta55_absolute_error_upper": 5.4849241745934606e-15
+      },
+      {
+        "x_interval": [
+          256,
+          512
+        ],
+        "delta55_absolute_error_upper": 5.1086457698346925e-15
+      },
+      {
+        "x_interval": [
+          512,
+          1000
+        ],
+        "delta55_absolute_error_upper": 4.820927560585768e-15
+      }
+    ],
+    "worst_delta55_rounding_bound": 8.296669590296888e-14,
+    "worst_delta55_minus1_with_rounding": 8.206848994512229e-13,
+    "source_threshold": 1e-12,
+    "threshold_margin": 1.7931510054877707e-13,
+    "margin_to_error_bound_ratio": 3.161290124877209
+  }
+}

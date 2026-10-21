@@ -1,0 +1,38 @@
+{
+  "passed": true,
+  "scope": "Fixed, explicit original demonstration post profile; Wiener coefficients/directions excluded because mutable",
+  "canonical_encoding": "ASCII compact JSON with sorted object keys; canonical_profile.json contains these exact bytes",
+  "fingerprint_crc32_hex": "b2c8f065",
+  "fingerprint_dns_byte_order": "little endian at DNS1[33..36] for stage3",
+  "canonical_sha256": "be904723869b335a93a8879da993e8004979fdd4972d917f79705e297270d80b",
+  "diagnostic_export_sha256": "c745d910ae8291f32fcaa7133c95d2c20d2c614887d3306941160212ae8468e4",
+  "build_id_hex": "20261022",
+  "control_mode_value": 2,
+  "dns_stage": 3,
+  "audio_magic": "AUF1",
+  "audio_flags_hex": "31",
+  "settings": {
+    "bandpass": {
+      "enabled": true,
+      "high_hz": 8000,
+      "low_hz": 100
+    },
+    "logmmse": {
+      "enabled": true,
+      "fft_size": 2048,
+      "minimum_gain_db": -20,
+      "noise_power_smoothing": 0.95,
+      "overlap_ratio": 0.5,
+      "prior_snr_smoothing": 0.98
+    },
+    "agc": {
+      "attack_ms": 20,
+      "enabled": true,
+      "limiter_level_dbfs": -1,
+      "maximum_attenuation_db": -20,
+      "maximum_gain_db": 20,
+      "release_ms": 300,
+      "target_level_dbfs": -24
+    }
+  }
+}

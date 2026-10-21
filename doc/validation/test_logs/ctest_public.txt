@@ -1,0 +1,12 @@
+Internal ctest changing into directory: <build>
+Test project <build>
+    Start 10: test_pldenoise
+1/3 Test #10: test_pldenoise ...................   Passed    0.49 sec
+    Start 12: test_plwiener
+2/3 Test #12: test_plwiener ....................   Passed    0.44 sec
+    Start 13: test_plfull
+3/3 Test #13: test_plfull ......................   Passed    0.44 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Total Test time (real) =   1.39 sec

@@ -2,6 +2,24 @@
 
 #include "control/controlvalues.h"
 #include "protocol/protocolcodec.h"
+#include <QRandomGenerator>
+#include <QtEndian>
+
+namespace
+{
+QByteArray mediaFrame(const QByteArray &payload)
+{
+    QByteArray wire(16, 0);
+    qToLittleEndian(MicArray::ProtocolCodec::HostHeader, wire.data());
+    qToLittleEndian(quint16(MicArray::FrameType::Audio), wire.data() + 2);
+    qToLittleEndian(quint32(payload.size()), wire.data() + 4);
+    qToLittleEndian(quint32(17), wire.data() + 8);
+    qToLittleEndian(quint32(123), wire.data() + 12);
+    wire += payload;
+    wire += QByteArray::fromHex("0a0d");
+    return wire;
+}
+}
 
 using namespace MicArray;
 
@@ -28,6 +46,13 @@ private slots:
     void capturesSixteenBytesAfterTailInSameChunk();
     void completesPostTailPreviewAcrossChunksWithoutDelayingMediaFrame();
     void flushesIncompletePostTailPreviewOnClear();
+    void retainsSplitSynchronizationPrefix();
+    void byteByByteAndRandomFragmentation();
+    void coalescedFramesAndFrameBoundarySplit();
+    void garbageResynchronizationKeepsPrefix();
+    void maximumGarbageRetentionIsOneByte();
+    void maximumPayloadBoundaryAndInvalidLengthRecovery();
+    void clearDropsRetainedPrefix();
 };
 
 void ProtocolCodecTest::encodesHeartbeat()
@@ -300,6 +325,129 @@ void ProtocolCodecTest::flushesIncompletePostTailPreviewOnClear()
     QCOMPARE(flushed.size(), 1);
     QCOMPARE(flushed.first().postTailPreview, afterTail);
     QVERIFY(!flushed.first().postTailPreviewComplete);
+}
+
+void ProtocolCodecTest::retainsSplitSynchronizationPrefix()
+{
+    ProtocolCodec codec;
+    const auto wire = mediaFrame("original payload");
+    const auto first = codec.parseIncoming(wire.first(1));
+    QCOMPARE(first.bytesDiscarded, qsizetype(0));
+    QCOMPARE(first.bufferAfter, qsizetype(1));
+    QVERIFY(first.errors.isEmpty());
+    const auto rest = codec.parseIncoming(wire.sliced(1));
+    QCOMPARE(rest.frames.size(), 1);
+    QCOMPARE(rest.frames.front().payload, QByteArray("original payload"));
+    QCOMPARE(rest.bytesDiscarded, qsizetype(0));
+    QVERIFY(rest.errors.isEmpty());
+}
+
+void ProtocolCodecTest::byteByByteAndRandomFragmentation()
+{
+    const QList<QByteArray> payloads {QByteArray::fromHex("7e7e0a0d"), QByteArray(38400, char(0x7e)), "third"};
+    QByteArray wire;
+    for (const auto &payload : payloads) wire += mediaFrame(payload);
+    for (bool bytewise : {true, false})
+    {
+        ProtocolCodec codec;
+        QRandomGenerator random(0x20261020);
+        QList<QByteArray> actual;
+        for (int offset = 0; offset < wire.size();)
+        {
+            const int count = std::min(bytewise ? 1 : int(random.bounded(1U, 8193U)), int(wire.size()) - offset);
+            const auto result = codec.parseIncoming(QByteArrayView(wire).sliced(offset, count));
+            QVERIFY(result.errors.isEmpty());
+            QCOMPARE(result.bytesDiscarded, qsizetype(0));
+            for (const auto &frame : result.frames) actual.append(frame.payload);
+            offset += count;
+        }
+        QCOMPARE(actual, payloads);
+    }
+}
+
+void ProtocolCodecTest::coalescedFramesAndFrameBoundarySplit()
+{
+    ProtocolCodec codec;
+    const auto firstWire = mediaFrame("first");
+    const auto secondWire = mediaFrame("second");
+    const auto thirdWire = mediaFrame("third");
+    const auto first = codec.parseIncoming(firstWire + secondWire + thirdWire.first(1));
+    QCOMPARE(first.frames.size(), 2);
+    QCOMPARE(first.frames[0].payload, QByteArray("first"));
+    QCOMPARE(first.frames[1].payload, QByteArray("second"));
+    QVERIFY(first.errors.isEmpty());
+    const auto second = codec.parseIncoming(thirdWire.sliced(1));
+    QCOMPARE(second.frames.size(), 1);
+    QCOMPARE(second.frames[0].payload, QByteArray("third"));
+    QVERIFY(second.errors.isEmpty());
+}
+
+void ProtocolCodecTest::garbageResynchronizationKeepsPrefix()
+{
+    ProtocolCodec codec;
+    const auto first = codec.parseIncoming(QByteArray::fromHex("deadbeef007e"));
+    QCOMPARE(first.bytesDiscarded, qsizetype(5));
+    QCOMPARE(first.bufferAfter, qsizetype(1));
+    QCOMPARE(first.errors.size(), 1);
+    QCOMPARE(first.errors[0].code, ParseErrorCode::GarbageDiscarded);
+    const auto wire = mediaFrame("after garbage");
+    const auto second = codec.parseIncoming(wire.sliced(1));
+    QCOMPARE(second.frames.size(), 1);
+    QCOMPARE(second.frames[0].payload, QByteArray("after garbage"));
+    QVERIFY(second.errors.isEmpty());
+}
+
+void ProtocolCodecTest::maximumGarbageRetentionIsOneByte()
+{
+    ProtocolCodec codec;
+    QByteArray garbage(ProtocolCodec::MaxPayloadSize + 4096, char(0x55));
+    garbage.append(char(0x7e));
+    const auto result = codec.parseIncoming(garbage);
+    QCOMPARE(result.bytesDiscarded, garbage.size() - 1);
+    QCOMPARE(result.bufferAfter, qsizetype(1));
+    const auto next = codec.parseIncoming(QByteArray::fromHex("01"));
+    QCOMPARE(next.bytesDiscarded, qsizetype(2));
+    QCOMPARE(next.bufferAfter, qsizetype(0));
+}
+
+void ProtocolCodecTest::maximumPayloadBoundaryAndInvalidLengthRecovery()
+{
+    ProtocolCodec codec;
+    const QByteArray payload(ProtocolCodec::MaxPayloadSize, char(0x52));
+    const auto maximum = mediaFrame(payload);
+    const auto partial = codec.parseIncoming(maximum.first(maximum.size() - 3));
+    QVERIFY(partial.errors.isEmpty());
+    QCOMPARE(partial.bufferAfter, qsizetype(ProtocolCodec::MediaHeaderSize + ProtocolCodec::MaxPayloadSize - 1));
+    const auto complete = codec.parseIncoming(maximum.last(3));
+    QCOMPARE(complete.frames.size(), 1);
+    QCOMPARE(complete.frames.front().payload, payload);
+    QVERIFY(complete.errors.isEmpty());
+    codec.clear();
+    QByteArray oversized(16, char(0));
+    qToLittleEndian(ProtocolCodec::HostHeader, oversized.data());
+    qToLittleEndian(quint16(FrameType::Audio), oversized.data() + 2);
+    qToLittleEndian(quint32(ProtocolCodec::MaxPayloadSize + 1), oversized.data() + 4);
+    oversized.append(char(0x7e));
+    const auto rejected = codec.parseIncoming(oversized);
+    QVERIFY(!rejected.errors.isEmpty());
+    QCOMPARE(rejected.errors.front().code, ParseErrorCode::InvalidLength);
+    QCOMPARE(rejected.bufferAfter, qsizetype(1));
+    const auto valid = mediaFrame("recovered");
+    const auto recovered = codec.parseIncoming(valid.sliced(1));
+    QCOMPARE(recovered.frames.size(), 1);
+    QCOMPARE(recovered.frames.front().payload, QByteArray("recovered"));
+}
+
+void ProtocolCodecTest::clearDropsRetainedPrefix()
+{
+    ProtocolCodec codec;
+    const auto first = codec.parseIncoming(QByteArray::fromHex("7e"));
+    QCOMPARE(first.bufferAfter, qsizetype(1));
+    codec.clear();
+    const auto valid = codec.parseIncoming(mediaFrame("new connection"));
+    QCOMPARE(valid.frames.size(), 1);
+    QVERIFY(valid.errors.isEmpty());
+    QCOMPARE(valid.frames.front().payload, QByteArray("new connection"));
 }
 
 QTEST_MAIN(ProtocolCodecTest)

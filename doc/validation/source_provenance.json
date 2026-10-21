@@ -1,0 +1,1878 @@
+{
+  "schema_version": 1,
+  "base_commit": "aa281b34b041e098b8ccb9dd56afca5587b0dd91",
+  "host_revision": "StreamFix-R2-20261021",
+  "bit_sha256": "e0a4298b8958d2cff9ca819daba96b48c9a254b7c20c606b9b60e055383cb22f",
+  "host_executable_sha256": "028897a6e262f97777433173c869993a7fe074833f62b619a8e17ec5eedbb47e",
+  "source_note": "Copied source hashes identify the frozen implementation before portable build/test packaging changes. No audio DSP production source was changed.",
+  "files": [
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "821c02aeadad1a2721fd97afcec820039c5c8cfe7dce6900919db9348b22ba59"
+    },
+    {
+      "path": "doc/PL_DENOISE_MODE.md",
+      "sha256": "48bfd44abbda6181319e91ce43985ab37fe45a7c1dc8462ce0ed3d9576f5b374"
+    },
+    {
+      "path": "doc/PL_FIXED_WIENER_MODE.md",
+      "sha256": "91f9fbe813cc73366538d50f7143c699d51ce6271eacb1f9bef384b06302f153"
+    },
+    {
+      "path": "doc/PL_FULL_DEMO_CANDIDATE.md",
+      "sha256": "6224ae7ce4c812925c714d953723e8f2a76021f3859fb38ab52c46a72fc79832"
+    },
+    {
+      "path": "doc/QtDesignDescription.md",
+      "sha256": "76fea5968bb212c17a96dd721c0ebfcd52147fa93592abb4234af8dd80e04b86"
+    },
+    {
+      "path": "doc/Readme.md",
+      "sha256": "251b7d42d25eb84a866d7b2e8a68d63facbd3b0b79ca36791a987ac2672c4053"
+    },
+    {
+      "path": "doc/neural-srp-peak-v1-training-report.json",
+      "sha256": "f9f039f5e0b884b78c12337de365947d8880f6093c1e8c2f043ff3f55b13c800"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-13-audio-recording-and-debug-preview.md",
+      "sha256": "99e6f8d5e934a8ad76344da498e9d842f6df9dea3fac5afc0c43aba2f5f39604"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-21-video-tail-channel-gain.md",
+      "sha256": "cb2670dd4028ac93219bcfd3d6a2ac2e523ca496d2af202ec76e328225a4eda1"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-configurable-live-heatmap-grid.md",
+      "sha256": "734fcdf967ba96156977695fe006f1a0d687b2a6df44ac067d6adf649e0c6828"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-cpu-srp-phat-heatmap-optimization.md",
+      "sha256": "a25385e6023eed3851a13e6c90c6e9546a939596e0e8c7fc013b68fc2768407c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-offline-audio-analysis-localization.md",
+      "sha256": "632f87bd5d3b9d7497a12714313035f5f89698f2fda4aec2a0000a0f88bdddbb"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-realtime-source-localization-video-calibration.md",
+      "sha256": "551fcfa49f6cd5141a66339153fe52ec13f4f3a8d19ee822bb39390c325d45ee"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-23-refined-four-point-calibration-profile.md",
+      "sha256": "b1b05490d45db9cfa39b9729b8d4e2e450d974b7b444122e1ab4c32b0f895cc3"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-dashboard-ui-fixes.md",
+      "sha256": "e1391e72ca7c4fb19af29d02b5241836b6fa5147b907499bb26fb7f505ce60e0"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-independent-presentation-window.md",
+      "sha256": "7ccf7ce3ad4e6a5f7f6b08b6837d279b3fb4d4e8244881bf2a678e07cd2d2f8a"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-26-presentation-fullscreen-dark-theme.md",
+      "sha256": "7407400caada1d3fdb3f570541e5c3f5911a75c3a15a39c79e6d27f44dd8920b"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-continuous-noise-direction.md",
+      "sha256": "6ba8c2f1777e8b57e65e14cdb446dda5f7b593e577de158fd7e1feea366d7734"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-28-noise-reduction-page.md",
+      "sha256": "31e41e05e92e67f34d71d4481e80528382487e34706908c2b48b011fd79606f5"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-contextual-presentation-routing.md",
+      "sha256": "08821122a34f4493bf8db138cb9846ad6568e83208911949d712158012d61708"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-horizontal-processing-node-chain.md",
+      "sha256": "ceb13eefb4bbaac099b9a8d8c4cd1a5b5db9c9353542a4aedb93eec2c5bc36ec"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-noise-marker-angular-projection-fix.md",
+      "sha256": "a2b9a4445fdd87c1890c7ad151df334ddd55953208ab5eb9f2b7f6894dc2656a"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-noise-reduction-pipeline.md",
+      "sha256": "8a6bf4fa62c54c8a5080bfe2decf1913cb3fe2bd4b529ea16582482e516b3b01"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-29-noise-reduction-processing-options.md",
+      "sha256": "68e23aaea5c85b49d724f1e4a22738be9098bc0731de96cf86e844c53cbb7c2e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-live-localization-tabs-and-heatmap-focus.md",
+      "sha256": "b8b3f99ddd24f8606eca6e43bb1d6f99f21fd00ca63f7db10c3a7846d993496e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-neural-srp-peak-refinement.md",
+      "sha256": "524655b66db51483659bf81495ceba7817c9d6d7ce2a15cfe39b1aed5469f071"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-single-source-super-resolution-spatial-localization.md",
+      "sha256": "772540c7e9899f7d42dbfdfa3628509c3e480083b71760a5039c4911475bd6d4"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-trusted-heatmap-and-neural-halo-fix.md",
+      "sha256": "b7ceea97d6547e1892bffbcaf7283e1520e3c3fde394bc18d31f7d1f4bfff916"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-07-31-trusted-source-threshold-fix.md",
+      "sha256": "93fabcf48b60382b3e37dbfcdcec0fbd06893990a62a9f7607270ad4630f42bd"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-02-noise-monitor-buffer-and-multisource-recording.md",
+      "sha256": "c4b2ff35129ee4e998e9168ae8c7a37ad289259fe24bb7a75a19341feee450d6"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-02-raw-48-channel-software-beamforming.md",
+      "sha256": "55f9d871eec41305898a36b98d9fb760a6490aad093a48a2f6bcf20e96ffddec"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-13-audio-recording-and-debug-preview-design.md",
+      "sha256": "694bd26508f77d613a5259765fe3d89b3c1f55174d483842c6cf48951e6c4291"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-20-video-tail-channel-gain-design.md",
+      "sha256": "75d2985977ba1a97c925e94004e4fd94db7b1e74eb02b4a553292044fd8e7418"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-configurable-live-heatmap-grid-design.md",
+      "sha256": "436ad59421486236de90afa7722cf42974d0c7b9d05ac4e416b120275d9d9584"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-cpu-srp-phat-heatmap-optimization-design.md",
+      "sha256": "36c00cdf4e9bf74af5e4cfeb302853d7a4032bfb93e31afd3d8c60c1f438ae70"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-offline-audio-analysis-localization-design.md",
+      "sha256": "af1a9034f676f85a2c86816c366a7734744cbf03800e44a355906b9a17231ebd"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-realtime-source-localization-video-calibration-design.md",
+      "sha256": "386fe2a78bc6c6e093f69214b43931d4bf457ef2a238815c68cf49c9d3d07b97"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-23-refined-four-point-calibration-profile-design.md",
+      "sha256": "08d803bae913bc994a2fc13f5f76ac63390949745b8f255c2aee9f006d160ebb"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-26-dashboard-ui-fixes-design.md",
+      "sha256": "4566c44e391af4580f17cb8f216fc0a0c588d51b3185cfe944b4568618674ff5"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-26-independent-presentation-window-design.md",
+      "sha256": "b5ea289514abfd529aa768d755321ad4d9a3e3eb1747c9ade7d464d7cc1fe484"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-26-presentation-fullscreen-dark-theme-design.md",
+      "sha256": "531dd80bb0739165935af6661f7e567db834749ecd43a0a707bf7d912a111ed0"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-28-continuous-noise-direction-design.md",
+      "sha256": "d7241c1391c139e4d37c1b0415f689f74f74d0eb81f7b735d561dd58c2af323f"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-28-noise-reduction-page-design.md",
+      "sha256": "63025738bf8ab5976692e49c3aa88fcbb1abe4be7a4cd34066231887336f534f"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-contextual-presentation-routing-design.md",
+      "sha256": "ba25fcc05879e07f8f93d2c00b5dc2f0a2df1d664f16d1e2a2a4d20dc049dcb4"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-horizontal-processing-node-chain-design.md",
+      "sha256": "9c45484d109be717b0c144878c3b05c8b20933f85a60942f9dcfdd35caa96d50"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-noise-marker-angular-projection-fix-design.md",
+      "sha256": "78bb97a06ca7260b58469f3f12af050d7cc650230e93fe56b9fb3e885aea8897"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-noise-reduction-pipeline-design.md",
+      "sha256": "dd7d62b6d0325dd81d2416afcc12d8f073136b4048ac02836cab0fb7324587d4"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-29-noise-reduction-processing-options-design.md",
+      "sha256": "39a3d6d150a7581c95895ccab3a4a10a0dfdcb48789f4ab01ee23ba07727360a"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-live-localization-tabs-and-heatmap-focus-design.md",
+      "sha256": "268e3b83e7fc80cab3c9b94b82a64336256ec5fbbd03279de7046994bdee35fd"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-neural-srp-peak-refinement-design.md",
+      "sha256": "8e94f8dfe53a1365cca22e90fc92d1f4cfde9274b30be5778644fdb23c828f60"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-single-source-super-resolution-spatial-localization-design.md",
+      "sha256": "f7757c0fe7ba17095fa1511137744cbcaeff1f85f12c8934243444418d0650e5"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-trusted-heatmap-and-neural-halo-fix-design.md",
+      "sha256": "79949659d219457ce1dd8a3ab2e5d3d6b81bfca2d66a393d329c419fae158d1b"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-07-31-trusted-source-threshold-fix-design.md",
+      "sha256": "c8a623fd075c81379622890449e8594be2626f0a93dfef1732548a0b6d379a9b"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-02-noise-monitor-buffer-and-multisource-recording-design.md",
+      "sha256": "220c60a33769596e4edf9c0d0c9fa4489f4f9c485b754fe4caa1cb450c9b687c"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-02-raw-48-channel-software-beamforming-design.md",
+      "sha256": "d04def5e183e1193e8e443adf3e1705a045f461e3b24d4b5c017ed255ac11822"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/constrs_1/new/top.xdc",
+      "sha256": "2b28323d427566ae0ff1b535fb07e1ab166f1b1036011fb5321b087e5d30301c"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/design_1_ooc.xdc",
+      "sha256": "192d2825e4b523f09624fb2f526e9384dbb047b2797442d558f3d47fea0cacd6"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0/design_1_auto_cc_0_clocks.xdc",
+      "sha256": "b8679a2a9d760119b6d56d5607554d9c93cc29f7dc8126969750c8b1921730f0"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0/design_1_auto_cc_0_ooc.xdc",
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0_1/design_1_auto_cc_0_clocks.xdc",
+      "sha256": "d064d8a5a835470a2df8211a37bf8e1e1f6f4271fa3b7574b9175534c7980a9b"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_0_1/design_1_auto_cc_0_ooc.xdc",
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1/design_1_auto_cc_1_clocks.xdc",
+      "sha256": "b8e316e490910a96e858e415d3af6a705d936127b051891eac65682e4317d611"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1/design_1_auto_cc_1_ooc.xdc",
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1_1/design_1_auto_cc_1_clocks.xdc",
+      "sha256": "96c8389d89e41fdf0833477f1f0fe1157dde62660488cbde4bbc169a4d91f32b"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_1_1/design_1_auto_cc_1_ooc.xdc",
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2/design_1_auto_cc_2_clocks.xdc",
+      "sha256": "86d3277b2f4edf06a532c64c9dd15fdb093eb8c08ea38a51743e4ecb71b55792"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2/design_1_auto_cc_2_ooc.xdc",
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2_1/design_1_auto_cc_2_clocks.xdc",
+      "sha256": "86d3576e8cd4a9f650fac60be18e3e99d7ddf8a268b252419e5a217acb83b34d"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_cc_2_1/design_1_auto_cc_2_ooc.xdc",
+      "sha256": "0af56dbdd7ec2da37b4935a9ebdaff1000ef5d886a357da271d72041650faf42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0/design_1_auto_ds_0_clocks.xdc",
+      "sha256": "5a8de9407ccceb984c59ca15beb83dda9528fa2139ec87b2667c5ba25bce70ce"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0/design_1_auto_ds_0_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0_1/design_1_auto_ds_0_clocks.xdc",
+      "sha256": "5a8de9407ccceb984c59ca15beb83dda9528fa2139ec87b2667c5ba25bce70ce"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_0_1/design_1_auto_ds_0_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1/design_1_auto_ds_1_clocks.xdc",
+      "sha256": "898fcef2f07eb410b1a0f8b6694fd1c8a0b8e5f92356a6f8753321ae1f446c42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1/design_1_auto_ds_1_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1_1/design_1_auto_ds_1_clocks.xdc",
+      "sha256": "898fcef2f07eb410b1a0f8b6694fd1c8a0b8e5f92356a6f8753321ae1f446c42"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_1_1/design_1_auto_ds_1_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2/design_1_auto_ds_2_clocks.xdc",
+      "sha256": "bc2f93466eea7f7716f6ba2c08d65bcfc8badc526fe92032f622c0c89b836480"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2/design_1_auto_ds_2_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2_1/design_1_auto_ds_2_clocks.xdc",
+      "sha256": "bc2f93466eea7f7716f6ba2c08d65bcfc8badc526fe92032f622c0c89b836480"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_2_1/design_1_auto_ds_2_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3/design_1_auto_ds_3_clocks.xdc",
+      "sha256": "9fd7f55da1f9c232d8bf79917932d86115d7ff3df43d1f20362903f4c2a576eb"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3/design_1_auto_ds_3_ooc.xdc",
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3_1/design_1_auto_ds_3_clocks.xdc",
+      "sha256": "9fd7f55da1f9c232d8bf79917932d86115d7ff3df43d1f20362903f4c2a576eb"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_3_1/design_1_auto_ds_3_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4/design_1_auto_ds_4_clocks.xdc",
+      "sha256": "2a5372b4e7099958c3e639cb9b413f5dc94b554f3a686e31337ed1665ba42816"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4/design_1_auto_ds_4_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4_1/design_1_auto_ds_4_clocks.xdc",
+      "sha256": "2a5372b4e7099958c3e639cb9b413f5dc94b554f3a686e31337ed1665ba42816"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_4_1/design_1_auto_ds_4_ooc.xdc",
+      "sha256": "3dcfb8e1d1fdb0a55958d738f4ef4c1203b15689fa16d8c3a6da29d122d7ed97"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_5/design_1_auto_ds_5_clocks.xdc",
+      "sha256": "5fcce408600a6470f92fe51d9152eb22ee6f4896d8ea45ccef74d5a380004e76"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_ds_5/design_1_auto_ds_5_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_0/design_1_auto_pc_0_ooc.xdc",
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_0_1/design_1_auto_pc_0_ooc.xdc",
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_1/design_1_auto_pc_1_ooc.xdc",
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_2/design_1_auto_pc_2_ooc.xdc",
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_3/design_1_auto_pc_3_ooc.xdc",
+      "sha256": "a656c517beb2fbe5e80a14418e71db962d01b961b138a025b70aec9739353e9a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_4/design_1_auto_pc_4_ooc.xdc",
+      "sha256": "548174ae3341f6b85a45aac6e2df745549522977deb2ea53a0bad3eac3e9ee17"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_pc_5/design_1_auto_pc_5_ooc.xdc",
+      "sha256": "dc2caa49c4c29148689907a978fb9274acbff535b5849927a4530e2d813971a0"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_us_0/design_1_auto_us_0_clocks.xdc",
+      "sha256": "c8fd8d09b65265a034bdc52a432f3b3ab04ed93c75be4265f1ae49f55cf306c4"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_auto_us_0/design_1_auto_us_0_ooc.xdc",
+      "sha256": "e4c2b2869e69e36cfb140133c725271581c80570729f68ae69d3be83f921de78"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_0_0/design_1_axi_dma_0_0.xdc",
+      "sha256": "247df5cd0d4aa3c7ef97ffc5bfcaeb2aae18a1f8649068a0e3355b33ae56d336"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_0_0/design_1_axi_dma_0_0_clocks.xdc",
+      "sha256": "f66c61dedfbd528bf7d5a2a35c60d48b5c072ad1f015c255e5fb932d63c5b51a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_1_0/design_1_axi_dma_1_0.xdc",
+      "sha256": "c60a17475850fef4f0e32651c67df67e31405e6681633b13738e73cdc7668489"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_dma_1_0/design_1_axi_dma_1_0_clocks.xdc",
+      "sha256": "c5348ab31febdb5147ba72c011edbd5f784fc5cc92ad796f117c7bbaee05c95a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_pcie_0_0/design_1_axi_pcie_0_0/source/axi_pcie_X0Y0.xdc",
+      "sha256": "08ec63deec9b843af4aa37e6a90660701e8d380b4e016e6a694e033e71b35e02"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_pcie_0_0/synth/design_1_axi_pcie_0_0_late.xdc",
+      "sha256": "b1417398b9e57b10506eed6d2e2f28b447fd18320a52df888a299adbbec48baf"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_axi_pcie_0_0/synth/design_1_axi_pcie_0_0_ooc.xdc",
+      "sha256": "9bb48e6a2d90c253ba3ba7479e93fb05ad1faeb81c88afb663143f6397fab6ce"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_blk_mem_gen_0_0/design_1_blk_mem_gen_0_0_ooc.xdc",
+      "sha256": "5830a19f4e6425965985f9abd279d17183291269166022f2f20ec8144a83160e"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_clk_wiz_0_0/design_1_clk_wiz_0_0.xdc",
+      "sha256": "5e819a390b2c3040e12395eff60ad723c13466f156d6b2dc896d0ad94bb9eb9e"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_clk_wiz_0_0/design_1_clk_wiz_0_0_board.xdc",
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_clk_wiz_0_0/design_1_clk_wiz_0_0_ooc.xdc",
+      "sha256": "14db101f986db810a80a700c319fb6c480ca7c6afc96b3a553d3eefbf4a7f81a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_0_0/design_1_proc_sys_reset_0_0.xdc",
+      "sha256": "bd4702fc996675aa06ed2570050d1002eb2af23c95d25778dbfddc5aeba55dfc"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_0_0/design_1_proc_sys_reset_0_0_board.xdc",
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_1_0/design_1_proc_sys_reset_1_0.xdc",
+      "sha256": "a3ca2cf53d7b140300d50dba4dd1c977720859aab3c9ca3a5369fa290d0bdf6b"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_1_0/design_1_proc_sys_reset_1_0_board.xdc",
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_1_0/design_1_proc_sys_reset_1_0_ooc.xdc",
+      "sha256": "a5d374fa3ea45aef52e0eb06ff7fbae08726eb61853cd8f6944b59cd9e5017a5"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_2_0/design_1_proc_sys_reset_2_0.xdc",
+      "sha256": "095ae4ce36f98c107ae04a8c3a88ce59d9592bf8f506045fd8ee9b1ecd0ede4a"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_2_0/design_1_proc_sys_reset_2_0_board.xdc",
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_proc_sys_reset_2_0/design_1_proc_sys_reset_2_0_ooc.xdc",
+      "sha256": "a5d374fa3ea45aef52e0eb06ff7fbae08726eb61853cd8f6944b59cd9e5017a5"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_processing_system7_0_0/design_1_processing_system7_0_0.xdc",
+      "sha256": "f52875aeb8001797381347cc808a4445474ac593b7af3b49f0b88fa9e1263669"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_util_ds_buf_0_0/design_1_util_ds_buf_0_0_board.xdc",
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/bd/design_1/ip/design_1_util_ds_buf_0_0/design_1_util_ds_buf_0_0_ooc.xdc",
+      "sha256": "1f751361dabdd47984139e4735b2f6f79bfad7ae3aec7f2a1624dc0ab941e0ab"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_19.1_suc_test22/project_1.srcs/sources_1/new/fpga_self_reset.v",
+      "sha256": "b6d4d407ea3ea1db49b84121f5c8b3533926df6c3c4d94c098ea32f9b467e780"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_19.1_suc_test22/project_1.srcs/sources_1/new/top.v",
+      "sha256": "a24efc48b1de91825d29e69d2c4648eefa7fe09d81ae7da3da84a1b9d9a7f51f"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_radar/ICS43432_48CH_SERIAL/ICS43432_48CH_SERIAL.srcs/sources_1/new/ICS43432_48CH_SERIAL.v",
+      "sha256": "8daf8d991594af4dc276ab8ea6f40c2ae5535f296257955bd70ad42a06ec4c00"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/imports/project_mic_0611/project_radar/Mic_Frame_Packer/Mic_Frame_Packer.srcs/sources_1/new/Mic_Frame_Packer.v",
+      "sha256": "308b57a470740e239c5a9932a90aa3cc6eba830bcb4bba4d8cae33e1690d7db0"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/ip/clk_pl_mmcm/clk_pl_mmcm.xdc",
+      "sha256": "b2e335f89e606cf2d7cd808011541fdd0ed77b3d8d0b4d58879e926c5032a151"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/ip/clk_pl_mmcm/clk_pl_mmcm_board.xdc",
+      "sha256": "7ad209b673e69e5dc7667668407b509d8ac03974abdb527313a511db77cf15bd"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/ip/clk_pl_mmcm/clk_pl_mmcm_ooc.xdc",
+      "sha256": "201f8673a2f459a3aaf21b168c23b35453b64e785a7de39daaad4a7e7dcdd0d3"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/Audio4ch_To_MicStream_48ch.v",
+      "sha256": "753305424d7b0b12824242afb096af48671a8519847e5dab49b296788c706ab9"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/bram_ctrl8_regs.v",
+      "sha256": "74cbef9757aee8f4ef57c85a4ce583daeef7b22c12f52a38047fb9bd02277af6"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/bram_ctrl_reader.v",
+      "sha256": "56843277fec24e9afe38b742352213ea09dae799bcea860c35c764b5d4e41840"
+    },
+    {
+      "path": "firmware/board_config/project_1.srcs/sources_1/new/top.v",
+      "sha256": "3001d3d1cb9f3665515f8fb14471078e900b47ee2278068748478deed97828cc"
+    },
+    {
+      "path": "firmware/hls/filters/build_hls.tcl",
+      "sha256": "ce0401616aaa9f88745c8ef23a088d788ec17714fa267e5cb2a959d9b9597328"
+    },
+    {
+      "path": "firmware/hls/filters/cosim_export_hls.tcl",
+      "sha256": "37e191c797530bea6117f20343708d96ba7e03dc043cd80e652d082f459cf163"
+    },
+    {
+      "path": "firmware/hls/filters/post_sample64.cpp",
+      "sha256": "d29b5e9c6cdfaecc75684a5fb866f13b083d7fce06adf49f5ced25eb7b8f96cb"
+    },
+    {
+      "path": "firmware/hls/filters/post_sample64.h",
+      "sha256": "7b9a08df671bffda68af7999a37ed48a6362c3a79d0e18acbd16c58832d33ff7"
+    },
+    {
+      "path": "firmware/hls/filters/post_sample64_tb.cpp",
+      "sha256": "bfe64286f49472bd6561f762f28ad7fb7035ba74feafcc6be9e0e1908a490db5"
+    },
+    {
+      "path": "firmware/hls/logmmse/hann2048_double.h",
+      "sha256": "da25eace65677e03d3269af995df40a09a3ba47a460a68de98852c1da24ff636"
+    },
+    {
+      "path": "firmware/hls/logmmse/logmmse_hop.cpp",
+      "sha256": "bd68d1b4bdf809c28dd3cf62191ac28ee230e110150d3fd0bcd610413f835846"
+    },
+    {
+      "path": "firmware/hls/logmmse/logmmse_scalar_template.h",
+      "sha256": "a5185643f07fd51e35506878573711dc5e06ecdd57942770cbe788e119507288"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/AESL_FPSim_pkg.v",
+      "sha256": "8cf6656c7bcd7301b93a1b97801ecaae1f3544f67e0a6e7716f00b014f46a4ae"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64.v",
+      "sha256": "943f1d54158da209874e5029ddbb81c7a2367f3e8d7299e7b7052358a0471f49"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dadddsub_5_full_dsp_64_ip.tcl",
+      "sha256": "ec57a93ffacdd146a152ec8219849afa1311a8ded885ee42c58add6ca59df74d"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dcmp_0_no_dsp_64_ip.tcl",
+      "sha256": "037614f9eebb3efc008900be63a75bd33da99fe0432205094c874a5a1c9dc690"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_ddiv_29_no_dsp_64_ip.tcl",
+      "sha256": "8c76632f3d8505064aa731661b37f46371278d470fd752675e1f6704d3c1fe14"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dmul_4_max_dsp_64_ip.tcl",
+      "sha256": "28c3078cf159eb4c9ce6fc5ad5fe0c481fcf95a930a6a0762ee5b83eb3a35752"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_dsqrt_28_no_dsp_64_ip.tcl",
+      "sha256": "716f17334f5e3bc833cda5edd177120238d588f0a8f4391564220b3be5ba0c76"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_fpext_0_no_dsp_32_ip.tcl",
+      "sha256": "c0bdf275019623832ff3adc1138867b5664c4f8380e212b08f69a3b2d02cc1e1"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ap_fptrunc_0_no_dsp_64_ip.tcl",
+      "sha256": "b421627d9917b14e400281ba5b65d200b5990152ddfacaf266440af4f8e706d3"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dadddsub_64ns_64ns_64_7_full_dsp_1.v",
+      "sha256": "7cd8f01f7cf21f0a556b09991312cd0e8ef5e83aa22cbff54875394600a37960"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dcmp_64ns_64ns_1_2_no_dsp_1.v",
+      "sha256": "9aba4042ee465b4dff4981295f563bdb7df6a4510ea944970c071e65e8988aeb"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_ddiv_64ns_64ns_64_31_no_dsp_1.v",
+      "sha256": "8980e096816520456188ed91243c97fc2ba2b2083a2acc253e5e5b9d75222db1"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dmul_64ns_64ns_64_6_max_dsp_1.v",
+      "sha256": "f32cd595d3c2f7b91f8f6ee1579b37d33e48fa5c9ce651a11a4ad45d5d609acd"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_dsqrt_64ns_64ns_64_30_no_dsp_1.v",
+      "sha256": "7188fb343474ed5f69948b9097daa023ea71dff9b5a9172dda5c46a3f6234d2d"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_fpext_32ns_64_2_no_dsp_1.v",
+      "sha256": "dab584528ab01def8126db7bdb00d0d574a4f676e1761a77bd283106b27b6a3f"
+    },
+    {
+      "path": "firmware/hls_rtl/agc/denoise_agc64_fptrunc_64ns_32_2_no_dsp_1.v",
+      "sha256": "e49a9efcfd205ae71ca3d1ac61c44e66df6c5dde336e8f511726e0da6bbe1b15"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/AESL_FPSim_pkg.v",
+      "sha256": "8cf6656c7bcd7301b93a1b97801ecaae1f3544f67e0a6e7716f00b014f46a4ae"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64.v",
+      "sha256": "88d17a67ec4c3bd2b927f77c4c9782613f35828f7564d94146e7aafc192482c9"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dadd_5_full_dsp_64_ip.tcl",
+      "sha256": "0431cccaa7a91e061028dd5666cdba01c54fe400c9df8d67d74aafb3402938e1"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dadddsub_5_full_dsp_64_ip.tcl",
+      "sha256": "14b31dc7ed341412b430cf280b10f06a6fd5a48a633406923b87bc29ae87645e"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dcmp_0_no_dsp_64_ip.tcl",
+      "sha256": "9b5acd68b2b5ace1c250710820bf3cd4319ed74381cb84306cd36d00dd767be4"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dmul_4_max_dsp_64_ip.tcl",
+      "sha256": "690fa3ec0e4fa0ee2c5565c0d7ab290bef43abc273bf2d774106ae3226d66154"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_dsub_5_full_dsp_64_ip.tcl",
+      "sha256": "e754dbec8d38e6ecb677ff9458a140625634649082cafd18eedf7679f3b54124"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_fpext_0_no_dsp_32_ip.tcl",
+      "sha256": "b18cd736dc54e04ef27ddd9696ec9ce39cd941fce2a63a2bf4c3a9c01615e462"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_ap_fptrunc_0_no_dsp_64_ip.tcl",
+      "sha256": "cbe863ef117cd0c1de851083b0669fb6836f28a013985be235410d8a15eb1161"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dadd_64ns_64ns_64_7_full_dsp_1.v",
+      "sha256": "e5d1d8f6e4dc89ffa7f21398c45ba26b02a88468587f1271e83bd4b100996a5e"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dadddsub_64ns_64ns_64_7_full_dsp_1.v",
+      "sha256": "268a589fbf154e7f3e2fdbb6650b79b451442c5ef0eb8d8b9f35a2bd2ce6932a"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dcmp_64ns_64ns_1_2_no_dsp_1.v",
+      "sha256": "0bdf877403394f3fe19aa0d0e8664eb072d210355c5ef9b09d658515ae54e58f"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dmul_64ns_64ns_64_6_max_dsp_1.v",
+      "sha256": "749f5beb4c9c49b4a827336c6e84477fae255a78484776947bf0899cfd0a5914"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_dsub_64ns_64ns_64_7_full_dsp_1.v",
+      "sha256": "a5285cc71eec7783dd7c0889b09e9cb5267e4aa5a0aa229dfe8a0358f59daa0d"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_fpext_32ns_64_2_no_dsp_1.v",
+      "sha256": "15454a0c039d83e0ce3c673c405a126010049b5f20599bfe7563328cd52ad48c"
+    },
+    {
+      "path": "firmware/hls_rtl/bandpass/denoise_bandpass64_fptrunc_64ns_32_2_no_dsp_1.v",
+      "sha256": "6b31ec1023c2e9da2b8c0d170049f3463a998bbfa66f4a1dc22af8c208f606b3"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/AESL_FPSim_pkg.v",
+      "sha256": "8cf6656c7bcd7301b93a1b97801ecaae1f3544f67e0a6e7716f00b014f46a4ae"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop.v",
+      "sha256": "754832914ed31d1ae85093fd8d29e28f76d7ba4131f137b96147198fafb41f19"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_HANN.v",
+      "sha256": "9aee0b83131702d25c8ad4473b8569fa39cb7a5121e2dbe55184d933de8f65e2"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_HANN_rom.dat",
+      "sha256": "33b8ccbc24a59a2b7a8816cfe60728ea959d2bf8d31c8c8938c41515288d169a"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dadd_3_full_dsp_64_ip.tcl",
+      "sha256": "a53ba69472933e54ca1ea624d31575991049604f797134e8f0b144da79af153f"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dadddsub_3_full_dsp_64_ip.tcl",
+      "sha256": "f7d38d850ce32701dfd40b3e3abf5b8700e2148be37454ca525086baacbddac6"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dcmp_0_no_dsp_64_ip.tcl",
+      "sha256": "0353afa75488435406cd48cc84b633a629bc823a53aa88f9e461f0968b49e09f"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_ddiv_29_no_dsp_64_ip.tcl",
+      "sha256": "ef9e7d135d8d136d6fec41c82d9433d03bbc49808dc2513e1c8e0af96e8ea9fb"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dexp_11_full_dsp_64_ip.tcl",
+      "sha256": "6a0cc3b84c76558c00c6d5c96d31966abc0ed6a2a9b99f68e77e7e8c1991f99c"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dlog_19_full_dsp_64_ip.tcl",
+      "sha256": "8511783071bee70a4948af594c50019e8bac0db661114fa156ebb29c19f72441"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dmul_3_max_dsp_64_ip.tcl",
+      "sha256": "99c5ba33a0ea6393741e6eb0473612fa62e0a8ca0cc6c77891e97b120956465c"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_dsub_3_full_dsp_64_ip.tcl",
+      "sha256": "4b4143221365718b4cc386a53e9cc0010cac9b0e22a50843bf43b28bc4465bbe"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_fpext_0_no_dsp_32_ip.tcl",
+      "sha256": "0c145c1ab388f155f9056ee4f423ee836047470921e701673c80b6649529e4d1"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_fptrunc_0_no_dsp_64_ip.tcl",
+      "sha256": "3ce93bb7c097a7a1b3bddeed1b5cbad2339e564390c2e6cba43e2851fcfcf8ca"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ap_sitodp_2_no_dsp_32_ip.tcl",
+      "sha256": "0c4c785a499189a73ce07423e02351c1f65c0146911e664ad3ab056774615751"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_apply_lane_0_s.v",
+      "sha256": "9b90503321fceb754b22d5c7096fd07a9ca623fd2abfaf923c64951e781322bf"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_apply_lane_1_s.v",
+      "sha256": "93475f3f9494e2d8c803d865e5751b34aec13aa31eb57d52f9d35fd35217ff03"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_apply_three.v",
+      "sha256": "25a2ee9278908dbbe9ce584da30eaed4029eec6c5bc73d8ecc19aaf97aadd9ae"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dadd_64ns_64ns_64_5_full_dsp_1.v",
+      "sha256": "9b18146ca40fcb83d5a8c563c3902cbad35bc514e4c284baf6080050853d2686"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dadddsub_64ns_64ns_64_5_full_dsp_1.v",
+      "sha256": "2a9ef838cd772af376dd18f193f6cbad0ce645c95d362d3e30c7d119b55a65ee"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dcmp_64ns_64ns_1_2_no_dsp_1.v",
+      "sha256": "26a03f49b6cc7592daabf263f63a797f2ff61995d9e15049ff9979c8c0de9545"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ddiv_64ns_64ns_64_31_no_dsp_1.v",
+      "sha256": "3145b1b4e0cac4828c40e8375fe98db459c2549eed2bd49247f9eadd442bae80"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dexp_64ns_64ns_64_13_full_dsp_1.v",
+      "sha256": "338dd065c957cc56f0fae7fcc8fdf77c987a5ba1772a4cb76f9e76b12b8b82d2"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dlog_64ns_64ns_64_21_full_dsp_1.v",
+      "sha256": "c7e3b9858237b07b933209096e80ec062efe978d28810195a88546c7e6c3e9a7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dmul_64ns_64ns_64_5_max_dsp_1.v",
+      "sha256": "ebff2622b5bfcd83d6b0f1425371ed79668501060b63378a7143b1224589578e"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_dsub_64ns_64ns_64_5_full_dsp_1.v",
+      "sha256": "8fdab0a1a7e74cc5366a1ec163d90dab10424f9a83601fb2c673d29bc9ec48ff"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine.v",
+      "sha256": "b902872269dfcc67552ed6ea2910cdf902b8aa2947d4a4bc1a02e4bb8e6b9c7b"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_Block_split26_proc23.v",
+      "sha256": "367c50cbfbfd150f9e7db31410cde9de04a1be8347a55f2c0abcb9ce8c49c312"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_Block_split2_proc22.v",
+      "sha256": "f27e747af88e5ee035c0856b430a6c32e3c9826e40d3d836090bd95a520fa08e"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_entry28.v",
+      "sha256": "9bd4216a674f7af92d4d3943ce78dd5409b57c3a9e0daf8522102b88e1fad5b7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_engine_entry3.v",
+      "sha256": "432edec58dae974887565bc5bcec23bf94df74096e7dbaa9011d2b6b6a597687"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_output_V.v",
+      "sha256": "490d25befa4a9d473b973a97f6dbca2b16b9dec3c42778936adf95f082179628"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_syn_fft_params_s.v",
+      "sha256": "5a5e97118b9eb2a6532a061cabe40601b4d09cfcf657973df9785f16673b9331"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fft_syn_fft_params_s_core_ip.tcl",
+      "sha256": "103d18c4bb69dd9092f2f781e6f90c34899a7a5ac95498cd2aec04f0ea6e56d7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w1_d2_S.v",
+      "sha256": "e662d947420fe11af8fc8572d951d91f78c883d74123235186c05f51275d573e"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w64_d16_S.v",
+      "sha256": "b96a7c89292674369eb2bcff0e08ae1278c48c2cc47dea7b418b84662dbbcb81"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w8_d2_S.v",
+      "sha256": "537d65b7ed0c9cd9ef1d7968c71c1e07ee3a899be39dd9327de1f9e62f8d83c5"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fifo_w96_d16_A.v",
+      "sha256": "c0a74f8cdbe10178ad7375bf39242b0236beb7ec6fc8d5264941fa7899e48e65"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fpext_32ns_64_2_no_dsp_1.v",
+      "sha256": "c46b8fd4e2f44afc88932405fda0c057907f744ad96fc340ca42b2575446cfc1"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_fptrunc_64ns_32_2_no_dsp_1.v",
+      "sha256": "4a531830137345ceaad31baf046d3a7763e8cad26d51eecdfbb4608d69ea0523"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_load_fft.v",
+      "sha256": "78ea4e91036698699667991c8eccb006c7cff550731e45462347942219cefda4"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_mul_6ns_6ns_12_1_1.v",
+      "sha256": "bc774724924335dcb0fcfab2ff89cbc611f42b53d98847c697c69478250d5678"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_noise_0.v",
+      "sha256": "4f0ef6a7a014479b4e547e71a309fc3f42edd1fe23004b0506e8b97d9ac15e11"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_noise_0_ram.dat",
+      "sha256": "d75c6b473b821f5aa94ed0a3b43cd72c5a39273847d5f1e2c41484d6aee738b6"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_pending.v",
+      "sha256": "517b2834c124d2fb44c25ab5bbfae2605b727d4fb4c6f1f7a4b4def221e4759f"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_pending_ram.dat",
+      "sha256": "603509e945f694ac3e89c39e6a8d9afeb8725b9e949b9d63d5554ab14dfe603d"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_power_0.v",
+      "sha256": "a7395fc05883f3d283024a209adc3eceff6fed73bdfaef24339bb81edcd9fb73"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_reduced_real.v",
+      "sha256": "0d4afd29c244cc5e270ca377dd4dd1f0f90640072136a6ca65a3f0b339ec7ba7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ring.v",
+      "sha256": "f9db0cd9a53f7cc556f0963fcaf1ae6fb6a57827cc6e59dfc9b708c8283b88df"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_ring_ram.dat",
+      "sha256": "2dd1fe0d81ce879dc2e786a07c32bacd38bd4a5325ba3c567a6dcb2b593152ac"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_scalar_bin_0_s.v",
+      "sha256": "114d87ca84dac05c12b0cd272d83605a93b3bcaa1c8387ccf232888a4c9690f0"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_scalar_bin_1_s.v",
+      "sha256": "974246603f77cf577ee26a286f5c9c7c6d0609993be1e581c1029df65965b0c8"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_sitodp_32ns_64_4_no_dsp_1.v",
+      "sha256": "defc0d35b27bcaf821fa99132cb9225801610058c318e504b31adb556420614d"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_engine_Block_split26_proc23_U0.v",
+      "sha256": "622b4200b683c0e4c39ab3ae078e230d4a2b3b00086a504d21d1a5d8a34f2f31"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_engine_Block_split2_proc22_U0.v",
+      "sha256": "72c1293a46d803f7dfa5f5d6f9c4c3fbe1ab0566f69616c30c8c256a7c318042"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_engine_entry28_U0.v",
+      "sha256": "ff256ad8689db1ca8e9293826c8b8fa9b09e8e251168faacdebbe06b9841edf6"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_fft_syn_fft_params_U0.v",
+      "sha256": "25f0f54f29186eb4d3b024f7cac8a9b6fca917fe0ec9eb0a30f00521b987c7a0"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_start_for_unload_fft_U0.v",
+      "sha256": "510d4e63940a5cf864e2caf7d6a9335b659f447787804dfdaecd46a2a7903095"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_tail.v",
+      "sha256": "17b63862dd42b4a58126c120d61e7107e03f3bf1a7276dc8c4b91592b8b506b7"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_tail_ram.dat",
+      "sha256": "a33c07dfc57eb3db3eccf12e49c5cfeca6a577e4af5299c76a44ec4327e45188"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_unload_fft.v",
+      "sha256": "5440f8172aa389d609944042bebf94007d631a21393113f0cd8e83f02553b01b"
+    },
+    {
+      "path": "firmware/hls_rtl/logmmse/logmmse_hop_windowed.v",
+      "sha256": "64c5297e701e19563c9fa716a91db0dc842a54c0a70d92891bbd832f5863d8ef"
+    },
+    {
+      "path": "firmware/netlist_interfaces/agc_stub.v",
+      "sha256": "4b558b20c8a4407534d53472878011abc79b10d30dac0f3ed91a8a44fce09254"
+    },
+    {
+      "path": "firmware/netlist_interfaces/bandpass_stub.v",
+      "sha256": "9358e333f315420f829f0416aa5098f0f036a15187ef544e7cddda10c95b963b"
+    },
+    {
+      "path": "firmware/netlist_interfaces/denoise_fft1024_stub.v",
+      "sha256": "89d50c46a67ca81daf9f232f467bf983a135b2efb2dfe52f378c12e1766a8ad1"
+    },
+    {
+      "path": "firmware/netlist_interfaces/denoise_post_profile_v3.v",
+      "sha256": "e8470cd68a55a9363ce677f6c7198895f3229732dd045ea115a43cf7b62d4adb"
+    },
+    {
+      "path": "firmware/netlist_interfaces/logmmse_stub.v",
+      "sha256": "aef2b8e0b5814a1c055359e7431afe3a1cd5b53a96e1b4bc117db5c4ed5d0a29"
+    },
+    {
+      "path": "firmware/netlist_interfaces/srp_phat_locator_3src_stub.vh",
+      "sha256": "2aab752b6f10462451eec3f353b796c3bc3e84c0dc983e1f41683c93c2821b8d"
+    },
+    {
+      "path": "firmware/profile/canonical_profile.json",
+      "sha256": "be904723869b335a93a8879da993e8004979fdd4972d917f79705e297270d80b"
+    },
+    {
+      "path": "firmware/profile/profile_manifest.json",
+      "sha256": "311bfae53bba379d4e0475a30731b56c3fe69343f819991ea7e2730a6c51fcd6"
+    },
+    {
+      "path": "firmware/rtl/Audio4ch_To_MicStream_48ch.v",
+      "sha256": "753305424d7b0b12824242afb096af48671a8519847e5dab49b296788c706ab9"
+    },
+    {
+      "path": "firmware/rtl/audio_multisource_sideband.v",
+      "sha256": "29285dbd93d98f6e4546ef0b11f537335d938c0e5e2a13e41b40fdfc83357a17"
+    },
+    {
+      "path": "firmware/rtl/audio_spatial_sideband.v",
+      "sha256": "bf81f5139adf0a828477dd892184749cf5c95e50dc8921d38341b77368a7a8b7"
+    },
+    {
+      "path": "firmware/rtl/denoise_audio_sideband.v",
+      "sha256": "03541c2b3e5b9cb66bdf1e9041081b79a1863319aeb2f924a07042140e04f942"
+    },
+    {
+      "path": "firmware/rtl/denoise_audio_sideband_v2.v",
+      "sha256": "2c170ad8d40b01641feb95996305b85a6d2afe20b4b4a0544a8fa6dcfb861b05"
+    },
+    {
+      "path": "firmware/rtl/denoise_audio_sideband_v3.v",
+      "sha256": "253df43979e75ae6bdf6e3058398aaff18c93c1cb13aed6122cf158eb24ae5ed"
+    },
+    {
+      "path": "firmware/rtl/denoise_beam3.v",
+      "sha256": "a43482713c89822bf0608fc633e64117b5bb2b952daf1fe7bd0414a17247c2c4"
+    },
+    {
+      "path": "firmware/rtl/denoise_control_mailbox.v",
+      "sha256": "a06f780234940747f982c29eb0fbb8dcacac24624951a3fa99e6be5eff05d68d"
+    },
+    {
+      "path": "firmware/rtl/denoise_control_mailbox_v2.v",
+      "sha256": "99da3247f4b69ea26f6c9aa4d00d62ed358cd7249808a53328e0e929011e76b2"
+    },
+    {
+      "path": "firmware/rtl/denoise_control_mailbox_v3.v",
+      "sha256": "95ca1f4c7b15eea201880cbf9a8b3d0a0604fba30567a3f89fcc5b98a94ced68"
+    },
+    {
+      "path": "firmware/rtl/denoise_fixed_to_float.v",
+      "sha256": "3b6d8ef2504d798c60cc3503e9fed7f973ea14ad6ff6cde86d65eccf559eda49"
+    },
+    {
+      "path": "firmware/rtl/denoise_post_profile_v3.v",
+      "sha256": "e8470cd68a55a9363ce677f6c7198895f3229732dd045ea115a43cf7b62d4adb"
+    },
+    {
+      "path": "firmware/rtl/denoise_sqrt_hann_q30.mem",
+      "sha256": "10513435cd0726bc4792ce00be717e247c6ae210b779df33a86a93fe6994aa1e"
+    },
+    {
+      "path": "firmware/rtl/localization_capture48.v",
+      "sha256": "64aef2c918f146460906f467058df3665783cfaaa2079c5e9487788f05f0ab29"
+    },
+    {
+      "path": "firmware/rtl/multisource_audio_pipeline.v",
+      "sha256": "cdc874f0b90ac043e20e6de52289ef8277ca2491a2975646b5df45afbf9d6b07"
+    },
+    {
+      "path": "firmware/rtl/robust_channel_capture.v",
+      "sha256": "80063c62bbb631bfab5e068ae827b8a921b90f4512c75762c1413c17e791bba2"
+    },
+    {
+      "path": "firmware/rtl/robust_complex_ratio.v",
+      "sha256": "53d63afe048f355a72ae1940535bbdaebef28c2c46004aa98a81d9d2959c3bdd"
+    },
+    {
+      "path": "firmware/rtl/robust_confidence.v",
+      "sha256": "296eee7ed641caf54f27f23c70712373c720ed7f9e7d3200b283e65a8d102c07"
+    },
+    {
+      "path": "firmware/rtl/robust_direction_vector.v",
+      "sha256": "60cea2cea74cf3779ccf8ec303e1e72abb8774d955f99aa8a19acdbf5980d1e8"
+    },
+    {
+      "path": "firmware/rtl/robust_fraction_divider.v",
+      "sha256": "eb2770647cbaee6f11f8b5a7d7dbf5c96cd70efb5942a186acd33f60cae038ab"
+    },
+    {
+      "path": "firmware/rtl/robust_gcc_builder.v",
+      "sha256": "04bf075e633c581de41fd384ddebd45347ee4849dbcb2b788a11db373697f228"
+    },
+    {
+      "path": "firmware/rtl/robust_integer_divider.v",
+      "sha256": "26eededeb886eee65879b0a79b8c34f0c963f5cd6d950e8a702ea4385f6e9eb2"
+    },
+    {
+      "path": "firmware/rtl/robust_isqrt.v",
+      "sha256": "9de2eae2a82badc49673dec31221b632617b230491010d1ed82131f1c93ad5f8"
+    },
+    {
+      "path": "firmware/rtl/robust_local_peak_refiner.v",
+      "sha256": "546cc82a89fcfbd5a267a40cd240d96918242e2282ccd09f6fde522bce414da5"
+    },
+    {
+      "path": "firmware/rtl/robust_neural_mlp.v",
+      "sha256": "205c969cec489587a13561e5d9ab3f2ab4925fb70268701fa7c0d653ce645391"
+    },
+    {
+      "path": "firmware/rtl/robust_neural_peak.v",
+      "sha256": "7df4354e9667b451b4d9c2c8ad5f72523e8509d9624a617ae9cac7aec7c49c37"
+    },
+    {
+      "path": "firmware/rtl/robust_peak_search.v",
+      "sha256": "ef8bf47d819def7dcc8e46cdd802932de3ebb615cfaf9507ca7efbf1b4215ac6"
+    },
+    {
+      "path": "firmware/rtl/robust_phase_memory.v",
+      "sha256": "ad7ff9e2b01ee0422dbae864e89499d02504836f510c0c17913edbba2d376144"
+    },
+    {
+      "path": "firmware/rtl/robust_sdp_ram.v",
+      "sha256": "2f04c0bb1cec91af20089ac93fe54d3b616529b3b7db2eebfb2a7efe8cfc75ab"
+    },
+    {
+      "path": "firmware/rtl/robust_spatial_peaks.v",
+      "sha256": "712e9e42e2b71ea41923582d125253e37601fe86f405f8b84f6bdf5df54bcc3a"
+    },
+    {
+      "path": "firmware/rtl/robust_spectral_frontend.v",
+      "sha256": "5d8351ad432ddbefe9b4cded3fb87a8b947a533ebdf00058ba32ba14ed692816"
+    },
+    {
+      "path": "firmware/rtl/robust_srp_score.v",
+      "sha256": "1ae2a53be628c279b84cd1b24920986f12d6471d87d5d4e6dfbbd8df6f174600"
+    },
+    {
+      "path": "firmware/rtl/robust_tanh.v",
+      "sha256": "d1b9eb5c6449ee1bc2522842bd90a215b7f5404c4939968273fc8171c8447146"
+    },
+    {
+      "path": "firmware/rtl/rom/band_q15.mem",
+      "sha256": "7860e5439fa5fcca3632347b6c6308223ddbedac802b9c07d423e6047c18ceca"
+    },
+    {
+      "path": "firmware/rtl/rom/channel_xy.mem",
+      "sha256": "503ea6bafb23f9477144d52a03d9d5952296ab5c472dcd6bf2987db372b75b0c"
+    },
+    {
+      "path": "firmware/rtl/rom/coherence_q15.mem",
+      "sha256": "37be5baad926ac0ed3412ad80d41c16e54d94e4cbcba3524078f53c987a7221c"
+    },
+    {
+      "path": "firmware/rtl/rom/cubic4_q18.mem",
+      "sha256": "28eec3b06d95f61315124f3f14d29a77b0935ebbdd72ca5dd5efcba8bf92c06b"
+    },
+    {
+      "path": "firmware/rtl/rom/direction_vectors.mem",
+      "sha256": "1ffa76afe25c1beedcbb7540733af1064d08261e9543e90c61c2e3b4a970c615"
+    },
+    {
+      "path": "firmware/rtl/rom/estimator_channel_xy.mem",
+      "sha256": "cf730991307fa23a53ee3e497e0c2ea3fb5f1f65a37570dfe354d4c201de6431"
+    },
+    {
+      "path": "firmware/rtl/rom/group_recip_q24.mem",
+      "sha256": "d1270df1da6abc4ff1df739897ef2f0d52692d369367febcc7126b5432d43a58"
+    },
+    {
+      "path": "firmware/rtl/rom/groups.mem",
+      "sha256": "91233df25fd94cff55f955aa1a4d6b418150e30b1350958aba80999a4ccbb997"
+    },
+    {
+      "path": "firmware/rtl/rom/hann2048.mem",
+      "sha256": "c0129487148539e0b13ed81bd07c12fa660c034825e64cd64355d49c3f9c9cba"
+    },
+    {
+      "path": "firmware/rtl/rom/log2_mantissa_q12.mem",
+      "sha256": "1ecc0a85adb404d9d67374e64b3c6024e6eb2d0ffb9b261a41e61d161738097f"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_biases_q20.mem",
+      "sha256": "4b74c311f331d089e48b27dae423528d962777ce12401f5f5a9160729baa1055"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_golden_input_q24.mem",
+      "sha256": "6033e37d364970d42ea3e3707ab24563c218a499894bfdce804107baceb581fd"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_golden_output_q16.mem",
+      "sha256": "e806a71866728b12d1cecf1119c00cfd45b3cbccfd9b007c820ee7d654ed5aff"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_inverse_scales_q12.mem",
+      "sha256": "62bb2d1c165bd3e307eefc4a98d0717e42d789cbb91a59f9257ffa7b4fee86d4"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_means_q24.mem",
+      "sha256": "be3cb6d8293e256d3c00b67e8a936b64093fbb4c5879f4e41b2df22848fcb160"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_tanh_q16.mem",
+      "sha256": "701c25d6fc1ef56bf3c5eb04d2ab82e0922b4db8a404fd62be47fa7584c9ed52"
+    },
+    {
+      "path": "firmware/rtl/rom/nn_weights_q20.mem",
+      "sha256": "c5feba158159207648cc7fd0572c522cdeeaaa7f9d37c2ecf0ab1415c48529c0"
+    },
+    {
+      "path": "firmware/rtl/rom/pairs.mem",
+      "sha256": "ea0a46ab37272ac887c4ada690cf5cc1997f99ce32288c1fee0de8caca24a9f3"
+    },
+    {
+      "path": "firmware/rtl/rom/phase_sin_q15.mem",
+      "sha256": "2a28f0d9fb2fb042e836e9f45f5a3e7edec0eeebb818db0bc119f82402ae4ca2"
+    },
+    {
+      "path": "firmware/rtl/rom/ratio_vectors.mem",
+      "sha256": "a9c65fce1af8bb7136d0cac63ef8bbf5934538b8b382b58f7709f28de7696af4"
+    },
+    {
+      "path": "firmware/rtl/rom/root5_q15.mem",
+      "sha256": "53f0ab0980ab46598f99c8cff41275edb2627cb516db256bedac11a2f81f5b7f"
+    },
+    {
+      "path": "firmware/rtl/rom/sin_degree_1_16_q23.mem",
+      "sha256": "351ef3ca231490f1d07592b5ad14d4e04cbaadbdce02856e339d052b6b407d0e"
+    },
+    {
+      "path": "firmware/rtl/rom/sinc8_q18.mem",
+      "sha256": "9046cab3ef8ec5ed8de2a21f49d012bbf0abf3aab1b1da85e69081e4db47e52b"
+    },
+    {
+      "path": "firmware/rtl/rom/sqrt_vectors.mem",
+      "sha256": "3f4a8a4c2c0de3bcd66f2230473e0ab6cf928bb1af0bece4068327b9fb9c4927"
+    },
+    {
+      "path": "firmware/rtl/srp_phat_locator_3src.v",
+      "sha256": "cd66f6b97cff6e9d2f765ba5fc1a24268d55e38f361cab5a5bb2fe7fd711b908"
+    },
+    {
+      "path": "firmware/rtl/wiener1024_fixed.v",
+      "sha256": "c1046f364f8384a3be4c3614c94a30179f66feeedac56e5c47cff2b276f3b9fc"
+    },
+    {
+      "path": "main.cpp",
+      "sha256": "bcb3f3c7fa9359e1206899f1acc6d8299e8ce705bbdc1965c0dff737a683320e"
+    },
+    {
+      "path": "refer/TCP_audio+video.vi",
+      "sha256": "091889f144a1438d01ca31be3704330785b2eb01434a04d38ad4653d130e0a92"
+    },
+    {
+      "path": "refer/音频矩阵通信协议.md",
+      "sha256": "53cefc16ca8521625c3d3a30eb1636b7d193b44f2df76c5a0c2aeb7e3b92f965"
+    },
+    {
+      "path": "scripts/Readme.md",
+      "sha256": "03e1ce380085a71774ab4338193c0b719c477a2ae0bde912018e33c2826bdb9d"
+    },
+    {
+      "path": "scripts/package-release.ps1",
+      "sha256": "e6d16edaa7c76fbd8ac0856b2683902ee34ca5244456fe4025ff90406028f8db"
+    },
+    {
+      "path": "src/analysis/arraygeometry.cpp",
+      "sha256": "e1e8a45f3b04233454510edda3451fec080d81c2600fa4efabf16bd69844f4c7"
+    },
+    {
+      "path": "src/analysis/arraygeometry.h",
+      "sha256": "ed9be184761478bbf6092fd6178ad44e89e2e79a97a1a88d5cdc166e82ec38bd"
+    },
+    {
+      "path": "src/analysis/audioanalysisworker.cpp",
+      "sha256": "6d503bd68b6689ef9317e61bb52a6d10bd23cd5060406c7bc9397bb56d670f0f"
+    },
+    {
+      "path": "src/analysis/audioanalysisworker.h",
+      "sha256": "56475e7cef44cd0342451f3f222b36c82a565708dd1aa7f37f28e024412e6305"
+    },
+    {
+      "path": "src/analysis/calibrationprofile.cpp",
+      "sha256": "cf0567bea96ce6e8373f8a27b15d3250c990b084379bbaf63d0407df6f74201e"
+    },
+    {
+      "path": "src/analysis/calibrationprofile.h",
+      "sha256": "e18def17170108515264cb0a4262b98c997bb6748306bbcf39c887c534b89329"
+    },
+    {
+      "path": "src/analysis/cameraviewcalibrator.cpp",
+      "sha256": "fa6cb8c2bcb1135f8dfe95be0fab98e3c04dc3f766e6df07f2edc0af20ec0b86"
+    },
+    {
+      "path": "src/analysis/cameraviewcalibrator.h",
+      "sha256": "8f8e07cad85973a90d2b3be139722181b0306a419b11817feaa28b3d81e1c61d"
+    },
+    {
+      "path": "src/analysis/directionprojection.cpp",
+      "sha256": "208fe51b50d3d773d87c4be2998c3a5b99b7008aa73afb57789f70b065c697f4"
+    },
+    {
+      "path": "src/analysis/directionprojection.h",
+      "sha256": "5776ff8bf59f6646c9b451e2f3c08256c34f3d5ba5db5693d87dd1e89875ef85"
+    },
+    {
+      "path": "src/analysis/gccphatlocator.cpp",
+      "sha256": "4d5c49fe6c9c597e68b8369dc138903d961d1fb1ea3d88bb27d05b4d44d7d012"
+    },
+    {
+      "path": "src/analysis/gccphatlocator.h",
+      "sha256": "4ff282e23fd51fe2d38036cb05d250e44a6d2f880fe1442da176fe7906952ec1"
+    },
+    {
+      "path": "src/analysis/isoundsourcelocator.h",
+      "sha256": "2b2cf9dff4bc13ce7328cab07114fd8c991ef3782758eabdbde84a6325d6df2f"
+    },
+    {
+      "path": "src/analysis/ispatialresponseprovider.h",
+      "sha256": "00ba05112f7934cd0b982130a61c64ce532690511f8fdd9f3548da02664548ce"
+    },
+    {
+      "path": "src/analysis/livelocalizationworker.cpp",
+      "sha256": "16e5e4f5ac314ef696b4abf631fcfff14dd151df2e9baebe87817b0d0636d7cb"
+    },
+    {
+      "path": "src/analysis/livelocalizationworker.h",
+      "sha256": "ccd01bdf37f0b3d1f1da3bcc5da0b8836c042fd5b5c26a35aca62161f58e94c7"
+    },
+    {
+      "path": "src/analysis/localizationtypes.h",
+      "sha256": "75f3f1019a11d1d1da67d0c8c86106fca9679aeb86c05be06bf2f6474ed6493d"
+    },
+    {
+      "path": "src/analysis/multisourcedirectiontracker.cpp",
+      "sha256": "5503dafe3cfb08b090ea2d0abf8275e24156ea8468dc7d562b7d180218b59aac"
+    },
+    {
+      "path": "src/analysis/multisourcedirectiontracker.h",
+      "sha256": "337608b88e540448f1e2be8fd989b690b7c7d1abb55bca331901a89f3ff24aef"
+    },
+    {
+      "path": "src/analysis/neuralmodeldata.h",
+      "sha256": "a69c198f7f67a9b32d5745bcdf896448065f25c03f464f0b7660c7de8a0b83ec"
+    },
+    {
+      "path": "src/analysis/neuralsrppeakrefiner.cpp",
+      "sha256": "25d2d749ac28e00bf55cf1c3ed9c79a32c8a43a80b863c57cfa217cccead4981"
+    },
+    {
+      "path": "src/analysis/neuralsrppeakrefiner.h",
+      "sha256": "77ead7181143caf81388a92200fe94c1bef6fe70d466982da194ef81cac97394"
+    },
+    {
+      "path": "src/analysis/pllocalizationcontroller.cpp",
+      "sha256": "3a3c70021c760a31baa16de21ff95bf0d0fb9d5f4696be756254684923288889"
+    },
+    {
+      "path": "src/analysis/pllocalizationcontroller.h",
+      "sha256": "5030e986a971bbd44ca299b613c8fce44fe947fde61600de1adaa3c0fa8a803f"
+    },
+    {
+      "path": "src/analysis/plspatialprojector.cpp",
+      "sha256": "b84b2aabb840b18b3a4c6368e0ff576642b0d00e6c0109a9e2c0cf4958036334"
+    },
+    {
+      "path": "src/analysis/plspatialprojector.h",
+      "sha256": "6d0043dee3ea03115d8b0470313de7512831081a2823910ef3713f4dcbdb0604"
+    },
+    {
+      "path": "src/analysis/radix2fft.cpp",
+      "sha256": "3dc54a7cbe71c849413b8094b96772745ce0489c655f7f003e07f3fce1476c00"
+    },
+    {
+      "path": "src/analysis/radix2fft.h",
+      "sha256": "bdd77e75840fd68d8a79394e942860390205f275e06644324f2ac86674d246c2"
+    },
+    {
+      "path": "src/analysis/robustsrpphatscorer.cpp",
+      "sha256": "ceeae4be4c78efb87dd2866d01bf63b23d05cfb1af930c9cac81236542cd5882"
+    },
+    {
+      "path": "src/analysis/robustsrpphatscorer.h",
+      "sha256": "ac8d6cc9ab8506f613448b711f32c2db9f4b2a39e584eb90f3f3c1282b2e1ba8"
+    },
+    {
+      "path": "src/analysis/soundsourcelocatorregistry.cpp",
+      "sha256": "702b72eb81f0a4c01b415954282bc4ec2622930a34f6cd20e62f33b71bde4d51"
+    },
+    {
+      "path": "src/analysis/soundsourcelocatorregistry.h",
+      "sha256": "e214d91ab582ad83963e68600ecda743d157d0837a7acf0a9f33352cc981abbc"
+    },
+    {
+      "path": "src/analysis/wavefilereader.cpp",
+      "sha256": "19b5fc0ae1382fc43219f80dc2ab7ae8c826e4b100a1df8bcc5caf760e85515d"
+    },
+    {
+      "path": "src/analysis/wavefilereader.h",
+      "sha256": "1510c3adfc7a625901a44429506ec65741982da1d9475e2733600ee72593b702"
+    },
+    {
+      "path": "src/app/appsettings.cpp",
+      "sha256": "4bbe1179f5c86acd6cb9fddb28e1dc1b130ac668a5671f4e5d7b631888a4c7ea"
+    },
+    {
+      "path": "src/app/appsettings.h",
+      "sha256": "1b0f938b42e78f51b674737ccacc7498c1bca5fa85d8defaf1d271d426c92f08"
+    },
+    {
+      "path": "src/app/logger.cpp",
+      "sha256": "f4bfdc18c1d3e724a4f12928d58243d999714727b38fbba4bf2c0fb3b3874940"
+    },
+    {
+      "path": "src/app/logger.h",
+      "sha256": "647c642507a2c6f1b62f5711e26dc1f8cd011f4cb7b1b9891bda80e9fa545dbd"
+    },
+    {
+      "path": "src/control/controlvalues.cpp",
+      "sha256": "28c723f163fb7112ff48d3e0d1a48b6acd0a28927df60490b85d55bfff7756c9"
+    },
+    {
+      "path": "src/control/controlvalues.h",
+      "sha256": "937bcd6729a99d3779510cf33b59e5f2a045a69217329e29f2a8c9498b1f50d2"
+    },
+    {
+      "path": "src/control/directioncontrolmapper.cpp",
+      "sha256": "36ee03f07b8d4ac286131a06c405549f3ff8be8574e2a7263ef347f92e71c835"
+    },
+    {
+      "path": "src/control/directioncontrolmapper.h",
+      "sha256": "1465deb1f149409735a709ce3da8cbe7a438164339f113a238bde8af2c14a8e1"
+    },
+    {
+      "path": "src/control/pldenoisesession.cpp",
+      "sha256": "9276d822d6d07c2404c37abe1e6f6393deda2cd1fb88c0849ae11d893d162757"
+    },
+    {
+      "path": "src/control/pldenoisesession.h",
+      "sha256": "d7d348eb3b2ebdebc2bdc7b3422bb552a1a1b1e1e53b643840025d314dc6537a"
+    },
+    {
+      "path": "src/device/deviceclient.cpp",
+      "sha256": "453e0a4b56c2ad5f74d937dd1584f4e0d4d4983daeb3d306c58a13d778e7680f"
+    },
+    {
+      "path": "src/device/deviceclient.h",
+      "sha256": "50ddceec7cdb17a9ac87f8a95f380a878c4ec8044692588392a65c399486b22c"
+    },
+    {
+      "path": "src/device/networkworker.cpp",
+      "sha256": "96a4040c111a4fa8a350378f96bba6ea9148d93c6c54823bd970be5bb1772782"
+    },
+    {
+      "path": "src/device/networkworker.h",
+      "sha256": "d03a3a8958f932f308e2d2401c805fff526a321ef2c2065cd47a63aa41059449"
+    },
+    {
+      "path": "src/diagnostics/alertcoalescer.cpp",
+      "sha256": "1fd9377611a68f69da82007dee9c20f21a6a44b1ee304c388e7ea7f375a6a657"
+    },
+    {
+      "path": "src/diagnostics/alertcoalescer.h",
+      "sha256": "bf23f349ae540f8444f22482623b780e0e652bae6e03d525cdc5a855f39dcc0f"
+    },
+    {
+      "path": "src/diagnostics/diagnosticexporter.cpp",
+      "sha256": "4739a2497a2b31eaff559c56f44467253a0cf396a97ed0c9279f410f28bff707"
+    },
+    {
+      "path": "src/diagnostics/diagnosticexporter.h",
+      "sha256": "6daf7c8c8425727e155c65f08aa28211da7922bed55bd643594e64363946e7dc"
+    },
+    {
+      "path": "src/media/audioframedecoder.cpp",
+      "sha256": "f6485a7f1721258271369dba34f194f673f18d965b552eb9d1ded08a890e6c46"
+    },
+    {
+      "path": "src/media/audioframedecoder.h",
+      "sha256": "fd8c1c53ba65c12ea4f2ee11fd7aa06dda7a0e0fdd6915749ea2460aa0e0e790"
+    },
+    {
+      "path": "src/media/audiolocationsideband.cpp",
+      "sha256": "bdb3762e893c8e601bf70b4bbff8016d6606e15513b6e0ef3cc536753486fdbb"
+    },
+    {
+      "path": "src/media/audiolocationsideband.h",
+      "sha256": "0feb73c8c17b2fdf3edf25117fa865283cea180524236927ab47dc1ab6c06ac7"
+    },
+    {
+      "path": "src/media/audiomonitorbuffer.cpp",
+      "sha256": "329427153ed39587ba0ef99669d4eb8396aecbcb0a65756ec6b712537626bf4f"
+    },
+    {
+      "path": "src/media/audiomonitorbuffer.h",
+      "sha256": "855e9c0b98cba63873835afc18c4f32b4b16d90fe3a91ee947b5770d257d4fc8"
+    },
+    {
+      "path": "src/media/audioprocessor.cpp",
+      "sha256": "a876a650c28735a57a63207a2fc0291206fbb5f67e6a5e329936d5f70896bba5"
+    },
+    {
+      "path": "src/media/audioprocessor.h",
+      "sha256": "df06765342aa3b7e10f924d3681f2b2d6a1eaeb01c32106f9b739b90b5478fa0"
+    },
+    {
+      "path": "src/media/audiorecorder.cpp",
+      "sha256": "5c6d3929e36b3da25eee083e5db0c44c074c94bb128ecef4604eef2bd66259d8"
+    },
+    {
+      "path": "src/media/audiorecorder.h",
+      "sha256": "01197c3021a717bd9443aff4bfe0f7059d34dd21b7a56797523752873d528d2b"
+    },
+    {
+      "path": "src/media/automaticgaincontrol.cpp",
+      "sha256": "52dc7fbe1c7a92a12d3453fcfd3642c49cace6228205d8fff328031a4a9ad9a4"
+    },
+    {
+      "path": "src/media/automaticgaincontrol.h",
+      "sha256": "31d8c8c586e9ae01c58f36c7ce988c0583cc4cf0107860f53e2281e8ea1354a7"
+    },
+    {
+      "path": "src/media/bandpassfilter.cpp",
+      "sha256": "1ab820e4aa028e0071ebddb792b3b892c45c30d5651930bffe262ec9d0d05c47"
+    },
+    {
+      "path": "src/media/bandpassfilter.h",
+      "sha256": "63c123ad429c2b0a76992b421c6cd857dd2bcffd5e9dad203dc4564380567cc9"
+    },
+    {
+      "path": "src/media/channelgainprocessor.cpp",
+      "sha256": "70a2f5ba3aafb79c182b994185de074413ab3f1598c45cb42f1183202adb53a5"
+    },
+    {
+      "path": "src/media/channelgainprocessor.h",
+      "sha256": "6f5a3ea21ba504ec9fee9ead1c79e70b4c92e142bda1130b9fd6a74bc53bde76"
+    },
+    {
+      "path": "src/media/fractionaldelaybeamformer.cpp",
+      "sha256": "a74b43fd07a06af0baf8ab88ad815b011e011ec5b316e18d196101690baa12dd"
+    },
+    {
+      "path": "src/media/fractionaldelaybeamformer.h",
+      "sha256": "199e1a2b0593f12073ecdeb967f2401e9e1d6ce58be2e0b243ba5fc1f62a2684"
+    },
+    {
+      "path": "src/media/gainprofilestore.cpp",
+      "sha256": "9fdc8ec9a6ef2894a2a464ab3f4e473e781cdad11bf1328c0b327e8086a2f456"
+    },
+    {
+      "path": "src/media/gainprofilestore.h",
+      "sha256": "5526646ab504264a2cd9f3d66ef6463fe40f9d758681f19096e9ab614ed9c6b6"
+    },
+    {
+      "path": "src/media/logmmseprocessor.cpp",
+      "sha256": "f2c48dfd3c0833ab00d5ece7d86a82ae06b19ba555f23d77f1053d24cd6893eb"
+    },
+    {
+      "path": "src/media/logmmseprocessor.h",
+      "sha256": "cf9ad6bcdf8a1b5974c1b00c7f6482502084fcc100670a3ba42879a08fa11512"
+    },
+    {
+      "path": "src/media/mediaframequeue.cpp",
+      "sha256": "857ca9840b94415e4b543bda7955ba8135c30beca738eed129b0163d8eecba30"
+    },
+    {
+      "path": "src/media/mediaframequeue.h",
+      "sha256": "0689b852f40dc7faf347a48e3fafab38ec0ba68b791a53b964f8e2418034aee8"
+    },
+    {
+      "path": "src/media/multichannelwavwriter.cpp",
+      "sha256": "0b658f89d0d4ba312beffc2c0211b261e6686130adb6a7d6dbc9cef283317747"
+    },
+    {
+      "path": "src/media/multichannelwavwriter.h",
+      "sha256": "e41823a0cbd64d8d78ae31bd73d1d5b65063ef2c1a6a7bb12459303bcb07a97c"
+    },
+    {
+      "path": "src/media/noisereductionframedecoder.cpp",
+      "sha256": "ac7d3001846e720c0b7f017aa6c8bd6f86238c61dd5518a20c9f87067e44f998"
+    },
+    {
+      "path": "src/media/noisereductionframedecoder.h",
+      "sha256": "dab5180cf05623a1081ef5a57553c54d8a8d690d21fb4ecaf2f296b4f66a69af"
+    },
+    {
+      "path": "src/media/noisereductionmailbox.cpp",
+      "sha256": "9d72b95f59cf0f4fb54f1263227104c6793648e40d3e64416c253a0c9a80f254"
+    },
+    {
+      "path": "src/media/noisereductionmailbox.h",
+      "sha256": "863672a3dea0782aa40e3299d3bdd01ff47f2868568d510cf7a177c423e4f0ba"
+    },
+    {
+      "path": "src/media/noisereductiontypes.cpp",
+      "sha256": "9cf58d9148e20953949065475d7d8f7e0aa5231f5e3d59e0c193d012bfa481c1"
+    },
+    {
+      "path": "src/media/noisereductiontypes.h",
+      "sha256": "213cacd2b8d90c5129c0fb06d0e1bc596f79ab2a365c0eb3f6e455f0ca979b7d"
+    },
+    {
+      "path": "src/media/noisereductionworker.cpp",
+      "sha256": "005dc015f5e0be2e6bcb8a1ec31130ed20b10c0ba42fa738f1239c0c059a7669"
+    },
+    {
+      "path": "src/media/noisereductionworker.h",
+      "sha256": "a2b44f4e0ad7ba29ac72f465323053ac698edbd637142ff818781d613d911697"
+    },
+    {
+      "path": "src/media/pldenoisetransport.cpp",
+      "sha256": "8e9a4b7f2764ae71391f79f2e6a52c704dabe219001aac3c16acdcfd433f30a4"
+    },
+    {
+      "path": "src/media/pldenoisetransport.h",
+      "sha256": "0bfcd2ecf67b4896646cfdff9ac6879ca64194d964e1af4eab88425463d042ea"
+    },
+    {
+      "path": "src/media/plspatialmap.cpp",
+      "sha256": "20af7abccd9e9898f147d28e4e440a5bd1f3052393d7394afe49c70cd46e4e2f"
+    },
+    {
+      "path": "src/media/plspatialmap.h",
+      "sha256": "101aa7ad601f1309ee1533134e7b7c0907bf01af1d9868a75b188ed56af77808"
+    },
+    {
+      "path": "src/media/videodecoder.cpp",
+      "sha256": "86e2567c28075c0158b9d126bf6d5609a8febc08cc3b0b60d8415d57d05cef74"
+    },
+    {
+      "path": "src/media/videodecoder.h",
+      "sha256": "7dc41dd345cd9422221a9cd8bff680f411e85f540452988d66e85edc63a8ec01"
+    },
+    {
+      "path": "src/media/wienernoisereducer.cpp",
+      "sha256": "dc72a8b6e688f7039a66bcfdf203398fe2c4cd634eab0ad3e96ba841d70cfa64"
+    },
+    {
+      "path": "src/media/wienernoisereducer.h",
+      "sha256": "1035e06ac4a419afc225724a98a8ba2e72143c34b1fdab6581dd3207678d834b"
+    },
+    {
+      "path": "src/monitoring/healthmonitor.cpp",
+      "sha256": "7124abdab6c8dbdb6936d6fe0846231826f9cca17c0c1f8b7c2e74967bca3879"
+    },
+    {
+      "path": "src/monitoring/healthmonitor.h",
+      "sha256": "706c7cf86713e600d1d6756d800c6d8a420bc85c6ae2bd78e4ca854008d7b8b8"
+    },
+    {
+      "path": "src/protocol/protocolcodec.cpp",
+      "sha256": "52740529f1fc724cb761d5644183c919b4d8bc07ad89126571bce4556851fd48"
+    },
+    {
+      "path": "src/protocol/protocolcodec.h",
+      "sha256": "fae2ec2b33aae036e64bd1a20969e867af779902fedf30383fcefb2d5a45452d"
+    },
+    {
+      "path": "src/protocol/protocolworker.cpp",
+      "sha256": "def2eab22d59c2d21508a8827d39a92c83948a04661b67a2ddb37bfb802d2d32"
+    },
+    {
+      "path": "src/protocol/protocolworker.h",
+      "sha256": "ed0b151150966f76804cc5ea007800bc39a966b581314f8d8833b346b40ff4b5"
+    },
+    {
+      "path": "src/ui/arrayheatmapwidget.cpp",
+      "sha256": "30fc5c4b4fd3f5e465b66702a20cd891c2a3d9eb3bd6201fc35d3e5441dc4cde"
+    },
+    {
+      "path": "src/ui/arrayheatmapwidget.h",
+      "sha256": "8c7a70f9a2d567177e3c9af27398000e8ebd573bac99579143799fc470c9aab5"
+    },
+    {
+      "path": "src/ui/audioanalysispage.cpp",
+      "sha256": "c373b1e21e2c45f075d7f4e432439f324631a3a8730e3a069b5e5bbb6c82e4f8"
+    },
+    {
+      "path": "src/ui/audioanalysispage.h",
+      "sha256": "384365d3a31ddaa029654103a724b38a45a8c431756d90b92b6f32a558e8fb1a"
+    },
+    {
+      "path": "src/ui/audiowaveformwidget.cpp",
+      "sha256": "2d19f6681afe13d83f869812a08333eb2c3b0c0780282d74bb611809b3583c87"
+    },
+    {
+      "path": "src/ui/audiowaveformwidget.h",
+      "sha256": "19d5e78a2cd1eef98eeb00fbe0670a94d385df444fc80da4378efd6f5800ce5b"
+    },
+    {
+      "path": "src/ui/directionphotowidget.cpp",
+      "sha256": "254a5f12a4983f4d0f5b05759b70c78d86c944d04f47499a7b88803021af89c1"
+    },
+    {
+      "path": "src/ui/directionphotowidget.h",
+      "sha256": "ba909190fed0d4acaaf6e247896c192062b1586ec40ac6ba1e3a3b0e14b204d1"
+    },
+    {
+      "path": "src/ui/displayformat.cpp",
+      "sha256": "8e93e16b36b29ad9a1b6c40195ab06538143f10d54f27e61bf87c74cc84c5888"
+    },
+    {
+      "path": "src/ui/displayformat.h",
+      "sha256": "5fd0ef4cafac48b87ee3aa13a7223b3dc75532b3a1184dab7b718ca40e44825f"
+    },
+    {
+      "path": "src/ui/livelocalizationpage.cpp",
+      "sha256": "f54d94c5282817d1624f8c78106fae974abe97fda0b6586e0dc7566a73619c0f"
+    },
+    {
+      "path": "src/ui/livelocalizationpage.h",
+      "sha256": "22fef08d3c3d15a2f460af83ceb5354d1d04cf04be5234bc9d2ed87f36716e42"
+    },
+    {
+      "path": "src/ui/livelocalizationview.cpp",
+      "sha256": "f20ad9044044120879a1bf53fd1b900c5a046e37b07d00935e1018a2dd7e292e"
+    },
+    {
+      "path": "src/ui/livelocalizationview.h",
+      "sha256": "0593ad71fc252002a74eb651ccec1c2628efb92b60e02c62f0500d54eb14f771"
+    },
+    {
+      "path": "src/ui/mainwindow.cpp",
+      "sha256": "b01399e47d69e4e07c9e00f43c8fd36c41d86d908f19a529f74c17cec3a4257f"
+    },
+    {
+      "path": "src/ui/mainwindow.h",
+      "sha256": "9fac7b4ed50f44cef6bda0d3652b9a80946c529e6a730b3e3409f05acf8bda46"
+    },
+    {
+      "path": "src/ui/noisereductionpage.cpp",
+      "sha256": "30a21fc0e2653316d3cf814139291a78b3e4981c713032f5149a06c7462b49d5"
+    },
+    {
+      "path": "src/ui/noisereductionpage.h",
+      "sha256": "4e2741bb1b5e4d13209e78e129ec4e4f832ab1937766d2ddd758e650d116e178"
+    },
+    {
+      "path": "src/ui/noisereductionvideowidget.cpp",
+      "sha256": "7b55c44c7fe374c02bf735c236c84aa551458c7da339dc0f86620eeb1c8d5b78"
+    },
+    {
+      "path": "src/ui/noisereductionvideowidget.h",
+      "sha256": "e5e44c17a26c2e7f403a070e1237a8d193e6fa07b7dbf198ab821f4dd31163f2"
+    },
+    {
+      "path": "src/ui/powerspectrumwidget.cpp",
+      "sha256": "eafae5fd1d26fc480254a4e45f7b3762ca7b8c21a2dc2864d1dcd14458b87b2d"
+    },
+    {
+      "path": "src/ui/powerspectrumwidget.h",
+      "sha256": "8ad5be1409b598a38a5fb784bb6f7e84d3bd321f97ac2531092df2749b8ec90c"
+    },
+    {
+      "path": "src/ui/processingnodelistwidget.cpp",
+      "sha256": "ec0ca34eb92a73f2b589d698899233840bf7840612c9cb5910072a769719c407"
+    },
+    {
+      "path": "src/ui/processingnodelistwidget.h",
+      "sha256": "6301dd74f7263fe3575a862999a07a4bee3d4c15f6c95a881c1c55dc3d840322"
+    },
+    {
+      "path": "src/ui/trendchartwidget.cpp",
+      "sha256": "1e9ea3253da036aed975404d24568849199abcd509a89423eb236896aebeae9e"
+    },
+    {
+      "path": "src/ui/trendchartwidget.h",
+      "sha256": "9359ed4a814f3c647002a0dc3494eddb8092eddaa1af7398eaa535ed5bd6ac48"
+    },
+    {
+      "path": "src/ui/uitheme.cpp",
+      "sha256": "b9e9e9bcf5571f261990a531aabc531843065950dd48c104b75989113e3db3b7"
+    },
+    {
+      "path": "src/ui/uitheme.h",
+      "sha256": "66c3633a880f5591a729e9a35dbc86ca1183025e594bf396845865797643129f"
+    },
+    {
+      "path": "src/ui/videopreviewwidget.cpp",
+      "sha256": "00a49cf58bcd23d61688286610a15f84a3cdcdaae760a9a1c55363ee2d8d6493"
+    },
+    {
+      "path": "src/ui/videopreviewwidget.h",
+      "sha256": "413b3b5081ffc50eb2ec1bd0cc0d7c65e6098325d02684eb4d18a87b123e0836"
+    },
+    {
+      "path": "tests/analysis/test_audioanalysis.cpp",
+      "sha256": "7cefdeed6d78b30ac88614018bf583f5579b06a81dd92ec6ea364e9e631409f9"
+    },
+    {
+      "path": "tests/analysis/test_cameralens.cpp",
+      "sha256": "6410d584f57392576e5004d79de9c67e7adea403a332d3cc1efff881b865d986"
+    },
+    {
+      "path": "tests/app/test_app.cpp",
+      "sha256": "071352ee2036c894651127dc8ed94dda0959c06195f262643be32711f96c5e7a"
+    },
+    {
+      "path": "tests/device/test_deviceclient.cpp",
+      "sha256": "c6595e0f3c01ad687213efc424adb6b753afc46a0cec84cc5b8b51a9455069c2"
+    },
+    {
+      "path": "tests/fixtures/camera_lens_opencv.json",
+      "sha256": "c6dcc3c290066a044dd57df5780337c4bd73286bc45e1cdb7f3029c779c0c30f"
+    },
+    {
+      "path": "tests/fixtures/hmp_rtl_transport.mem",
+      "sha256": "91f4371be1e37250f56b312406e1dc061628cb458271c510bed4cf471c6b445a"
+    },
+    {
+      "path": "tests/fixtures/pl_triple_heatmap.mem",
+      "sha256": "92ff6d61a3cb14148a72d6f9bf941d22ae1956b6c90ffb7a741eaea5ed7b2847"
+    },
+    {
+      "path": "tests/media/test_media.cpp",
+      "sha256": "46490103b7df38847e9ec09168f3d8dd4d361fc4f240d63fda4090e6e19082af"
+    },
+    {
+      "path": "tests/media/test_pldenoise.cpp",
+      "sha256": "7c825260e5739cb7755a6386546a1ae7c1956907a41467f2b09bf928c565a129"
+    },
+    {
+      "path": "tests/media/test_plfull.cpp",
+      "sha256": "140a62507054f0d1fa03961997b0c57ccc0146c694dbbe2e12fc4b9c5d2bd14b"
+    },
+    {
+      "path": "tests/media/test_plheatmap.cpp",
+      "sha256": "e3df9aa34f6ef543cf65195f25326e8df4840dea2756da3e6920bd5b1f662d98"
+    },
+    {
+      "path": "tests/media/test_plintegration.cpp",
+      "sha256": "d34165a82603861dfe4b4dae6d509c2eb64254b078916e54e9961bd5eb1ee96c"
+    },
+    {
+      "path": "tests/media/test_plwiener.cpp",
+      "sha256": "c287829bff865953e030b7ff6562a39222ec28df94b92f7f4d66cd908c94a47d"
+    },
+    {
+      "path": "tests/protocol/test_protocolcodec.cpp",
+      "sha256": "cd051473c082ac69683c9e870663ad96141b75e7c2039c285607dad03305c99f"
+    },
+    {
+      "path": "tests/streaming/mainwindow_pressure/test_mainwindow_pressure.cpp",
+      "sha256": "12085a6b8aed52bfde369b2653ab8c495a0b9017657417d4e36f432bd8f460b4"
+    },
+    {
+      "path": "tests/streaming/test_helpers.h",
+      "sha256": "9ea3dfbb4802066f0cb3e2969c2284905eef30ee7bb34fa203e27442ff220859"
+    },
+    {
+      "path": "tests/streaming/test_legacy_contract.cpp",
+      "sha256": "a9a4b75f8f3ef55922176da77c08e551644b07815d46301225c513846abef690"
+    },
+    {
+      "path": "tests/streaming/test_wallclock.cpp",
+      "sha256": "16f19b4673a37ef95e9af970e8ce4e200c08c43652dd2dd316ffa5714a8f730b"
+    },
+    {
+      "path": "tests/tools/test_mock_device_server.py",
+      "sha256": "0c76c9216fa683c29ca7044bdc25988421b7f7fc3ae72029461544fe62791b4c"
+    },
+    {
+      "path": "tests/ui/test_dashboard.cpp",
+      "sha256": "d1417ff1a17457f22e11c2e09a7e5e75f1468e2a086cae3185774484df7ce8b2"
+    },
+    {
+      "path": "tests/ui/test_pldenoise_ui.cpp",
+      "sha256": "f4080c04b2e6859d03d598aaf8fc4428d5a1abb6377785126381f30ab7e76120"
+    },
+    {
+      "path": "tools/assets/mock_video_1920x1080.jpg",
+      "sha256": "d2959bdb3864b0c5c7278fb33d7e765f2020cd47cdf26b4403f352b961cdc00c"
+    },
+    {
+      "path": "tools/evaluate_fixed_suffix.py",
+      "sha256": "d5f5ce038d0c791c68fd9d5b86c2fe190f83973ae6b0e1ff19722b0c952feaba"
+    },
+    {
+      "path": "tools/generate_mock_video_pattern.ps1",
+      "sha256": "7b34fe741256d7e8a1ec769bbb3a7a6e176c348567b99da8fd76f3d3d413d2ac"
+    },
+    {
+      "path": "tools/mock_device_server.py",
+      "sha256": "435a4f959a27f96387e492d67af61eba90d11c4a8fe508f5112cab230070c804"
+    },
+    {
+      "path": "tools/package_host_snapshot.py",
+      "sha256": "4952449c73feedcbf72ab06e86c16462c995d5cf8eb209dd635da03eafbf01ea"
+    },
+    {
+      "path": "tools/package_merged.py",
+      "sha256": "195f5b4fcc36fa1b36e57ded6e765aa17109ae8adaa3716644f8cc4a839d824e"
+    },
+    {
+      "path": "tools/pl_denoise_replay.cpp",
+      "sha256": "925cae8fd10cca5500ffa08aae26380c4baa13853a2fc924b77f01a1eea9acea"
+    },
+    {
+      "path": "tools/prepare_pl_heatmap.py",
+      "sha256": "5a3fc1466c8d42a222e76c2fa02afdbad6c5e89b3b3eed4b4bacd38dcfa0cd1e"
+    },
+    {
+      "path": "tools/train_neural_srp_peak.cpp",
+      "sha256": "9202345a1853b2f40191d83eb41084c60c23a51379537b75d1e94a616c159e78"
+    }
+  ]
+}
